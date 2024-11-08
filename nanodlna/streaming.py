@@ -7,6 +7,7 @@ import threading
 import unicodedata
 import re
 
+import twisted.internet.error
 from twisted.internet import reactor
 from twisted.web.resource import Resource
 from twisted.web.server import Site
@@ -62,31 +63,46 @@ def set_files(files, serve_ip, serve_port):
 
     return files_index, files_serve, files_urls
 
+from twisted.web.static import File
+from twisted.web.server import Site
+from twisted.internet import reactor
+import logging
+import time
 
-def start_server(files, serve_ip, serve_port=9000):
+def start_server(files, serve_ip, serve_port=9000, min_port=8000):
+    """Starts an HTTP server to serve the media files on available ports."""
 
-    # import sys
-    # log.startLogging(sys.stdout)
+    # Attempt to create streaming server starting from the given port
+    while serve_port >= min_port:
+        try:
+            logging.debug("Starting to create streaming server")
 
-    logging.debug("Starting to create streaming server")
+            files_index, files_serve, files_urls = set_files(files, serve_ip, serve_port)
 
-    files_index, files_serve, files_urls = set_files(
-        files, serve_ip, serve_port)
+            logging.debug("Adding files to HTTP server")
+            root = Resource()  # Make sure you have the correct Resource class (usually twisted.web.resource.Resource)
+            for file_key, (file_name, file_path, file_dir) in files_index.items():
+                root.putChild(file_key.encode("utf-8"), Resource())
+                root.children[file_key.encode("utf-8")].putChild(
+                    file_name.encode("utf-8"), File(file_path))  # Serve the file via the 'File' class
 
-    logging.debug("Adding files to HTTP server")
-    root = Resource()
-    for file_key, (file_name, file_path, file_dir) in files_index.items():
-        root.putChild(file_key.encode("utf-8"), Resource())
-        root.children[file_key.encode("utf-8")].putChild(
-            file_name.encode("utf-8"), File(file_path))
+            logging.debug("Starting to listen for messages in HTTP server")
+            reactor.listenTCP(serve_port, Site(root))
+            threading.Thread(
+                target=reactor.run, kwargs={"installSignalHandlers": False}).start()
 
-    logging.debug("Starting to listen messages in HTTP server")
-    reactor.listenTCP(serve_port, Site(root))
-    threading.Thread(
-        target=reactor.run, kwargs={"installSignalHandlers": False}).start()
+            return files_urls
 
-    return files_urls
+        except twisted.internet.error.CannotListenError as e:
+            logging.error(f"Cannot listen on port {serve_port}: {e}")
+            # Decrease the port and try again
+            serve_port -= 1
+            logging.info(f"Trying next port: {serve_port}")
+            time.sleep(1)  # Sleep a bit before trying again
 
+    # If we exhausted all ports, raise an error
+    logging.error(f"Unable to bind to any port between {min_port} and 9000")
+    raise Exception("No available ports to start the server.")
 
 def stop_server():
     reactor.stop()
