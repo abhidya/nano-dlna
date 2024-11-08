@@ -27,60 +27,86 @@ def signal_handler_main(sig, frame, devices):
     logging.info("Stopping streaming server")
     streaming.stop_server()
 
-    sys.exit("Interrupt signal detected. Sent stop command to render device and stopped streaming.")
+    # sys.exit("Interrupt signal detected. Sent stop command to render device and stopped streaming.")
+
 
 
 # This function will be executed in each thread for each device
 def play_video_on_device(device_name, video_file, args):
 
-    device = find_device_with_retry(args, device_name)
+    while(True):
+        try:
+            device = find_device_with_retry(args, device_name)
 
-    if device:
+            if device:
 
-        logging.info(f"Attempting to play video '{video_file}' on device '{device['friendly_name']}'")
+                logging.info(f"Attempting to play video '{video_file}' on device '{device['friendly_name']}'")
 
-        # Configure streaming server
-        files = {"file_video": video_file}
+                # Configure streaming server
+                files = {"file_video": video_file}
 
-        if args.use_subtitle:
-            subtitle_file = get_subtitle(video_file)
-            if subtitle_file:
-                files["file_subtitle"] = subtitle_file
+                if args.use_subtitle:
+                    subtitle_file = get_subtitle(video_file)
+                    if subtitle_file:
+                        files["file_subtitle"] = subtitle_file
 
-        logging.info(f"Media files: {json.dumps(files)}")
+                logging.info(f"Media files: {json.dumps(files)}")
 
-        # Start the streaming server
-        target_ip = device["hostname"]
-        serve_ip = args.local_host if args.local_host else streaming.get_serve_ip(target_ip)
-        files_urls = streaming.start_server(files, serve_ip)
+                # Start the streaming server
+                target_ip = device["hostname"]
+                serve_ip = args.local_host if args.local_host else streaming.get_serve_ip(target_ip)
+                files_urls = streaming.start_server(files, serve_ip)
 
-        logging.info("Streaming server ready")
+                logging.info("Streaming server ready")
 
-        # Play the video via DLNA protocol
-        logging.info("Sending play command")
-        dlna.play(files_urls, device, args)
-
-        logging.info(f"Video '{video_file}' started playing on device '{device['friendly_name']}'")
-
-        # Use tqdm to show progress for the video
-        video_duration = dlna.get_video_duration(device)
-        with tqdm(total=video_duration, desc=f"Playing {video_file}", ncols=100) as pbar:
-            for _ in range(video_duration):
-                time.sleep(1)  # Simulating each second of the video playing
-                pbar.update(1)  # Update the progress bar
-
-            if args.loop:
-                logging.info("Looping video in 5 seconds before it finishes")
-                time.sleep(max(0, video_duration - 5))
+                # Play the video via DLNA protocol
+                logging.info("Sending play command")
                 dlna.play(files_urls, device, args)
 
-        # Wait until the video finishes
-        logging.info(f"Waiting for the video '{video_file}' to finish")
-        time.sleep(video_duration)
+                logging.info(f"Video '{video_file}' started playing on device '{device['friendly_name']}'")
+
+                # Use tqdm to show progress for the video
+                video_duration = dlna.get_video_duration(device)
+                with tqdm(total=video_duration, desc=f"Playing {video_file}", ncols=100) as pbar:
+                    for _ in range(video_duration):
+                        time.sleep(1)  # Simulating each second of the video playing
+                        pbar.update(1)  # Update the progress bar
+
+                    if args.loop:
+                        logging.info("Looping video in 5 seconds before it finishes")
+                        time.sleep(max(0, video_duration - 5))
+                        dlna.play(files_urls, device, args)
+
+                # Wait until the video finishes
+                logging.info(f"Waiting for the video '{video_file}' to finish")
+                time.sleep(video_duration)
+        except:
+            pass
+
+
+# Restarting threads function
+def monitor_and_restart_threads(threads, devices_config, args):
+    while True:
+        for i, thread in enumerate(threads):
+            # If the thread is no longer alive, restart it
+            if not thread.is_alive():
+                config_item = devices_config[i]
+                device_name = config_item["device_name"]
+                video_file = config_item["video_file"]
+
+                logging.warning(f"Thread for {device_name} stopped. Restarting...")
+
+                # Create and start a new thread
+                new_thread = threading.Thread(target=play_video_on_device, args=(device_name, video_file, args))
+                threads[i] = new_thread  # Replace the old thread with the new one
+                new_thread.start()
+
+        # Sleep before next check to avoid high CPU usage
+        time.sleep(1)
+
 
 def play(args):
     set_logs(args)
-
     logging.info("Starting to play")
 
     # Check if a config file is provided
@@ -93,7 +119,6 @@ def play(args):
     threads = []
     devices = []  # Keep track of devices to handle them in the signal handler
 
-
     # Loop through each device and play video in a separate thread
     for config_item in devices_config:
         device_name = config_item["device_name"]
@@ -101,8 +126,14 @@ def play(args):
 
         # Start a new thread to play the video
         thread = threading.Thread(target=play_video_on_device, args=(device_name, video_file, args))
+        thread.daemon = True  # Optional: make threads daemonic so they exit with the main program
         threads.append(thread)
         thread.start()
+
+    # Start monitoring thread to restart any failed threads
+    monitoring_thread = threading.Thread(target=monitor_and_restart_threads, args=(threads, devices_config, args))
+    monitoring_thread.daemon = True  # Runs in background
+    monitoring_thread.start()
 
     # Set the signal handler in the main thread
     signal.signal(signal.SIGINT, lambda sig, frame: signal_handler_main(sig, frame, devices))
@@ -112,7 +143,6 @@ def play(args):
         thread.join()
 
     logging.info("All videos finished playing.")
-
 
 def set_logs(args):
     log_filename = os.path.join(
@@ -202,7 +232,7 @@ def find_device(args, device_name=None):
     return device
 
 
-def find_device_with_retry(args, device_name=None, max_retries=5, sleep_interval=5):
+def find_device_with_retry(args, device_name=None, max_retries=99999999, sleep_interval=5):
     retries = 0
     device = None
     while retries < max_retries:

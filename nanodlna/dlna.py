@@ -15,66 +15,16 @@ import traceback
 import logging
 import json
 
-
-def send_dlna_action(device, data, action):
-
-    logging.debug("Sending DLNA Action: {}".format(
-        json.dumps({
-            "action": action,
-            "device": device,
-            "data": data
-        })
-    ))
-
-    action_data = pkgutil.get_data(
-        "nanodlna", "templates/action-{0}.xml".format(action)).decode("UTF-8")
-    if data:
-        action_data = action_data.format(**data)
-    action_data = action_data.encode("UTF-8")
-
-    headers = {
-        "Content-Type": "text/xml; charset=\"utf-8\"",
-        "Content-Length": "{0}".format(len(action_data)),
-        "Connection": "close",
-        "SOAPACTION": "\"{0}#{1}\"".format(device["st"], action)
-    }
-
-    logging.debug("Sending DLNA Request: {}".format(
-        json.dumps({
-            "url": device["action_url"],
-            "data": action_data.decode("UTF-8"),
-            "headers": headers
-        })
-    ))
-
-    try:
-        request = urllibreq.Request(device["action_url"], action_data, headers)
-        urllibreq.urlopen(request)
-        logging.debug("Request sent")
-    except Exception:
-        logging.error("Unknown error sending request: {}".format(
-            json.dumps({
-                "url": device["action_url"],
-                "data": action_data.decode("UTF-8"),
-                "headers": headers,
-                "error": traceback.format_exc()
-            })
-        ))
-
-
-import ffmpeg
+import logging
+import json
+import os
+import pkgutil
+import traceback
+import urllib.request as urllibreq
 import time
 
-
-def get_video_duration(file_path):
-    """Get the duration of the video in seconds using ffmpeg."""
-    try:
-        probe = ffmpeg.probe(file_path, v='error', select_streams='v:0', show_entries='stream=duration')
-        duration = float(probe['streams'][0]['duration'])
-        return duration
-    except ffmpeg.Error as e:
-        logging.error(f"Error retrieving video duration: {e}")
-        return None
+# Delay between retries in seconds
+RETRY_DELAY = 2
 
 
 def play(files_urls, device, args):
@@ -105,16 +55,76 @@ def play(files_urls, device, args):
 
     logging.debug("Created video data: {}".format(json.dumps(video_data)))
 
-    # Send Play Command
-    logging.debug("Setting Video URI")
-    send_dlna_action(device, video_data, "SetAVTransportURI")
-    logging.debug("Playing video")
-    send_dlna_action(device, video_data, "Play")
+    # Retry indefinitely on failure
+    while True:
+        try:
+            # Send Play Command
+            logging.debug("Setting Video URI")
+            send_dlna_action(device, video_data, "SetAVTransportURI")
+            logging.debug("Playing video")
+            send_dlna_action(device, video_data, "Play")
 
-    # Start looping if --loop flag is set
-    if args.loop:
-        logging.info("Looping video enabled")
-        loop_video(device, files_urls["file_video"])
+            # Start looping if --loop flag is set
+            if args.loop:
+                logging.info("Looping video enabled")
+                loop_video(device, files_urls["file_video"])
+
+            # If everything went smoothly, break out of the loop
+            break
+
+        except Exception as e:
+            logging.error("Error occurred, retrying: {}".format(traceback.format_exc()))
+            time.sleep(RETRY_DELAY)
+
+
+def send_dlna_action(device, data, action):
+    logging.debug("Sending DLNA Action: {}".format(
+        json.dumps({
+            "action": action,
+            "device": device,
+            "data": data
+        })
+    ))
+
+    action_data = pkgutil.get_data(
+        "nanodlna", "templates/action-{0}.xml".format(action)).decode("UTF-8")
+    if data:
+        action_data = action_data.format(**data)
+    action_data = action_data.encode("UTF-8")
+
+    headers = {
+        "Content-Type": "text/xml; charset=\"utf-8\"",
+        "Content-Length": "{0}".format(len(action_data)),
+        "Connection": "close",
+        "SOAPACTION": "\"{0}#{1}\"".format(device["st"], action)
+    }
+
+    logging.debug("Sending DLNA Request: {}".format(
+        json.dumps({
+            "url": device["action_url"],
+            "data": action_data.decode("UTF-8"),
+            "headers": headers
+        })
+    ))
+
+    request = urllibreq.Request(device["action_url"], action_data, headers)
+    urllibreq.urlopen(request)
+    logging.debug("Request sent")
+
+
+import ffmpeg
+import time
+
+
+def get_video_duration(file_path):
+    """Get the duration of the video in seconds using ffmpeg."""
+    try:
+        probe = ffmpeg.probe(file_path, v='error', select_streams='v:0', show_entries='stream=duration')
+        duration = float(probe['streams'][0]['duration'])
+        return duration
+    except ffmpeg.Error as e:
+        logging.error(f"Error retrieving video duration: {e}")
+        return None
 
 
 def loop_video(device, video_file):

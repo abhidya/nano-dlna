@@ -1,0 +1,19 @@
+[
+    {
+        "device_name": "SideProjector_dlna",
+        "video_file": "/Users/mannybhidya/Desktop/kitchendoor2.mp4"
+    },
+    {
+        "device_name": "Hccast-3ADE76_dlna",
+        "video_file": "/Users/mannybhidya/Desktop/frontdoor-newsize.mp4"
+    },
+
+    {
+        "device_name": "ATV_210",
+        "video_file": "/Users/mannybhidya/Desktop/frontdoor-newsize.mp4"
+    },
+    {
+        "device_name": "tranScreen-83924",
+        "video_file": "/Users/mannybhidya/Desktop/frontdoor-newsize.mp4"
+    }
+]
