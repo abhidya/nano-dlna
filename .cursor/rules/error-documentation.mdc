@@ -1,0 +1,395 @@
+---
+description: Document major failure points in this project and they were solved.  To be filled by AI.
+globs: 
+alwaysApply: false
+---
+---
+description: Document major failure points in this project and they were solved.  To be filled by AI. 
+globs: 
+---
+
+## CRITICAL: Path Management in Scripts
+
+### Issue: ALWAYS USE ABSOLUTE PATHS IN SCRIPTS 
+**Error**: `./run_dashboard.sh: line 61: ./stop_dashboard.sh: No such file or directory`
+
+**Root Cause**: 
+- Scripts using relative paths (`./script.sh`) fail when the working directory changes during execution
+- When `cd` commands are used in scripts, relative paths break because they're resolved from the new directory
+
+**MANDATORY SOLUTION**:
+1. ALWAYS capture the root directory at the start of EVERY script:
+```bash
+# Store the root directory path - ADD THIS TO EVERY SCRIPT
+ROOT_DIR="$(pwd)"
+```
+
+2. ALWAYS use the full path with $ROOT_DIR for ALL script calls:
+```bash
+# CORRECT - Will work from any directory
+"$ROOT_DIR/stop_dashboard.sh"
+
+# WRONG - Will fail if current directory changes
+./stop_dashboard.sh
+```
+
+3. After using `cd` commands, ALWAYS reference scripts using the ROOT_DIR path:
+```bash
+# Change directory
+cd some/other/dir
+
+# Then use full path for any script calls
+"$ROOT_DIR/stop_dashboard.sh"
+
+# Return to the root directory when needed
+cd "$ROOT_DIR"
+```
+
+4. ALWAYS use full path checks in conditional statements:
+```bash
+if [ -f "$ROOT_DIR/stop_dashboard.sh" ]; then
+    "$ROOT_DIR/stop_dashboard.sh"
+else
+    echo "Script not found at: $ROOT_DIR/stop_dashboard.sh"
+fi
+```
+
+## Dashboard Startup Failures
+
+### Issue: Dashboard Fails to Start with Missing stop_dashboard.sh
+**Error**: `./run_dashboard.sh: line 61: ./stop_dashboard.sh: No such file or directory`
+
+**Root Cause**: 
+- The `run_dashboard.sh` script attempts to call `./stop_dashboard.sh` when an error occurs
+- The stop_dashboard.sh script exists but can't be found because the working directory changed
+
+**Solution**:
+1. ALWAYS use absolute paths with ROOT_DIR variable for all script calls:
+```bash
+# Store the root directory path at the beginning of the script
+ROOT_DIR="$(pwd)"
+
+# Use the full path for all script calls
+"$ROOT_DIR/stop_dashboard.sh"
+```
+
+2. Add checks to handle cases where scripts might not exist:
+```bash
+if [ -f "$ROOT_DIR/stop_dashboard.sh" ]; then
+    "$ROOT_DIR/stop_dashboard.sh"
+else
+    echo "Warning: stop_dashboard.sh not found at $ROOT_DIR/stop_dashboard.sh. Attempting manual cleanup..."
+    # Manual cleanup code here
+fi
+```
+
+3. Always restore the working directory after changing it:
+```bash
+cd web && ./run_direct.sh &
+DASHBOARD_PID=$!
+
+# Immediately return to root directory
+cd "$ROOT_DIR"
+```
+
+### Issue: Backend Server Fails to Start
+**Error**: Backend process terminates during startup
+
+**Root Cause**:
+- Missing dependencies or environment setup
+- Incorrect activation of virtual environment
+- Potential import errors in Python modules
+
+**Solution**:
+1. Always run the backend from its specific directory with the correct virtual environment:
+```bash
+cd "$ROOT_DIR/web/backend"
+source venv/bin/activate
+python run.py
+```
+2. Update the `run_dashboard.sh` script to properly handle the virtual environment setup
+3. Add more verbose error logging during startup
+4. Add import validation checks before attempting to start the server
+
+### Issue: Virtual Environment Confusion
+**Error**: Missing dependencies despite being installed
+
+**Root Cause**:
+- Multiple virtual environments cause confusion
+- Wrong virtual environment being activated
+
+**Solution**:
+1. Clearly document which virtual environment is used for which component
+2. Add validation in scripts to confirm correct environment is active
+3. Consider consolidating to fewer virtual environments if possible
+
+## Video Streaming Issues
+
+### Issue: "Media Container Not Supported" Error in DLNA Streaming
+**Error**: DLNA devices report "Media container not supported" when trying to play videos through the dashboard
+
+**Root Cause**: 
+1. DLNA devices make TWO sequential HTTP requests when streaming a video:
+   - First request: For the video file itself
+   - Second request: For container format information and DLNA capabilities
+2. The second request was failing with 404 Not Found because:
+   - The SimpleHTTPRequestHandler didn't maintain "memory" between requests
+   - The URLs in the second request often have slight variations from the first
+   - Insufficient DLNA-specific HTTP headers required by devices
+   - Inadequate DIDL-Lite metadata in SOAP requests
+
+**Solution**:
+1. Implemented a Twisted-based streaming server (web/backend/core/twisted_streaming.py) 
+2. Used the Twisted File server which properly handles MIME types and DLNA dual-request pattern
+3. Enhanced the streaming server to:
+   - Add proper DLNA-specific HTTP headers (contentFeatures.dlna.org, transferMode.dlna.org)
+   - Provide reliable file access between sequential requests
+   - Include complete DIDL-Lite metadata with proper DLNA profiles
+4. Updated the DLNA device implementation to use the Twisted server instead of SimpleHTTPRequestHandler
+
+**Key Lesson**:
+The CLI tool version works because it uses Twisted's File server with proper MIME handling, while the Dashboard was originally using SimpleHTTPRequestHandler which doesn't maintain file accessibility between the sequential requests that DLNA devices make. Aligning the dashboard implementation with the CLI's approach resolved the issue.
+
+**References**:
+- Original implementation: nanodlna/streaming.py (CLI version using Twisted)
+- Fixed implementation: web/backend/core/twisted_streaming.py (Dashboard version using Twisted)
+- Modified DLNA device: web/backend/core/dlna_device.py
+
+## Device Status and Playback Control Issues
+
+### Issue: Unreliable Device Status Tracking
+**Error**: Devices showing incorrect status (connected/disconnected) or playback state
+
+**Root Cause**:
+- Lack of thread safety in status updates
+- Missing validation of device state
+- No comprehensive health monitoring
+- Insufficient cleanup during state changes
+
+**Solution**:
+1. Implemented thread-safe status tracking:
+```python
+def update_device_status(self, device_name: str, status: str, is_playing: bool = None):
+    with self.status_lock:
+        if device_name not in self.device_status:
+            self.device_status[device_name] = {}
+        status_dict = self.device_status[device_name]
+        status_dict["status"] = status
+        status_dict["last_updated"] = time.time()
+        if is_playing is not None:
+            status_dict["is_playing"] = is_playing
+```
+
+2. Added health check monitoring:
+```python
+def _playback_health_check_loop(self, device_name: str, video_path: str):
+    while True:
+        # Check device status
+        device = self.get_device(device_name)
+        if not device.is_playing:
+            # Attempt recovery
+            self.auto_play_video(device, video_path, loop=True)
+```
+
+3. Implemented proper cleanup:
+```python
+def unregister_device(self, device_name: str):
+    with self.device_lock:
+        # Clean up device tracking
+        if device_name in self.devices:
+            del self.devices[device_name]
+        # Clean up status tracking
+        with self.status_lock:
+            if device_name in self.device_status:
+                del self.device_status[device_name]
+```
+
+### Issue: Video Assignment Conflicts
+**Error**: Multiple videos being assigned to the same device or incorrect video playing
+
+**Root Cause**:
+- No priority system for video assignments
+- Missing validation before assignments
+- Insufficient cleanup of previous assignments
+- Race conditions in assignment process
+
+**Solution**:
+1. Implemented priority-based assignment:
+```python
+def assign_video_to_device(self, device_name: str, video_path: str, priority: int = 50):
+    with self.video_assignment_lock:
+        current_priority = self.video_assignment_priority.get(device_name, 0)
+        if priority >= current_priority:
+            # Proceed with assignment
+            self.video_assignment_priority[device_name] = priority
+```
+
+2. Added proper cleanup before new assignments:
+```python
+def auto_play_video(self, device: Device, video_path: str, loop: bool = True):
+    # Stop any current playback
+    if device.is_playing:
+        device.stop()
+        time.sleep(1)  # Give it time to stop
+```
+
+3. Implemented retry logic with exponential backoff:
+```python
+def _schedule_retry(self, device_name: str, video_path: str, priority: int):
+    retry_count = self.video_assignment_retries.get(device_name, 0)
+    if retry_count < MAX_RETRY_ATTEMPTS:
+        delay = RETRY_DELAY_BASE * (2 ** retry_count)
+        retry_timer = threading.Timer(delay, self.assign_video_to_device,
+                                    args=[device_name, video_path, priority])
+        retry_timer.start()
+```
+
+**Key Lessons**:
+1. Always use thread-safe operations for status updates
+2. Implement comprehensive health monitoring
+3. Use priority system for resolving conflicts
+4. Add proper cleanup during state changes
+5. Implement retry logic with exponential backoff
+
+## Device Status Desynchronization (May 2025)
+
+**Issue:** Devices not present on the network remained marked as "connected" in the dashboard, causing confusion and inaccurate device management.
+
+**Root Cause:** The /api/devices/discover endpoint did not update the status of missing devices, only adding/updating found devices.
+
+**Resolution:** Added a sync step after discovery to mark missing devices as "disconnected" in both the DB and in-memory. Now, the device list always matches the real network state after discovery.
+
+**Lesson:** Always ensure device discovery endpoints update the status of all devices, not just those found, to prevent stale state in the dashboard.
+
+## Backend Attribute Errors (May 2025)
+
+### Issue: Missing discovery_interval attribute in DeviceManager
+**Error:** `AttributeError: 'DeviceManager' object has no attribute 'discovery_interval'. Did you mean: 'discovery_thread'?`
+
+**Root Cause:** The DeviceManager class was missing the discovery_interval attribute in its initialization, but this attribute was being referenced in the _discovery_loop method.
+
+**Resolution:**
+1. Added the missing discovery_interval attribute to the DeviceManager.__init__ method:
+```python
+def __init__(self):
+    # Other initializations...
+    self.discovery_interval = 10  # Seconds between discovery cycles
+```
+
+**Lesson:** Always ensure that all attributes used in class methods are properly initialized in the __init__ method, especially for long-running threaded operations.
+
+### Issue: Incorrect method name in streaming service shutdown
+**Error:** `AttributeError: 'TwistedStreamingServer' object has no attribute 'stop_all_servers'. Did you mean: 'stop_server'?`
+
+**Root Cause:** In main.py's shutdown_event handler, there was a call to streaming_service.stop_all_servers(), but the actual method name in the TwistedStreamingServer class is stop_server().
+
+**Resolution:**
+1. Updated the method call in the shutdown_event handler:
+```python
+@app.on_event("shutdown")
+async def shutdown_event():
+    # Other shutdown code...
+    streaming_service.stop_server()  # Changed from stop_all_servers
+```
+
+**Lesson:** Always verify method names when calling external modules, especially during critical operations like application shutdown. Using IDE features like code completion can help identify correct method names.
+
+## Device Status Tracking Issues
+
+### Problem
+
+Devices would appear as connected in the dashboard even when they were disconnected from the network. Additionally, device discovery would restart video playback on devices that were already playing videos.
+
+### Solution
+
+We implemented several fixes for these issues:
+
+1. **Device Status Synchronization**: We modified the `sync_device_status_with_discovery` method in `DeviceService` to properly update device status based on discovery results. Devices not found in the latest discovery are marked as "disconnected".
+
+2. **Selective Auto-Play Logic**: We completely redesigned the device discovery flow to:
+   - Keep a clear distinction between new and existing devices
+   - Only update connection status of existing devices, not their entire configuration
+   - Only attempt auto-play on newly discovered devices, not existing ones
+   - Check multiple sources to determine if a device is already playing (streaming registry, core device, database status, current_video field)
+   - Use proper locking around critical sections of code
+   - Add comprehensive error handling and logging
+
+3. **API Endpoint Improvements**: We updated the discovery endpoint to support both GET and POST methods for better compatibility with different clients.
+
+The solution is in `web/backend/services/device_service.py`, lines 300-396.
+
+## DLNA Media Container Issues
+
+## Import Path Issues in Depth Processing Module
+
+### Problem
+The depth processing module had import path issues causing the server to fail to start. The error message was:
+```
+ModuleNotFoundError: No module named 'numpy'
+```
+
+The actual issue was that the imports in the depth processing module were using absolute imports (e.g., `from core.depth_processing.core.depth_loader import DepthLoader`) which were causing import failures when Python attempted to resolve the module paths.
+
+### Solution
+Changed all imports to use relative imports:
+1. In web/backend/core/depth_processing/__init__.py:
+   ```python
+   from .core.depth_loader import DepthLoader
+   from .core.segmentation import DepthSegmenter
+   from .utils.visualizer import DepthVisualizer
+   ```
+
+2. In web/backend/core/depth_processing/core/__init__.py:
+   ```python
+   from .depth_loader import DepthLoader
+   from .segmentation import DepthSegmenter
+   ```
+
+3. In web/backend/core/depth_processing/utils/__init__.py:
+   ```python
+   from .visualizer import DepthVisualizer
+   ```
+
+4. In web/backend/routers/depth_router.py, simplified imports:
+   ```python
+   from core.depth_processing import DepthLoader, DepthSegmenter, DepthVisualizer
+   ```
+
+5. In web/backend/core/depth_processing/ui/depth_segmentation_app.py:
+   ```python
+   from core.depth_processing import DepthLoader, DepthSegmenter, DepthVisualizer
+   ```
+
+### Outcome
+The server was able to start successfully with the depth_router included. All API endpoints are now accessible. The depth processing functionality needs further testing to confirm it's working as expected.
+
+### Root Cause Analysis
+The import issue was likely due to how Python resolves module paths. When using absolute imports that start with a package name, Python looks for that package in the sys.path. With the way the project is structured, the 'core' module is part of the 'web/backend' package and not directly in the Python path. 
+
+Relative imports properly resolve based on the current module's location in the package hierarchy.
+
+## 500 Internal Server Error on Device Play API
+
+### Problem
+When attempting to play a video on a DLNA device, the API returns a 500 Internal Server Error. The error can be seen in the dashboard_run.log:
+```
+[get_device_instance] Looking for device 'Hccast-3ADE76_dlna' in DeviceManager
+[get_device_instance] DeviceManager.devices keys BEFORE: ['Smart_Projector-45[DLNA]', 'SideProjector_dlna', 'Hccast-3ADE76_dlna', 'AS-Projector[DMR]']
+[get_device_instance] Found device 'Hccast-3ADE76_dlna' in DeviceManager
+INFO:     127.0.0.1:0 - "POST /api/devices/1/play HTTP/1.1" 500 Internal Server Error
+```
+
+### Initial Analysis
+The device is found in the DeviceManager, but the play command is failing. This could be due to:
+1. Issues with the DLNA communication
+2. Video format incompatibility
+3. Network connectivity problems
+4. Error in the play implementation
+
+### Next Steps for Resolution
+1. Check detailed logs for the specific error message
+2. Examine the play_video method in device_service.py
+3. Debug the DLNA device implementation
+4. Test with different video formats and devices
+
+This issue requires further investigation.

@@ -1,0 +1,6 @@
+tqdm
+ffmpeg-python
+Twisted
+setuptools
+requests
+aiohttp

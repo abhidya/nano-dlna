@@ -1,0 +1,46 @@
+---
+description: rules to parse solution architecture from docs/architecture.md
+globs: 
+alwaysApply: false
+---
+---
+description: rules to parse solution architecture from docs/architecture.md
+globs: 
+alwaysApply: false
+---
+# Architecture Understanding
+READ_ARCHITECTURE: |
+  File: docs/architecture.md @architecture.md
+  Required parsing:
+  1. Load and parse complete Mermaid diagram
+  2. Extract and understand:
+     - System components (CLI and Web Dashboard)
+     - Core modules and their responsibilities
+     - Device discovery and control mechanisms
+     - Media streaming functionality
+     - Data flow patterns between components
+     - Video looping implementation details
+
+  Key architecture components:
+  - Core CLI Tool (nanodlna package)
+    - DLNA discovery via SSDP protocol
+    - SOAP/XML communication for device control
+    - HTTP streaming server
+    - Playback monitoring and looping
+
+  - Web Dashboard (web/ directory)
+    - FastAPI backend with SQLAlchemy database
+    - React frontend with device and video management
+    - Device manager with shared core functionality
+    - Thread-based looping implementation
+
+  Architectural constraints:
+  - Maintain separation between CLI and Web Dashboard implementations
+  - Keep core DLNA functionality reusable between components
+  - Follow established patterns for device control and management
+  - Maintain compatibility with various DLNA device types
+  
+  Error handling:
+  1. If file not found: Check updated architecture in code directly
+  2. If diagram parse fails: Reference key files identified in code review 
+  3. If architectural violation detected: Consult updated technical documentation
