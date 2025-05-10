@@ -26,6 +26,130 @@ import time
 # Delay between retries in seconds
 RETRY_DELAY = 2
 
+# Device class for DLNA control
+class Device:
+    """
+    Represents a DLNA device that can be controlled.
+    
+    Attributes:
+        device_info (dict): Information about the device
+        name (str): Friendly name of the device
+        action_url (str): URL for sending actions to the device
+        st (str): Service type of the device
+    """
+    
+    def __init__(self, device_info):
+        """
+        Initialize a Device object.
+        
+        Args:
+            device_info (dict): Information about the device
+        """
+        self.device_info = device_info
+        self.name = device_info.get("friendly_name", "Unknown Device")
+        self.action_url = device_info.get("action_url")
+        self.st = device_info.get("st")
+        self.is_playing = False
+        
+    def play(self, video_path, loop=False):
+        """
+        Play a video on the device.
+        
+        Args:
+            video_path (str): Path to the video file
+            loop (bool): Whether to loop the video
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            # Configure streaming
+            from . import streaming
+            files = {"file_video": video_path}
+            
+            # Get serve_ip from device's hostname
+            target_ip = self.device_info.get("hostname")
+            serve_ip = streaming.get_serve_ip(target_ip)
+            
+            # Start streaming
+            url_dict, _ = streaming.start_server(files, serve_ip)
+            
+            # Create args object with loop attribute
+            class Args:
+                pass
+            args = Args()
+            args.loop = loop
+            
+            # Play the video
+            play(url_dict, self.device_info, args)
+            self.is_playing = True
+            return True
+        except Exception as e:
+            logging.error(f"Error playing video on {self.name}: {e}")
+            self.is_playing = False
+            return False
+            
+    def stop(self):
+        """
+        Stop playback on the device.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            stop(self.device_info)
+            self.is_playing = False
+            return True
+        except Exception as e:
+            logging.error(f"Error stopping playback on {self.name}: {e}")
+            return False
+            
+    def pause(self):
+        """
+        Pause playback on the device.
+        
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            pause(self.device_info)
+            return True
+        except Exception as e:
+            logging.error(f"Error pausing playback on {self.name}: {e}")
+            return False
+            
+    def seek(self, position):
+        """
+        Seek to a position in the video.
+        
+        Args:
+            position (str): Position to seek to (e.g., "00:01:30")
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            seek(position, self.device_info)
+            return True
+        except Exception as e:
+            logging.error(f"Error seeking on {self.name}: {e}")
+            return False
+
+# Function to discover UPNP devices (used by tests)
+def _discover_upnp_devices(timeout=5.0, host=None):
+    """
+    Discover UPNP devices on the network.
+    
+    Args:
+        timeout (float): Timeout in seconds
+        host (str): Host to bind to
+        
+    Returns:
+        list: List of discovered devices
+    """
+    from .devices import get_devices
+    return get_devices(timeout, host)
+
 
 def play(files_urls, device, args):
     logging.debug("Starting to play: {}".format(

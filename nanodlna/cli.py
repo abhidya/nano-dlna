@@ -587,3 +587,91 @@ def remove_device(device_name):
     # Implement device removal logic
     logging.info(f"Removing device with name: {device_name}")
     # Logic to remove the device goes here (e.g., from a list, config file, etc.)
+
+def send_video(device_info, video_path, loop=False):
+    """
+    Send a video to a DLNA device.
+    
+    Args:
+        device_info (dict): Device information dictionary
+        video_path (str): Path to the video file
+        loop (bool): Whether to loop the video
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    try:
+        # Configure streaming server
+        files = {"file_video": video_path}
+        
+        # Get serve_ip from device's hostname
+        target_ip = device_info.get("hostname")
+        serve_ip = streaming.get_serve_ip(target_ip)
+        
+        # Start streaming
+        url_dict, _ = streaming.start_server(files, serve_ip)
+        
+        # Create args object with loop attribute
+        class Args:
+            pass
+        args = Args()
+        args.loop = loop
+        
+        # Play the video
+        dlna.play(url_dict, device_info, args)
+        return True
+    except Exception as e:
+        logging.error(f"Error sending video: {e}")
+        return False
+
+def process_config(config_file):
+    """
+    Process a configuration file to play videos on devices.
+    
+    Args:
+        config_file (str): Path to the configuration file
+        
+    Returns:
+        bool: True if successful, False otherwise
+    """
+    logging.info(f"Processing configuration file: {config_file}")
+    
+    try:
+        # Load the configuration file
+        with open(config_file, 'r') as f:
+            config_data = json.load(f)
+        
+        # Create args object for compatibility with play function
+        class Args:
+            pass
+        args = Args()
+        args.loop = False
+        args.timeout = 5
+        args.local_host = None
+        args.debug_activated = False
+        
+        # Process each device in the configuration
+        for config_item in config_data:
+            if 'device_name' in config_item and 'video_file' in config_item:
+                device_name = config_item['device_name']
+                video_file = config_item['video_file']
+                
+                # Check if video file exists
+                if not os.path.exists(video_file):
+                    logging.error(f"Video file not found: {video_file}")
+                    continue
+                
+                # Find the device
+                device = find_device(args, device_name)
+                if not device:
+                    logging.error(f"Device not found: {device_name}")
+                    continue
+                
+                # Send the video to the device
+                logging.info(f"Sending video {video_file} to device {device_name}")
+                send_video(device, video_file, args.loop)
+        
+        return True
+    except Exception as e:
+        logging.error(f"Error processing configuration file: {e}")
+        return False

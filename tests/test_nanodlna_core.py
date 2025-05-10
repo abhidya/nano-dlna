@@ -46,13 +46,15 @@ class TestNanoDLNACore(unittest.TestCase):
         # Ensure the discovery function was called once
         mock_discover.assert_called_once()
     
-    @patch('nanodlna.dlna.Device')
-    def test_send_video(self, mock_device_class):
+    @patch('nanodlna.streaming.start_server')
+    @patch('nanodlna.streaming.get_serve_ip')
+    @patch('nanodlna.dlna.play')
+    def test_send_video(self, mock_play, mock_get_serve_ip, mock_start_server):
         """Test sending video to device"""
-        # Mock the device instance
-        mock_device = MagicMock()
-        mock_device.play.return_value = True
-        mock_device_class.return_value = mock_device
+        # Mock the streaming functions
+        mock_get_serve_ip.return_value = "192.168.1.100"
+        mock_start_server.return_value = ({"file_video": "http://192.168.1.100:8000/video.mp4"}, None)
+        mock_play.return_value = True
         
         # Create a temporary video file
         with tempfile.NamedTemporaryFile(suffix='.mp4') as temp_video:
@@ -73,27 +75,32 @@ class TestNanoDLNACore(unittest.TestCase):
             
             # Verify results
             self.assertTrue(result)
-            mock_device.play.assert_called_once_with(temp_video.name, True)
+            mock_get_serve_ip.assert_called_once_with("10.0.0.1")
+            mock_start_server.assert_called_once()
+            mock_play.assert_called_once()
     
     def test_config_file_handling(self):
         """Test configuration file handling"""
         # Create a temporary config file
-        with tempfile.NamedTemporaryFile(suffix='.json', delete=False) as temp_config:
-            config_data = [
-                {
-                    "device_name": "Smart_Projector-45[DLNA]",
-                    "type": "dlna",
-                    "hostname": "10.0.0.45",
-                    "action_url": "http://10.0.0.45:3500/AVTransport/control.xml",
-                    "video_file": "test_video.mp4",
-                    "friendly_name": "Smart_Projector-45[DLNA]"
-                }
-            ]
-            json.dump(config_data, temp_config)
-            temp_config.flush()
-            config_path = temp_config.name
+        config_path = None
+        video_path = None
         
         try:
+            # Create a temporary config file with mode='w' for text mode
+            config_path = tempfile.mktemp(suffix='.json')
+            with open(config_path, 'w') as temp_config:
+                config_data = [
+                    {
+                        "device_name": "Smart_Projector-45[DLNA]",
+                        "type": "dlna",
+                        "hostname": "10.0.0.45",
+                        "action_url": "http://10.0.0.45:3500/AVTransport/control.xml",
+                        "video_file": "test_video.mp4",
+                        "friendly_name": "Smart_Projector-45[DLNA]"
+                    }
+                ]
+                json.dump(config_data, temp_config)
+            
             # Create a temporary video file
             with tempfile.NamedTemporaryFile(suffix='.mp4', delete=False) as temp_video:
                 video_path = temp_video.name
@@ -113,11 +120,11 @@ class TestNanoDLNACore(unittest.TestCase):
                 self.assertTrue(result)
         finally:
             # Clean up temporary files
-            if os.path.exists(config_path):
+            if config_path and os.path.exists(config_path):
                 os.unlink(config_path)
-            if os.path.exists(video_path):
+            if video_path and os.path.exists(video_path):
                 os.unlink(video_path)
 
 
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()
