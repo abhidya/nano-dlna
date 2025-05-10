@@ -228,6 +228,58 @@ class ConfigService:
         finally:
             self._release_lock()
     
+    def load_config(self, config_file: str) -> Dict[str, Any]:
+        """
+        Load configuration from a file
+        
+        Args:
+            config_file: Path to the configuration file
+            
+        Returns:
+            Dict[str, Any]: Loaded configuration
+        """
+        try:
+            logger.info(f"Loading configuration from {config_file}")
+            
+            with open(config_file, 'r') as f:
+                config = json.load(f)
+                
+            logger.info(f"Successfully loaded configuration from {config_file}")
+            return config
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Invalid JSON in configuration file {config_file}: {e}")
+            return {}
+        except Exception as e:
+            logger.error(f"Error loading configuration from {config_file}: {e}")
+            return {}
+    
+    def save_config(self, config: Dict[str, Any], config_file: str) -> bool:
+        """
+        Save configuration to a file
+        
+        Args:
+            config: Configuration to save
+            config_file: Path to the configuration file
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            abs_path = os.path.abspath(config_file)
+            logger.info(f"Saving configuration to {abs_path}")
+            
+            # Save the configuration
+            with open(abs_path, "w") as f:
+                json.dump(config, f, indent=4)
+            
+            logger.info(f"Successfully saved configuration to {abs_path}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving configuration to {config_file}: {e}")
+            return False
+    
     def load_configs_from_file(self, config_file: str) -> List[str]:
         """
         Load device configurations from a file
@@ -368,4 +420,4 @@ class ConfigService:
         try:
             return self._config_sources.get(device_name)
         finally:
-            self._release_lock() 
+            self._release_lock()

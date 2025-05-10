@@ -30,7 +30,7 @@ import {
   Link as LinkIcon,
   Movie as MovieIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import { deviceApi } from '../services/api';
 
 function DeviceDetail() {
   const { id } = useParams();
@@ -54,7 +54,7 @@ function DeviceDetail() {
   const fetchDevice = async () => {
     try {
       setLoading(true);
-      const response = await axios.get(`/api/devices/${id}`);
+      const response = await deviceApi.getDevice(id);
       setDevice(response.data);
       setLoading(false);
     } catch (err) {
@@ -66,7 +66,11 @@ function DeviceDetail() {
 
   const handleDeviceAction = async (action) => {
     try {
-      await axios.post(`/api/devices/${id}/${action}`);
+      if (action === 'pause') {
+        await deviceApi.pauseVideo(id);
+      } else if (action === 'stop') {
+        await deviceApi.stopVideo(id);
+      }
       setSnackbar({
         open: true,
         message: `Device ${action} successful`,

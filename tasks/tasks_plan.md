@@ -44,6 +44,37 @@ This document outlines planned tasks for the `nano-dlna` project, organized by p
         *   Address warnings (Pydantic, SQLAlchemy, FastAPI, Twisted deprecations).
     *   *Definition of Done:* `pytest --cov=.` runs successfully in `web/backend` with 0 failures. Coverage is reported accurately.
 
+4. **Task: ✅ Implement Renderer Service for Scene Management**
+    * *Status:* ✅ Completed
+    * *Priority:* High
+    * *Description:* Create a unified Renderer Service for managing scene projection across different display technologies (direct screen, DLNA, AirPlay) based on the design plan in `docs/plan_renderer_service.md`. This service will extract the existing functionality from standalone scripts into a more maintainable and extensible architecture.
+    * *Sub-Tasks:*
+        * ✅ Create the core Renderer Service architecture with process model and CLI flags
+        * ✅ Implement the Sender abstraction layer with interfaces for Different output methods
+        * ✅ Develop the AirPlay sender implementation, porting from the existing solution
+        * ✅ Implement the DLNA and Direct sender implementations
+        * ✅ Create the service API endpoints for renderer management
+        * ✅ Implement event publishing for status updates
+        * ✅ Develop health monitoring and automatic recovery
+        * ✅ Create migration path from standalone launcher
+        * ✅ Write comprehensive tests for all components
+    * *Definition of Done:* The Renderer Service is able to launch scenes on different projectors using multiple output technologies. It provides a REST API for control, emits status events, and handles health monitoring. All unit and integration tests pass, and the service successfully integrates with the dashboard.
+    * *References:* `docs/plan_renderer_service.md`
+
+5. **Task: ✅ Implement Depth Processing Feature**
+    * *Status:* ✅ Completed
+    * *Priority:* High
+    * *Description:* Implement a depth processing feature that allows users to upload depth maps, segment them using different methods, preview segmentations, export masks, and create projection mappings. This feature will enable advanced projection mapping capabilities for the dashboard.
+    * *Sub-Tasks:*
+        * ✅ Implement the Depth Loader module for loading depth maps from various file formats
+        * ✅ Implement the Depth Segmenter module for segmenting depth maps using different methods
+        * ✅ Implement the Depth Visualizer module for creating visualizations of depth maps and segmentations
+        * ✅ Create the Depth Router module for providing API endpoints for the depth processing feature
+        * ✅ Implement the frontend components for the depth processing feature
+        * ✅ Create comprehensive tests for all components
+    * *Definition of Done:* The Depth Processing feature is fully functional and has comprehensive test coverage. Users can upload depth maps, segment them using different methods, preview segmentations, export masks, and create projection mappings. All unit and integration tests pass, and the feature successfully integrates with the dashboard.
+    * *References:* `tasks/renderer_depth_status.md`
+
 ## Phase 1: Bug Fixes & Critical Improvements
 
 ### Web Dashboard Bugs
@@ -246,22 +277,68 @@ This document outlines planned tasks for the `nano-dlna` project, organized by p
       * Build test database seeding utilities
 
 12. **[HIGH] Write Core Tests**
-    * ✅ Implement unit tests for video looping functionality
-    * Implement additional unit tests:
-      * Test all DLNA protocol operations
-      * Verify device discovery and management
-      * Test media streaming functionality
-      * Validate playback control actions
-    * Create integration tests:
-      * Test end-to-end device discovery and playback
-      * Verify web dashboard functionality
-      * Test CLI commands with real media files
-      * Validate configuration loading and saving
-    * Add regression tests for known issues:
-      * Test broken path edge cases
-      * Verify error recovery mechanisms
+    *   *Status:* In Progress
+    *   *Priority:* High
+    *   *Description:* Expand test coverage significantly by implementing comprehensive unit and integration tests for core backend functionality. This ensures reliability and prevents regressions.
+    *   *Sub-Tasks:*
+        *   **Implement comprehensive API endpoint tests using `TestClient`:**
+            *   ✅ Cover all endpoints in `renderer_router.py`.
+            *   ✅ Cover all endpoints in `depth_router.py`.
+            *   Cover all endpoints in `device_router.py`.
+            *   Cover all endpoints in `video_router.py`.
+            *   Cover all endpoints in `streaming_router.py`.
+            *   Include tests for success (2xx), failure (4xx), and edge cases.
+        *   **Implement unit tests for core service components:**
+            *   ✅ Test `RendererService` logic (mocking dependencies).
+            *   Test `DeviceService` logic (mocking DB and DeviceManager).
+            *   Test `VideoService` logic (mocking DB and StreamingService).
+        *   **Implement unit tests for core logic components:**
+            *   ✅ Test Depth Processing components (Loader, Segmenter, Visualizer).
+            *   Test `DeviceManager` functionality.
+            *   Test `StreamingSessionRegistry` operations.
+            *   Test `DLNADevice` and `TranscreenDevice` methods (mocking network calls).
+        *   **Implement unit tests for database models and interactions:**
+            *   Test model creation, relationships, and methods.
+            *   Test database utility functions if any.
+        *   **Implement integration tests:**
+            *   ✅ Created `test_integration.py` with comprehensive integration tests.
+            *   Test end-to-end flows (e.g., API call -> Service -> DB).
+            *   Verify interactions between different components.
+            *   Use real database sessions via fixtures where appropriate.
+        *   **Add regression tests for known issues:**
+            *   Test specific scenarios related to previously fixed bugs (e.g., path issues, looping).
+    *   *Definition of Done:* A comprehensive suite of unit and integration tests exists, covering critical backend components and API endpoints. Tests pass reliably. Test coverage significantly increased (tracked by Task: Increase Backend Test Coverage).
 
-1. **[CRITICAL] Increase Backend Test Coverage**
+12A. **[HIGH] Implement End-to-End Testing for Renderer and Depth Processing**
+    *   *Status:* ✅ Completed
+    *   *Priority:* High
+    *   *Description:* Create comprehensive end-to-end tests for the renderer and depth processing features to ensure they work correctly together and with other components of the system.
+    *   *Sub-Tasks:*
+        *   ✅ Create a shell script for testing renderer and depth processing API endpoints.
+        *   ✅ Implement tests for the renderer workflow (start, status, stop).
+        *   ✅ Implement tests for the depth processing workflow (upload, segment, preview, export).
+        *   ✅ Implement tests for the integration between renderer and depth processing.
+        *   ✅ Test both direct API endpoints and proxied endpoints.
+        *   ✅ Add proper error handling and reporting to the test script.
+    *   *Definition of Done:* A comprehensive end-to-end test script exists for the renderer and depth processing features. The script tests all API endpoints and workflows, and reports success or failure clearly.
+    *   *References:* `web/test_renderer_depth_e2e.sh`
+
+12B. **[HIGH] Create Comprehensive Test Plan**
+    *   *Status:* ✅ Completed
+    *   *Priority:* High
+    *   *Description:* Create a comprehensive test plan for the nano-dlna dashboard, with a focus on the renderer and depth processing features. This plan will guide future testing efforts and ensure that all aspects of these features are properly tested.
+    *   *Sub-Tasks:*
+        *   ✅ Define testing strategy (levels, approaches, tools).
+        *   ✅ Identify test coverage requirements for backend, frontend, and API.
+        *   ✅ Create detailed test cases for renderer and depth processing features.
+        *   ✅ Define test environment requirements.
+        *   ✅ Establish test execution process and automation.
+        *   ✅ Define test maintenance procedures.
+        *   ✅ Identify risks and mitigations.
+    *   *Definition of Done:* A comprehensive test plan document exists that covers all aspects of testing for the nano-dlna dashboard, with a focus on the renderer and depth processing features.
+    *   *References:* `tasks/test_plan.md`
+
+13. **[CRITICAL] Increase Backend Test Coverage**
    * **Status:** Pending
    * **Goal:** Significantly increase test coverage for the FastAPI backend (`web/backend/`).
    * **Definition of Done:**
@@ -473,6 +550,21 @@ This document outlines planned tasks for the `nano-dlna` project, organized by p
 - [ ] Document depth processing module usage
 - [ ] Document projection mapping capabilities
 - [ ] Create example workflow for depth-based projection
+
+## Phase X: Maintenance & Cleanup
+
+23. **[MEDIUM] Clean Up Unnecessary Project Files**
+    *   *Status:* Not Started
+    *   *Priority:* Medium
+    *   *Description:* Review the project structure and remove any files that are no longer needed. This includes old test files, unused scripts in `alternatives/`, potentially outdated documentation or configuration examples, build artifacts not covered by `.gitignore`, etc.
+    *   *Sub-Tasks:*
+        *   Review files in the root directory.
+        *   Review files/folders in `alternatives/`.
+        *   Review files in `tests/` and `web/backend/tests/` / `web/backend/tests_backend/` for outdated/unused test files.
+        *   Review `docs/` and `tasks/` for outdated markdown files.
+        *   Check build directories (`build/`, `nanodlna.egg-info/`) and ensure `.gitignore` is effective.
+        *   Verify no critical files are accidentally removed.
+    *   *Definition of Done:* Unnecessary files are removed from the repository, reducing clutter and potential confusion. The project structure is cleaner.
 
 ## Definition of Done
 - Code must pass all tests

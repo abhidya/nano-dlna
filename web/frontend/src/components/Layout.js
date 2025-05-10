@@ -22,6 +22,8 @@ import {
   Devices as DevicesIcon,
   VideoLibrary as VideoLibraryIcon,
   Settings as SettingsIcon,
+  ViewInAr as RendererIcon,
+  Layers as DepthIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -30,6 +32,8 @@ const menuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
   { text: 'Devices', icon: <DevicesIcon />, path: '/devices' },
   { text: 'Videos', icon: <VideoLibraryIcon />, path: '/videos' },
+  { text: 'Renderer', icon: <RendererIcon />, path: '/renderer' },
+  { text: 'Depth Processing', icon: <DepthIcon />, path: '/depth' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 

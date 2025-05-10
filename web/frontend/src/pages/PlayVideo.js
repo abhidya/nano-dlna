@@ -26,7 +26,7 @@ import {
   PlayArrow as PlayIcon,
   Movie as MovieIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import { deviceApi, videoApi } from '../services/api';
 
 function PlayVideo() {
   const { id } = useParams();
@@ -53,8 +53,8 @@ function PlayVideo() {
       setLoading(true);
       // Fetch device and videos in parallel
       const [deviceResponse, videosResponse] = await Promise.all([
-        axios.get(`/api/devices/${id}`),
-        axios.get('/api/videos')
+        deviceApi.getDevice(id),
+        videoApi.getVideos()
       ]);
       
       setDevice(deviceResponse.data);
@@ -76,10 +76,7 @@ function PlayVideo() {
   const handlePlayVideo = async () => {
     try {
       setPlaying(true);
-      await axios.post(`/api/devices/${id}/play`, {
-        video_id: selectedVideo,
-        loop: loop
-      });
+      await deviceApi.playVideo(id, selectedVideo, loop);
       
       setSnackbar({
         open: true,

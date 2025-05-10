@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create an axios instance with default config
 const api = axios.create({
-  baseURL: 'http://localhost:8000/api',
+  baseURL: '/api',  // Use relative URL to work with the proxy in package.json
   headers: {
     'Content-Type': 'application/json',
   },
@@ -31,8 +31,21 @@ api.interceptors.response.use(
       // that falls out of the range of 2xx
       console.error('API Error Response:', error.response.data);
       console.error('Status:', error.response.status);
+      
+      // Add more specific error handling based on status codes
+      if (error.response.status === 404) {
+        console.error('API endpoint not found:', error.config.url);
+        // You could dispatch to a notification system here
+      } else if (error.response.status === 500) {
+        console.error('Server error occurred:', error.config.url);
+      } else if (error.response.status === 401) {
+        console.error('Unauthorized access:', error.config.url);
+      } else if (error.response.status === 403) {
+        console.error('Forbidden access:', error.config.url);
+      }
     } else if (error.request) {
       // The request was made but no response was received
+      console.error('No response received from API. Backend may be down.');
       console.error('API Error Request:', error.request);
     } else {
       // Something happened in setting up the request that triggered an Error
@@ -80,6 +93,77 @@ const videoApi = {
     api.post('/videos/scan-directory', null, { params: { directory } }),
 };
 
+// Renderer API
+const rendererApi = {
+  startRenderer: (scene, projector, options = {}) => 
+    api.post('/renderer/start', { scene, projector, options }),
+  stopRenderer: (projector) => 
+    api.post('/renderer/stop', { projector }),
+  pauseRenderer: (projectorId) => 
+    api.post(`/renderer/pause/${projectorId}`),
+  resumeRenderer: (projectorId) => 
+    api.post(`/renderer/resume/${projectorId}`),
+  getRendererStatus: (projectorId) => 
+    api.get(`/renderer/status/${projectorId}`),
+  listRenderers: () => 
+    api.get('/renderer/list'),
+  listProjectors: () => 
+    api.get('/renderer/projectors'),
+  listScenes: () => 
+    api.get('/renderer/scenes'),
+  startProjector: (projectorId) => 
+    api.post('/renderer/start_projector', null, { params: { projector_id: projectorId } }),
+  // AirPlay discovery endpoints
+  discoverAirPlayDevices: () => 
+    api.get('/renderer/airplay/discover'),
+  listAirPlayDevices: () => 
+    api.get('/renderer/airplay/list'),
+  getAllAirPlayDevices: () => 
+    api.get('/renderer/airplay/devices'),
+};
+
+// Depth Processing API
+const depthApi = {
+  uploadDepthMap: (formData) => 
+    api.post('/depth/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    }),
+  previewDepthMap: (depthId) => 
+    `/api/depth/preview/${depthId}`,
+  segmentDepthMap: (depthId, segmentationParams) => 
+    api.post(`/depth/segment/${depthId}`, segmentationParams),
+  previewSegmentation: (depthId, alpha = 0.5) => 
+    `/api/depth/segmentation_preview/${depthId}?alpha=${alpha}`,
+  exportMasks: (depthId, segmentIds, cleanMask = true, minArea = 100, kernelSize = 3) => 
+    api.post(`/depth/export_masks/${depthId}`, { segment_ids: segmentIds, clean_mask: cleanMask, min_area: minArea, kernel_size: kernelSize }),
+  deleteDepthMap: (depthId) => 
+    api.delete(`/depth/${depthId}`),
+  getMask: (depthId, segmentId, clean = true, minArea = 100, kernelSize = 3) => 
+    `/api/depth/mask/${depthId}/${segmentId}?clean=${clean}&min_area=${minArea}&kernel_size=${kernelSize}`,
+  createProjection: (config) => 
+    api.post('/depth/projection/create', config),
+  getProjection: (configId) => 
+    `/api/depth/projection/${configId}`,
+  deleteProjection: (configId) => 
+    api.delete(`/depth/projection/${configId}`),
+};
+
+// Streaming API
+const streamingApi = {
+  getStreamingStats: () => api.get('/streaming/'),
+  startStreaming: (deviceId, videoPath) => 
+    api.post('/streaming/start', { device_id: deviceId, video_path: videoPath }),
+  getSessions: () => api.get('/streaming/sessions'),
+  getSession: (sessionId) => api.get(`/streaming/sessions/${sessionId}`),
+  getSessionsForDevice: (deviceName) => api.get(`/streaming/device/${deviceName}`),
+  completeSession: (sessionId) => api.post(`/streaming/sessions/${sessionId}/complete`),
+  resetSession: (sessionId) => api.post(`/streaming/sessions/${sessionId}/reset`),
+  getStreamingAnalytics: () => api.get('/streaming/analytics'),
+  getStreamingHealth: () => api.get('/streaming/health'),
+};
+
 // Settings API (placeholder for future implementation)
 const settingsApi = {
   getSettings: () => Promise.resolve({ 
@@ -93,4 +177,12 @@ const settingsApi = {
   updateSettings: (settings) => Promise.resolve(settings),
 };
 
-export { api, deviceApi, videoApi, settingsApi };
+export { 
+  api, 
+  deviceApi, 
+  videoApi, 
+  rendererApi, 
+  depthApi, 
+  streamingApi, 
+  settingsApi 
+};

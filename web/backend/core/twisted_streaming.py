@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+0#!/usr/bin/env python3
 # encoding: UTF-8
 
 import os
@@ -291,7 +291,8 @@ class TwistedStreamingServer:
         self.files_dict = {}
         self.lock = threading.Lock()
         
-    def start_server(self, files: Dict[str, str], serve_ip: Optional[str] = None, port: Optional[int] = None) -> Tuple[Dict[str, str], Any]:
+    def start_server(self, files: Dict[str, str], serve_ip: Optional[str] = None, 
+                    port: Optional[int] = None, port_range: Optional[Tuple[int, int]] = None) -> Tuple[Dict[str, str], Any]:
         """
         Start a streaming server for the given files
         
@@ -299,14 +300,40 @@ class TwistedStreamingServer:
             files: Dictionary mapping file keys to file paths
             serve_ip: IP address to serve on (optional)
             port: Port to serve on (optional)
+            port_range: Tuple of (min_port, max_port) to try (optional)
             
         Returns:
             Tuple[Dict[str, str], Any]: Dictionary mapping file keys to URLs and server instance
         """
         import errno
-        max_port = 8100
-        base_port = port if port else 8000
-        for try_port in range(base_port, max_port + 1):
+        import socket
+        import traceback
+        
+        # Define port range
+        if port_range and isinstance(port_range, (list, tuple)) and len(port_range) >= 2:
+            base_port, max_port = port_range[0], port_range[1]
+            logger.debug(f"Using specified port range: {base_port}-{max_port}")
+        else:
+            max_port = 9100
+            base_port = port if port else 9000
+            logger.debug(f"Using default port range: {base_port}-{max_port}")
+        
+        # Track ports we've already tried to avoid retrying the same port
+        tried_ports = set()
+        
+        # First try the specified port if provided
+        if port is not None:
+            ports_to_try = [port] + list(range(base_port, max_port + 1))
+        else:
+            ports_to_try = list(range(base_port, max_port + 1))
+        
+        for try_port in ports_to_try:
+            # Skip if we've already tried this port
+            if try_port in tried_ports:
+                continue
+                
+            tried_ports.add(try_port)
+            
             try:
                 # Stop any existing server
                 self.stop_server()
@@ -314,6 +341,21 @@ class TwistedStreamingServer:
                 # Get the serve IP if not provided
                 if not serve_ip:
                     serve_ip = self.get_serve_ip()
+                
+                # Test if port is available before creating server
+                test_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                test_socket.settimeout(1)
+                
+                try:
+                    # Try to bind to the port
+                    test_socket.bind((serve_ip, try_port))
+                    # Port is available, close the test socket
+                    test_socket.close()
+                except socket.error:
+                    # Port is in use, try the next one
+                    test_socket.close()
+                    logger.warning(f"Port {try_port} is already in use, trying next port...")
+                    continue
                 
                 # Create the server
                 server = StreamingServer(files, serve_ip, try_port)
@@ -332,8 +374,6 @@ class TwistedStreamingServer:
                 logger.info(f"Started streaming server on {serve_ip}:{try_port}")
                 return urls, server
             except Exception as e:
-                import socket
-                import traceback
                 # Check if it's an address in use error
                 if hasattr(e, 'errno') and e.errno == errno.EADDRINUSE:
                     logger.warning(f"Port {try_port} in use, trying next port...")
@@ -343,7 +383,11 @@ class TwistedStreamingServer:
                     continue
                 else:
                     logger.error(f"Error starting streaming server: {e}\n{traceback.format_exc()}")
-                    raise
+                    # Don't raise immediately, try other ports
+                    if len(tried_ports) >= len(ports_to_try):
+                        # Only raise if we've tried all ports
+                        raise
+        
         logger.error(f"Could not find an available port between {base_port} and {max_port} for streaming server.")
         raise RuntimeError(f"No available port found for streaming server in range {base_port}-{max_port}")
     
@@ -401,16 +445,20 @@ def get_instance():
     global _instance
     if _instance is None:
         _instance = TwistedStreamingServer()
+    else:
+        # Stop any existing servers to prevent port conflicts
+        _instance.stop_server()
     return _instance 
 
-def start_server(files: Dict[str, str], serve_ip: str, serve_port: int = 9000) -> tuple:
+def start_server(files: Dict[str, str], serve_ip: str, serve_port: Optional[int] = None, 
+                port_range: Optional[Tuple[int, int]] = None) -> tuple:
     """
     Start a streaming server.
     
     Args:
         files_dict: Dictionary mapping file names to file paths.
         ip: IP address to bind to.
-        port: Port to bind to.
+        port: Port to bind to (optional). If not provided, will try ports starting from 9000.
         
     Returns:
         tuple: URL mapping and server object.
@@ -418,10 +466,10 @@ def start_server(files: Dict[str, str], serve_ip: str, serve_port: int = 9000) -
     global reactor_running, server_thread, server_active, reactor_lock
     
     logger.info(f"Starting streaming server with files: {files}")
-    logger.info(f"Server IP: {serve_ip}, port: {serve_port}")
+    logger.info(f"Server IP: {serve_ip}, port: {serve_port if serve_port else 'auto-select'}")
     
     # Get singleton instance
     service = get_instance()
     
-    # Start server
-    return service.start_server(files, serve_ip, serve_port) 
+    # Start server with dynamic port selection if needed
+    return service.start_server(files, serve_ip, serve_port, port_range)

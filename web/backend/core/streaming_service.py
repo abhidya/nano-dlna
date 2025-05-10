@@ -295,21 +295,32 @@ class StreamingService:
             logger.error(f"Error getting serve IP: {e}")
             return '127.0.0.1'
     
-    def start_server(self, files: Dict[str, str], serve_ip: str, serve_port: int = 8000, 
-                     device_name: Optional[str] = None) -> Tuple[Dict[str, str], Any]:
+    def start_server(self, files: Dict[str, str], serve_ip: str, serve_port: Optional[int] = None, 
+                     port_range: Optional[Tuple[int, int]] = None, device_name: Optional[str] = None) -> Tuple[Dict[str, str], Any]:
         """
         Start an HTTP server to serve media files
         
         Args:
             files: Dictionary mapping file keys to file paths
             serve_ip: IP address to serve on
-            serve_port: Port to serve on
+            serve_port: Starting port to serve on (optional, will use port_range if provided)
+            port_range: Range of ports to try (min_port, max_port) (optional)
             device_name: Name of the device receiving the stream
             
         Returns:
             Tuple[Dict[str, str], Any]: Tuple of (file URLs, server instance)
         """
-        logger.debug(f"Starting streaming server on {serve_ip}:{serve_port}")
+        # Determine port selection strategy
+        if port_range and isinstance(port_range, (list, tuple)) and len(port_range) >= 2:
+            min_port, max_port = port_range[0], port_range[1]
+            logger.debug(f"Starting streaming server on {serve_ip} with port range {min_port}-{max_port}")
+        elif serve_port:
+            min_port, max_port = serve_port, serve_port + 100  # Try up to 100 ports from the starting port
+            logger.debug(f"Starting streaming server on {serve_ip} starting at port {serve_port}")
+        else:
+            # Default port range if nothing specified
+            min_port, max_port = 9000, 9100
+            logger.debug(f"Starting streaming server on {serve_ip} with default port range {min_port}-{max_port}")
         
         # Create a temporary directory for serving files
         temp_dir = tempfile.TemporaryDirectory()
@@ -322,12 +333,11 @@ class StreamingService:
             normalized_files[file_key] = file_name
             logger.debug(f"Created symlink for {file_key}: {file_path} -> {file_name}")
         
-        # Try to bind to the specified port, increment if it's in use
-        max_tries = 100
-        actual_port = serve_port
+        # Try ports in the specified range
+        max_tries = max_port - min_port + 1
         httpd = None
         
-        for i in range(max_tries):
+        for port in range(min_port, max_port + 1):
             try:
                 # Register streaming sessions for each file
                 sessions = {}
@@ -337,7 +347,7 @@ class StreamingService:
                             device_name=device_name,
                             video_path=file_path,
                             server_ip=serve_ip,
-                            server_port=serve_port + i
+                            server_port=port
                         )
                         sessions[normalized_files[file_key]] = session.session_id
                 
@@ -366,8 +376,8 @@ class StreamingService:
                                                  file_map=normalized_files, **kwargs)
                 
                 # Create the HTTP server with our handler
-                httpd = HTTPServer((serve_ip, serve_port + i), handler_factory)
-                actual_port = serve_port + i
+                httpd = HTTPServer((serve_ip, port), handler_factory)
+                actual_port = port
                 
                 # Store session mapping
                 for file_name, session_id in sessions.items():
@@ -376,7 +386,7 @@ class StreamingService:
                 break
             except OSError as e:
                 if e.errno == errno.EADDRINUSE:  # Address already in use
-                    logger.debug(f"Port {serve_port + i} in use, trying next port")
+                    logger.debug(f"Port {port} in use, trying next port")
                     continue
                 else:
                     # Cancel any registered sessions before raising error

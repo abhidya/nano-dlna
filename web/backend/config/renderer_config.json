@@ -1,0 +1,96 @@
+{
+  "senders": {
+    "direct": {
+      "enabled": true,
+      "default_display": 0,
+      "browser_path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "kiosk_mode": true
+    },
+    "dlna": {
+      "enabled": true,
+      "stream_port_range": [9000, 9100],
+      "connect_timeout": 5
+    },
+    "airplay": {
+      "enabled": true,
+      "script_path": "auto",
+      "connect_timeout": 10
+    }
+  },
+  "renderers": {
+    "chrome": {
+      "path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "args": ["--kiosk", "--disable-infobars", "--no-first-run"],
+      "timeout": 30,
+      "headless": true
+    },
+    "chrome-visible": {
+      "path": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+      "args": ["--kiosk", "--disable-infobars", "--no-first-run", "--start-fullscreen"],
+      "timeout": 30,
+      "headless": false
+    }
+  },
+  "scenes": {
+    "frontdoor-v1": {
+      "template": "overlay_frontdoor/index.html",
+      "data": {
+        "weather_key": "env:WEATHER_API",
+        "muni_stop": 13915,
+        "video_host": "http://10.0.0.74",
+        "video_ports": [9000, 8999, 8998],
+        "video_file": "door6.mp4"
+      }
+    },
+    "overlay-frontdoor": {
+      "template": "/Users/mannybhidya/PycharmProjects/overlay frontdoor/index.html",
+      "data": {
+        "autoplay": true,
+        "loop": true,
+        "video_file": "/Users/mannybhidya/PycharmProjects/nano-dlna/door6.mp4",
+        "video_host": "http://10.0.0.74",
+        "video_ports": [9000, 8999, 8998]
+      }
+    },
+    "kitchen-v1": {
+      "template": "kitchendoorv2.mp4",
+      "data": {
+        "autoplay": true,
+        "loop": true
+      }
+    },
+    "blank": {
+      "template": "blank.html",
+      "data": {
+        "background_color": "black"
+      }
+    }
+  },
+  "projectors": {
+    "proj-hallway": {
+      "sender": "airplay",
+      "target_name": "Hallway TV",
+      "fallback_sender": "dlna",
+      "fallback_target": "Hallway_TV_DLNA"
+    },
+    "proj-kitchen": {
+      "sender": "dlna",
+      "target_name": "SideProjector_dlna"
+    },
+    "proj-local": {
+      "sender": "direct",
+      "target_name": "0"
+    },
+    "proj-as": {
+      "sender": "airplay",
+      "target_name": "AS-Projector[AirPlay]"
+    },
+    "proj-hccast": {
+      "sender": "airplay",
+      "target_name": "Hccast-3ADE76",
+      "scene": "overlay-frontdoor",
+      "renderer": "chrome-visible"
+    }
+  },
+  "health_check_interval": 10
+}

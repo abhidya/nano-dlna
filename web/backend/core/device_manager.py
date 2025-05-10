@@ -937,10 +937,13 @@ class DeviceManager:
             streaming_server = TwistedStreamingServer.get_instance()
             
             try:
+                # Use port range (9000, 9100) to avoid conflicts with other services
+                port_range = (9000, 9100)
                 urls, server = streaming_server.start_server(
                     files=files_dict,
                     serve_ip=serve_ip,
-                    port=8000
+                    port=None,  # Use dynamic port selection
+                    port_range=port_range
                 )
             except Exception as e:
                 logger.error(f"Failed to start streaming server: {e}")
@@ -1327,13 +1330,14 @@ class DeviceManager:
                 seen.add(device_str)
         return result_devices
 
-    def _start_streaming_server(self, video_path: str, device_name: str) -> Tuple[str, Any]:
+    def _start_streaming_server(self, video_path: str, device_name: str, port_range: Optional[Tuple[int, int]] = None) -> Tuple[str, Any]:
         """
         Start a streaming server for a video file
         
         Args:
             video_path: Path to the video file to stream
             device_name: Name of the device to stream to
+            port_range: Optional tuple of (min_port, max_port) for streaming server
             
         Returns:
             Tuple[str, Any]: URL of the video and server instance
@@ -1349,10 +1353,15 @@ class DeviceManager:
             # Start the streaming server
             from .twisted_streaming import TwistedStreamingServer
             streaming_server = TwistedStreamingServer.get_instance()
+            # Use port range (9000-9100) to avoid conflicts with other services
+            if port_range is None:
+                port_range = (9000, 9100)
+                
             urls, server = streaming_server.start_server(
                 files=files_dict,
                 serve_ip=serve_ip,
-                port=8000  # Use port parameter instead of serve_port
+                port=None,  # Use dynamic port selection
+                port_range=port_range
             )
             
             # Return the URL for the video

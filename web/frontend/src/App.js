@@ -14,6 +14,8 @@ import PlayVideo from './pages/PlayVideo';
 import Videos from './pages/Videos';
 import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
+import Renderer from './pages/Renderer';
+import DepthProcessing from './pages/DepthProcessing';
 
 // Create a theme instance
 const theme = createTheme({
@@ -47,6 +49,8 @@ function App() {
           <Route path="/videos/scan" element={<Videos />} />
           <Route path="/settings" element={<Settings />} />
           <Route path="/settings/load-config" element={<Settings />} />
+          <Route path="/renderer" element={<Renderer />} />
+          <Route path="/depth" element={<DepthProcessing />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Layout>

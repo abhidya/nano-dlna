@@ -1,0 +1,37 @@
+version: '3'
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - ./data:/data
+      - ./uploads:/uploads
+    environment:
+      - DATABASE_URL=sqlite:///./data/nanodlna.db
+      - DEBUG=False
+      - HOST=0.0.0.0
+      - PORT=8000
+    networks:
+      - nanodlna-network
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    networks:
+      - nanodlna-network
+    restart: unless-stopped
+
+networks:
+  nanodlna-network:
+    driver: bridge

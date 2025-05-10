@@ -1,0 +1,1 @@
+../../tests/test_device_manager.py

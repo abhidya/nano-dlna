@@ -1,0 +1,1 @@
+../../tests/test_streaming_management.py

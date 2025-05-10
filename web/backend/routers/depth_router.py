@@ -9,16 +9,49 @@ import io
 import json
 import uuid
 
-from core.depth_processing.core.depth_loader import DepthLoader
-from core.depth_processing.core.segmentation import DepthSegmenter
-from core.depth_processing.utils.visualizer import DepthVisualizer
+# Try to import depth processing modules
+# These are wrapped in try-except to allow the app to start without these dependencies
+try:
+    from core.depth_processing.core.depth_loader import DepthLoader
+    from core.depth_processing.core.segmentation import DepthSegmenter
+    from core.depth_processing.utils.visualizer import DepthVisualizer
+    DEPTH_PROCESSING_AVAILABLE = True
+except ImportError as e:
+    logging.warning(f"Depth processing modules not available: {e}")
+    DEPTH_PROCESSING_AVAILABLE = False
+    # Define placeholder classes to avoid reference errors
+    class DepthLoader:
+        @staticmethod
+        def load_depth_map(*args, **kwargs): return None
+        @staticmethod
+        def normalize_depth_map(*args, **kwargs): return None
+        @staticmethod
+        def visualize_depth_map(*args, **kwargs): return None
+    
+    class DepthSegmenter:
+        @staticmethod
+        def kmeans_segmentation(*args, **kwargs): return None, []
+        @staticmethod
+        def threshold_segmentation(*args, **kwargs): return None
+        @staticmethod
+        def depth_band_segmentation(*args, **kwargs): return None
+        @staticmethod
+        def extract_binary_mask(*args, **kwargs): return None
+        @staticmethod
+        def clean_binary_mask(*args, **kwargs): return None
+    
+    class DepthVisualizer:
+        @staticmethod
+        def export_image(*args, **kwargs): return b""
+        @staticmethod
+        def create_overlay(*args, **kwargs): return None
 
 # Configure logger
 logger = logging.getLogger(__name__)
 
 # Create router
 router = APIRouter(
-    prefix="/api/depth",
+    prefix="/depth",
     tags=["depth"],
     responses={404: {"description": "Not found"}},
 )
@@ -390,7 +423,7 @@ async def create_projection(config: ProjectionConfig):
         projection_configs[config_id] = {
             "config": config.dict(),
             "html_path": html_path,
-            "url": f"/api/depth/projection/{config_id}"
+            "url": f"/depth/projection/{config_id}"
         }
         
         # Start casting to the device if requested
@@ -624,4 +657,4 @@ def generate_projection_html(config: ProjectionConfig) -> str:
 </html>
 """
     
-    return html 
+    return html

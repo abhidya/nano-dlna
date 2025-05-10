@@ -19,7 +19,7 @@ from services.video_service import VideoService, get_video_service
 from database.database import get_db
 
 router = APIRouter(
-    prefix="/api/streaming",
+    prefix="/streaming",
     tags=["streaming"],
     responses={404: {"description": "Not found"}},
 )
@@ -239,4 +239,4 @@ async def get_streaming_health() -> Dict[str, Any]:
         "error_sessions": error_sessions,
         "total_active_sessions": len(active_sessions),
         "status": "healthy" if health_score > 80 else "degraded" if health_score > 50 else "unhealthy"
-    } 
+    }

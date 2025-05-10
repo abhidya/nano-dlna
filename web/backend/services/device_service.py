@@ -297,7 +297,7 @@ class DeviceService:
             file_name = os.path.basename(video_path)
             files_dict = {file_name: video_path}
             serve_ip = self.device_manager.get_serve_ip() if hasattr(self.device_manager, 'get_serve_ip') else '127.0.0.1'
-            urls, server = streaming_server.start_server(files=files_dict, serve_ip=serve_ip, port=8000)
+            urls, server = streaming_server.start_server(files=files_dict, serve_ip=serve_ip, port=9000)
             video_url = urls[file_name]
             logger.info(f"Playing video {video_url} on device {device_id} (loop={loop})")
             success = device.play(video_url, loop)
@@ -481,12 +481,13 @@ class DeviceService:
             active_streaming_devices = set()
             try:
                 # Get all active streaming sessions
-                for device_name, sessions in streaming_registry.active_sessions.items():
-                    if any(session.active for session in sessions):
-                        active_streaming_devices.add(device_name)
-                        logger.info(f"Device {device_name} has active streaming sessions, skipping auto-play")
+                active_sessions = streaming_registry.get_active_sessions()
+                for session in active_sessions:
+                    active_streaming_devices.add(session.device_name)
+                    logger.info(f"Device {session.device_name} has active streaming sessions, skipping auto-play")
             except Exception as e:
                 logger.error(f"Error checking streaming registry: {e}")
+                logger.exception("Detailed streaming registry error:")
             
             # Save discovered devices to database
             db_devices = []
@@ -795,14 +796,26 @@ class DeviceService:
         """
         Sync the status of all devices in the database and in-memory with the current discovery results.
         Devices not found in the latest discovery are marked as 'disconnected'.
-        Devices found are marked as 'connected'.
+        Devices found are marked as 'connected' while preserving their playing status.
         """
         all_devices = self.db.query(DeviceModel).all()
         for device in all_devices:
             if device.name not in discovered_device_names:
                 self.update_device_status(device.name, "disconnected", is_playing=False)
             else:
-                self.update_device_status(device.name, "connected")
+                # Preserve the device's playing status when it's found in discovery
+                core_device = self.device_manager.get_device(device.name)
+                is_playing = False
+                
+                # Check if the device is playing from multiple sources
+                if core_device and core_device.is_playing:
+                    is_playing = True
+                elif device.is_playing:
+                    is_playing = True
+                elif device.current_video:
+                    is_playing = True
+                    
+                self.update_device_status(device.name, "connected", is_playing=is_playing)
 
     def get_device_instance(self, device_id: int):
         db_device = self.db.query(DeviceModel).filter(DeviceModel.id == device_id).first()

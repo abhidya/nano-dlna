@@ -6,7 +6,7 @@ import traceback
 import time
 import socket
 import threading
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Tuple
 from xml.sax.saxutils import escape as xmlescape
 
 if sys.version_info.major == 3:
@@ -40,6 +40,10 @@ class DLNADevice(Device):
         self._last_activity_time = None
         self._inactivity_timeout = 30  # Seconds of inactivity before considering playback stalled
         
+        # Video playback attributes
+        self.current_video_duration = None  # Duration of current video in seconds
+        self._looping = False  # Flag to indicate if video should loop
+        
         # Try to infer missing fields
         if not self.action_url and self.hostname:
             # Default action URL if not provided
@@ -62,13 +66,14 @@ class DLNADevice(Device):
         if not self.hostname:
             logger.error(f"DLNA device {self.name} missing hostname")
     
-    def play(self, video_url: str, loop: bool = False) -> bool:
+    def play(self, video_url: str, loop: bool = False, port_range: Optional[Tuple[int, int]] = (9000, 9100)) -> bool:
         """
         Play a video on the DLNA device
         
         Args:
             video_url: URL of the video to play
             loop: Whether to loop the video
+            port_range: Optional tuple of (min_port, max_port) for streaming server
             
         Returns:
             bool: True if successful, False otherwise
@@ -174,13 +179,23 @@ class DLNADevice(Device):
         logger.info(f"[{self.name}] Setting up loop monitoring for {video_url}")
         
         with self._thread_lock:
+            # Initialize thread attribute if it doesn't exist
+            if not hasattr(self, '_loop_thread'):
+                self._loop_thread = None
+                
             # Clean up existing thread if present
-            if hasattr(self, '_loop_thread') and self._loop_thread:
-                if self._loop_thread.is_alive():
-                    logger.debug(f"[{self.name}] Stopping existing loop thread")
-                    self._loop_enabled = False
-                    # Wait short time for thread to exit
-                    self._loop_thread.join(timeout=2.0)
+            if self._loop_thread is not None:
+                try:
+                    # Check if thread exists and is alive before trying to stop it
+                    if hasattr(self._loop_thread, 'is_alive') and self._loop_thread.is_alive():
+                        logger.debug(f"[{self.name}] Stopping existing loop thread")
+                        self._loop_enabled = False
+                        # Wait short time for thread to exit
+                        self._loop_thread.join(timeout=2.0)
+                except (AttributeError, TypeError) as e:
+                    logger.warning(f"[{self.name}] Error checking thread status: {e}")
+                    # Reset thread to None if there was an error
+                    self._loop_thread = None
             
             # Enable looping
             self._loop_enabled = True
@@ -738,25 +753,46 @@ class DLNADevice(Device):
         # Create and start the monitoring thread
         logger.info(f"[{self.name}] Setting up loop monitoring for {video_url}")
         
-        # Only start a new thread if one isn't already running
-        if hasattr(self, '_loop_thread') and self._loop_thread.is_alive():
-            logger.info(f"[{self.name}] Loop monitoring thread already running")
-            return
+        # Initialize thread attribute if it doesn't exist
+        if not hasattr(self, '_loop_thread'):
+            self._loop_thread = None
             
+        # Only start a new thread if one isn't already running
+        thread_is_running = False
+        if self._loop_thread is not None:
+            try:
+                # First check if the thread object exists and has the is_alive attribute
+                if hasattr(self._loop_thread, 'is_alive'):
+                    # Then check if the thread is alive
+                    thread_is_running = self._loop_thread.is_alive()
+                    if thread_is_running:
+                        logger.info(f"[{self.name}] Loop monitoring thread already running")
+                        return
+            except (AttributeError, TypeError) as e:
+                logger.warning(f"[{self.name}] Error checking thread status: {e}")
+                # Reset thread to None if there was an error
+                self._loop_thread = None
+            
+        # Create new thread
         self._loop_thread = threading.Thread(
             target=self._monitor_and_loop,
             args=(video_url,),
             daemon=True
         )
         
-        self._loop_thread.start()
-        logger.info(f"[{self.name}] Loop monitoring thread started")
-        
-        # Check if thread started successfully
-        if self._loop_thread.is_alive():
-            logger.info(f"[{self.name}] Loop monitoring thread started successfully.")
-        else:
-            logger.error(f"[{self.name}] Failed to start loop monitoring thread.")
+        # Start the thread
+        try:
+            self._loop_thread.start()
+            logger.info(f"[{self.name}] Loop monitoring thread started")
+            
+            # Check if thread started successfully
+            if hasattr(self._loop_thread, 'is_alive') and self._loop_thread.is_alive():
+                logger.info(f"[{self.name}] Loop monitoring thread started successfully.")
+            else:
+                logger.error(f"[{self.name}] Failed to start loop monitoring thread.")
+        except Exception as e:
+            logger.error(f"[{self.name}] Error starting loop monitoring thread: {e}")
+            self._loop_thread = None
             
     def _monitor_and_loop(self, video_url: str) -> None:
         """
@@ -767,8 +803,13 @@ class DLNADevice(Device):
         """
         import time
         
+        # Initialize video duration if not already set
+        if not hasattr(self, 'current_video_duration') or self.current_video_duration is None:
+            self.current_video_duration = None
+            
         # Keep trying to get the video duration
-        while self._looping and not self.current_video_duration:
+        retry_count = 0
+        while self._looping and (self.current_video_duration is None) and retry_count < 10:
             try:
                 transport_info = self._get_transport_info()
                 if transport_info and transport_info.get("duration"):
@@ -777,7 +818,7 @@ class DLNADevice(Device):
                     break
             except Exception as e:
                 logger.debug(f"[{self.name}] Error getting video duration: {e}")
-                pass
+                retry_count += 1
                 
             # Wait before trying again
             time.sleep(5)

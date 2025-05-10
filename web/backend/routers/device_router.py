@@ -26,7 +26,7 @@ device_manager = DeviceManager()
 
 # Create router
 router = APIRouter(
-    prefix="/api/devices",
+    prefix="/devices",
     tags=["devices"],
     responses={404: {"description": "Not found"}},
 )

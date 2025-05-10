@@ -14,17 +14,48 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 from database.database import init_db, get_db
-from routers import device_router, video_router, streaming_router
+from routers import device_router, video_router, streaming_router, renderer_router
 from core.device_manager import DeviceManager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
+import logging.handlers
+
+# Create a logger
 logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)
+
+# Create handlers
+console_handler = logging.StreamHandler()
+console_handler.setLevel(logging.INFO)
+
+# Create a rotating file handler for dashboard_run.log
+file_handler = logging.handlers.RotatingFileHandler(
+    'dashboard_run.log',
+    maxBytes=10485760,  # 10MB
+    backupCount=5,
+    encoding='utf-8'
+)
+file_handler.setLevel(logging.INFO)
+
+# Create formatters and add them to handlers
+log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+formatter = logging.Formatter(log_format)
+console_handler.setFormatter(formatter)
+file_handler.setFormatter(formatter)
+
+# Add handlers to the logger
+logger.addHandler(console_handler)
+logger.addHandler(file_handler)
+
+# Set up root logger to use our configuration
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+for handler in root_logger.handlers[:]:
+    root_logger.removeHandler(handler)
+root_logger.addHandler(console_handler)
+root_logger.addHandler(file_handler)
 
 # Create FastAPI app
 app = FastAPI(
@@ -42,15 +73,22 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(device_router)
-app.include_router(video_router)
-app.include_router(streaming_router)
+# Include routers with /api prefix
+app.include_router(device_router, prefix="/api")
+app.include_router(video_router, prefix="/api")
+app.include_router(streaming_router, prefix="/api")
+app.include_router(renderer_router, prefix="/api")  # Add the renderer router
 
 # Try to include depth_router if dependencies are available
 try:
+    # First check if numpy is available without importing anything from depth_processing
+    import numpy
+    import cv2
+    import PIL
+    import sklearn
+    # Only if all dependencies are available, import the depth_router
     from routers import depth_router
-    app.include_router(depth_router.router)  # Add the depth router
+    app.include_router(depth_router, prefix="/api")  # Add the depth router
     logger.info("Depth processing module loaded successfully")
 except ImportError as e:
     logger.warning(f"Depth processing module not loaded due to missing dependencies: {e}")
@@ -68,8 +106,20 @@ async def health_check():
 
 # Initialize services
 device_manager = DeviceManager()
+# Stop any existing streaming servers to prevent port conflicts
 streaming_service = get_twisted_streaming()
+streaming_service.stop_server()  # Explicitly stop any existing servers
 streaming_registry = StreamingSessionRegistry.get_instance()
+
+# Get or create the renderer service
+try:
+    from core.renderer_service.service import RendererService
+    from routers.renderer_router import get_renderer_service
+    renderer_service = get_renderer_service()
+    logger.info("Renderer Service initialized successfully")
+except Exception as e:
+    logger.warning(f"Renderer Service initialization failed: {e}")
+    renderer_service = None
 
 # Mount static files for the frontend
 @app.on_event("startup")
@@ -155,11 +205,26 @@ async def shutdown_event():
     
     # Stop device discovery
     device_manager.stop_discovery()
+    
+    # Stop renderer service if it's running
+    if renderer_service:
+        try:
+            renderer_service.shutdown()
+            logger.info("Renderer Service stopped")
+        except Exception as e:
+            logger.error(f"Error stopping Renderer Service: {e}")
 
 # Serve the frontend if the directory exists
 frontend_dir = os.path.join(os.path.dirname(__file__), "..", "frontend", "build")
 if os.path.exists(frontend_dir):
     app.mount("/app", StaticFiles(directory=frontend_dir, html=True), name="frontend")
+
+# Serve static files
+static_dir = os.path.join(os.path.dirname(__file__), "static")
+if not os.path.exists(static_dir):
+    os.makedirs(static_dir)
+    
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 if __name__ == "__main__":
     import uvicorn

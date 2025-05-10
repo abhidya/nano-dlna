@@ -36,7 +36,7 @@ import {
   PlayArrow as PlayIcon,
   Folder as FolderIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import { videoApi } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 function Videos() {
@@ -68,7 +68,7 @@ function Videos() {
   const fetchVideos = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/api/videos');
+      const response = await videoApi.getVideos();
       setVideos(response.data.videos);
       setLoading(false);
     } catch (err) {
@@ -80,7 +80,7 @@ function Videos() {
 
   const handleAddVideo = async () => {
     try {
-      await axios.post('/api/videos', newVideo);
+      await videoApi.addVideo(newVideo);
       setOpenAddDialog(false);
       setNewVideo({
         name: '',
@@ -104,7 +104,7 @@ function Videos() {
 
   const handleDeleteVideo = async () => {
     try {
-      await axios.delete(`/api/videos/${selectedVideo.id}`);
+      await videoApi.deleteVideo(selectedVideo.id);
       setOpenDeleteDialog(false);
       setSelectedVideo(null);
       setSnackbar({
@@ -126,9 +126,7 @@ function Videos() {
   const handleScanDirectory = async () => {
     try {
       setScanning(true);
-      const response = await axios.post('/api/videos/scan-directory', null, {
-        params: { directory: scanDirectory }
-      });
+      const response = await videoApi.scanDirectory(scanDirectory);
       setOpenScanDialog(false);
       setScanDirectory('');
       setSnackbar({
@@ -157,11 +155,7 @@ function Videos() {
     formData.append('name', uploadFile.name.split('.')[0]);
 
     try {
-      const response = await axios.post('/api/videos/upload', formData, {
-        headers: {
-          'Content-Type': 'multipart/form-data'
-        }
-      });
+      const response = await videoApi.uploadVideo(formData);
       setSnackbar({
         open: true,
         message: 'Video uploaded successfully',

@@ -34,7 +34,7 @@ import {
   Pause as PauseIcon,
   Stop as StopIcon
 } from '@mui/icons-material';
-import axios from 'axios';
+import { deviceApi } from '../services/api';
 import { useNavigate } from 'react-router-dom';
 
 function Devices() {
@@ -66,19 +66,38 @@ function Devices() {
   const fetchDevices = async () => {
     try {
       setLoading(true);
-      const response = await axios.get('/api/devices');
+      setError(null); // Clear any previous errors
+      const response = await deviceApi.getDevices();
       setDevices(response.data.devices);
       setLoading(false);
     } catch (err) {
       console.error('Error fetching devices:', err);
-      setError('Failed to load devices. Please try again later.');
+      
+      // Provide more specific error messages based on the error
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 404) {
+          setError('API endpoint not found. The server may be misconfigured.');
+        } else if (err.response.status === 500) {
+          setError('Server error occurred. Please try again later.');
+        } else {
+          setError(`Failed to load devices: ${err.response.data.detail || 'Unknown error'}`);
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        setError('No response from server. The backend may be down.');
+      } else {
+        // Something happened in setting up the request
+        setError(`Failed to load devices: ${err.message}`);
+      }
+      
       setLoading(false);
     }
   };
 
   const handleAddDevice = async () => {
     try {
-      await axios.post('/api/devices', newDevice);
+      await deviceApi.createDevice(newDevice);
       setOpenAddDialog(false);
       setNewDevice({
         name: '',
@@ -95,9 +114,36 @@ function Devices() {
       fetchDevices();
     } catch (err) {
       console.error('Error adding device:', err);
+      
+      // Provide more specific error messages based on the error
+      let errorMessage = 'Failed to add device';
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 400) {
+          // Bad request - likely validation error
+          errorMessage = err.response.data.detail 
+            ? `Validation error: ${err.response.data.detail}` 
+            : 'Invalid device data provided';
+        } else if (err.response.status === 409) {
+          // Conflict - device might already exist
+          errorMessage = 'A device with this name or hostname already exists';
+        } else if (err.response.status === 500) {
+          errorMessage = 'Server error occurred while adding device';
+        } else if (err.response.data && err.response.data.detail) {
+          errorMessage = `Failed to add device: ${err.response.data.detail}`;
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response from server. The backend may be down.';
+      } else {
+        // Something happened in setting up the request
+        errorMessage = `Failed to add device: ${err.message}`;
+      }
+      
       setSnackbar({
         open: true,
-        message: 'Failed to add device',
+        message: errorMessage,
         severity: 'error'
       });
     }
@@ -105,7 +151,7 @@ function Devices() {
 
   const handleDeleteDevice = async () => {
     try {
-      await axios.delete(`/api/devices/${selectedDevice.id}`);
+      await deviceApi.deleteDevice(selectedDevice.id);
       setOpenDeleteDialog(false);
       setSelectedDevice(null);
       setSnackbar({
@@ -116,17 +162,47 @@ function Devices() {
       fetchDevices();
     } catch (err) {
       console.error('Error deleting device:', err);
+      
+      // Provide more specific error messages based on the error
+      let errorMessage = 'Failed to delete device';
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 404) {
+          errorMessage = 'Device not found. It may have been already deleted.';
+        } else if (err.response.status === 500) {
+          errorMessage = 'Server error occurred while deleting device.';
+        } else if (err.response.status === 403) {
+          errorMessage = 'You do not have permission to delete this device.';
+        } else if (err.response.data && err.response.data.detail) {
+          errorMessage = `Failed to delete device: ${err.response.data.detail}`;
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response from server. The backend may be down.';
+      } else {
+        // Something happened in setting up the request
+        errorMessage = `Failed to delete device: ${err.message}`;
+      }
+      
       setSnackbar({
         open: true,
-        message: 'Failed to delete device',
+        message: errorMessage,
         severity: 'error'
       });
+      
+      // Close the dialog even if there was an error
+      setOpenDeleteDialog(false);
     }
   };
 
   const handleDeviceAction = async (deviceId, action) => {
     try {
-      await axios.post(`/api/devices/${deviceId}/${action}`);
+      if (action === 'pause') {
+        await deviceApi.pauseVideo(deviceId);
+      } else if (action === 'stop') {
+        await deviceApi.stopVideo(deviceId);
+      }
       setSnackbar({
         open: true,
         message: `Device ${action} successful`,
@@ -135,9 +211,30 @@ function Devices() {
       fetchDevices();
     } catch (err) {
       console.error(`Error performing ${action} action:`, err);
+      
+      // Provide more specific error messages based on the error
+      let errorMessage = `Failed to ${action} device`;
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 404) {
+          errorMessage = `Device action endpoint not found for ${action}.`;
+        } else if (err.response.status === 500) {
+          errorMessage = `Server error occurred while trying to ${action} device.`;
+        } else if (err.response.data && err.response.data.detail) {
+          errorMessage = `Failed to ${action} device: ${err.response.data.detail}`;
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = `No response from server while trying to ${action} device. The backend may be down.`;
+      } else {
+        // Something happened in setting up the request
+        errorMessage = `Failed to ${action} device: ${err.message}`;
+      }
+      
       setSnackbar({
         open: true,
-        message: `Failed to ${action} device`,
+        message: errorMessage,
         severity: 'error'
       });
     }
@@ -146,7 +243,7 @@ function Devices() {
   const handleDiscoverDevices = async () => {
     try {
       setDiscovering(true);
-      const response = await axios.get('/api/devices/discover');
+      const response = await deviceApi.discoverDevices();
       setSnackbar({
         open: true,
         message: `Device discovery completed. Found ${response.data.total} devices.`,
@@ -155,9 +252,30 @@ function Devices() {
       fetchDevices();
     } catch (err) {
       console.error('Error discovering devices:', err);
+      
+      // Provide more specific error messages based on the error
+      let errorMessage = 'Failed to discover devices';
+      
+      if (err.response) {
+        // The request was made and the server responded with a status code
+        if (err.response.status === 404) {
+          errorMessage = 'Device discovery endpoint not found. The server may be misconfigured.';
+        } else if (err.response.status === 500) {
+          errorMessage = 'Server error occurred during device discovery. Please try again later.';
+        } else if (err.response.data && err.response.data.detail) {
+          errorMessage = `Device discovery failed: ${err.response.data.detail}`;
+        }
+      } else if (err.request) {
+        // The request was made but no response was received
+        errorMessage = 'No response from server during device discovery. The backend may be down.';
+      } else {
+        // Something happened in setting up the request
+        errorMessage = `Device discovery failed: ${err.message}`;
+      }
+      
       setSnackbar({
         open: true,
-        message: 'Failed to discover devices',
+        message: errorMessage,
         severity: 'error'
       });
     } finally {

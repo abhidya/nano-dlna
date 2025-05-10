@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Blank Screen</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: black;
+            color: white;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            font-family: Arial, sans-serif;
+        }
+        
+        #message {
+            display: none;
+            padding: 20px;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 10px;
+        }
+        
+        /* Press 'i' to show/hide info message */
+        body.show-info #message {
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div id="message">
+        <h1>Blank Screen</h1>
+        <p>This is a blank display page.</p>
+        <p>Press 'i' to toggle this information.</p>
+    </div>
+    
+    <script>
+        // Get query parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const bgColor = urlParams.get('background_color') || 'black';
+        
+        // Set background color from parameter if provided
+        document.body.style.backgroundColor = bgColor;
+        
+        // Add keyboard listener to show/hide info message
+        document.addEventListener('keydown', function(event) {
+            if (event.key === 'i') {
+                document.body.classList.toggle('show-info');
+            }
+        });
+    </script>
+</body>
+</html> 

@@ -46,6 +46,10 @@ python clean_videos.py
 echo "Adding videos from configuration to the database..."
 python add_config_videos.py
 
+# Reset the dashboard log file to ensure fresh logs
+echo "Resetting dashboard log file..."
+echo "--- Dashboard started at $(date) ---" > dashboard_run.log
+
 # Start the dashboard
 echo "Starting the dashboard..."
 cd web && ./run_direct.sh &
@@ -67,7 +71,7 @@ while ! curl -s http://localhost:8000/health > /dev/null && [ $RETRY_COUNT -lt $
     if ! ps -p $DASHBOARD_PID > /dev/null; then
         echo ""
         echo "Backend process has terminated. Check for errors in the logs:"
-        echo "tail -n 50 nanodlna.log"
+        echo "tail -n 50 dashboard_run.log"
         # Use full path to stop_dashboard.sh
         if [ -f "$ROOT_DIR/stop_dashboard.sh" ]; then
             "$ROOT_DIR/stop_dashboard.sh"
@@ -97,7 +101,7 @@ if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
     lsof -i :3000
     echo ""
     echo "3. Last few lines of logs:"
-    tail -n 20 nanodlna.log 2>/dev/null || echo "No log file found"
+    tail -n 20 dashboard_run.log 2>/dev/null || echo "No log file found"
     echo ""
     echo "Please check logs for detailed error information."
     # Use full path to stop_dashboard.sh

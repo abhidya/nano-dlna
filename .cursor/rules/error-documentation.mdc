@@ -320,6 +320,107 @@ The solution is in `web/backend/services/device_service.py`, lines 300-396.
 
 ## DLNA Media Container Issues
 
+## DLNA Loop Monitoring Thread Errors
+
+### Issue: Missing current_video_duration Attribute in DLNADevice
+**Error**: `AttributeError: 'DLNADevice' object has no attribute 'current_video_duration'`
+
+**Root Cause**:
+- The `_monitor_and_loop` method in `DLNADevice` class was trying to access a `current_video_duration` attribute that wasn't initialized in the `__init__` method
+- The loop monitoring thread would crash immediately upon starting, preventing proper video looping functionality
+- This caused videos to play once but not loop continuously as expected
+
+**Solution**:
+1. Added the missing attribute initialization in the `__init__` method:
+```python
+def __init__(self, device_info: Dict[str, Any]):
+    # Other initializations...
+    
+    # Video playback attributes
+    self.current_video_duration = None  # Duration of current video in seconds
+    self._looping = False  # Flag to indicate if video should loop
+```
+
+2. Improved the `_monitor_and_loop` method to handle cases where the attribute might not exist:
+```python
+def _monitor_and_loop(self, video_url: str) -> None:
+    # Initialize video duration if not already set
+    if not hasattr(self, 'current_video_duration') or self.current_video_duration is None:
+        self.current_video_duration = None
+        
+    # Keep trying to get the video duration with retry limit
+    retry_count = 0
+    while self._looping and (self.current_video_duration is None) and retry_count < 10:
+        # Attempt to get duration...
+        retry_count += 1
+```
+
+**Key Lessons**:
+1. Always initialize all attributes in the `__init__` method that will be used elsewhere in the class
+2. Add defensive programming with attribute existence checks using `hasattr()` for critical operations
+3. Implement retry limits to prevent infinite loops when external data can't be retrieved
+4. Add proper error handling in threaded operations to prevent silent failures
+
+## Port Conflict and Thread Safety Issues in DLNA Streaming
+
+### Issue: Port Conflict in Twisted Streaming Server
+**Error**: `Error starting streaming server: Couldn't listen on 10.0.0.74:8000: [Errno 48] Address already in use.`
+
+**Root Cause**:
+- The streaming server was trying to use a fixed port (8000) that was already in use
+- Multiple streaming servers were being started without properly cleaning up previous instances
+- The port selection logic wasn't properly using the configured port range
+
+**Solution**:
+1. Ensured consistent use of port_range parameter across all components:
+   - Added missing Tuple import in dlna_device.py
+   - Updated streaming_service.py to use Tuple[int, int] type annotation for port_range
+   - Made port range handling consistent across all components
+
+2. Improved port selection logic in TwistedStreamingServer:
+   - Added better port availability checking before attempting to bind
+   - Implemented proper fallback to try multiple ports in the configured range
+   - Added more detailed logging of port selection attempts
+
+### Issue: NoneType Error in Thread Monitoring
+**Error**: `Error playing video on Hccast-3ADE76_dlna: 'NoneType' object has no attribute 'is_alive'`
+
+**Root Cause**:
+- In the _setup_loop_monitoring method, there was insufficient null checking before accessing the is_alive attribute of the thread object
+- The thread object could be None in some cases, causing the error
+
+**Solution**:
+1. Added robust null checking in the _setup_loop_monitoring method:
+   ```python
+   thread_is_running = False
+   if self._loop_thread is not None:
+       try:
+           # First check if the thread object exists and has the is_alive attribute
+           if hasattr(self._loop_thread, 'is_alive'):
+               # Then check if the thread is alive
+               thread_is_running = self._loop_thread.is_alive()
+               if thread_is_running:
+                   logger.info(f"[{self.name}] Loop monitoring thread already running")
+                   return
+       except (AttributeError, TypeError) as e:
+           logger.warning(f"[{self.name}] Error checking thread status: {e}")
+           # Reset thread to None if there was an error
+           self._loop_thread = None
+   ```
+
+2. This approach:
+   - First checks if the thread object exists
+   - Then checks if it has the is_alive attribute
+   - Only then tries to access the is_alive method
+   - Handles any exceptions that might occur during the check
+   - Resets the thread to None if there's an error
+
+**Key Lessons**:
+1. Always use defensive programming when dealing with thread objects
+2. Implement proper null checking before accessing attributes
+3. Use port ranges instead of fixed ports for network services
+4. Handle port conflicts gracefully with fallback options
+
 ## Import Path Issues in Depth Processing Module
 
 ### Problem
@@ -393,3 +494,96 @@ The device is found in the DeviceManager, but the play command is failing. This 
 4. Test with different video formats and devices
 
 This issue requires further investigation.
+
+## Backend Import Errors
+
+### Issue: Missing Python Modules in Backend
+**Error**: `ModuleNotFoundError: No module named 'fastapi'`
+
+**Root Cause**:
+- The backend's virtual environment exists but is not being properly activated when running the dashboard
+- This causes Python to look for packages in the system Python environment instead of the virtual environment
+- Even though the packages are installed in the virtual environment, they're not accessible to the backend process
+
+**Solution**:
+1. Created a script to properly set up and verify the backend environment:
+```bash
+#!/bin/bash
+# Store the root directory path
+ROOT_DIR="$(pwd)"
+
+# Navigate to the backend directory
+cd "$ROOT_DIR/web/backend"
+
+# Activate virtual environment
+source venv/bin/activate
+
+# Install dependencies
+pip install -r requirements.txt
+
+# Verify fastapi is installed
+pip list | grep fastapi
+```
+
+2. Run the script to ensure the virtual environment is properly set up:
+```bash
+chmod +x fix_backend_env.sh
+./fix_backend_env.sh
+```
+
+3. After running the script, start the dashboard normally:
+```bash
+./run_dashboard.sh
+```
+
+**Key Lessons**:
+1. Always verify that virtual environments are properly activated before running Python applications
+2. Create helper scripts to set up and verify environments to make troubleshooting easier
+3. Check for module import errors in the logs as they often indicate environment setup issues rather than code issues
+
+## Renderer Service and AirPlay Issues
+
+### Problem: AirPlay Discovery Not Working in Frontend
+**Issue**: The AirPlay discovery feature in the frontend has a cast symbol but doesn't do anything when clicked. The renderer page doesn't function as expected.
+
+**Investigation Findings**:
+1. When attempting to use the Chrome renderer to play door6.mp4 via the API, we found the following error in the logs:
+```
+2025-05-09 20:05:55,572 - core.dlna_device - ERROR - Error playing video on Hccast-3ADE76_dlna: 'NoneType' object has no attribute 'is_alive'
+2025-05-09 20:05:55,572 - core.device_manager - ERROR - Failed to play video on device Hccast-3ADE76_dlna
+```
+
+2. The system was trying to play the video on a DLNA device (Hccast-3ADE76_dlna) rather than using Chrome renderer as expected.
+
+3. The logs showed that the device was registered and the system attempted to auto-play the video:
+```
+2025-05-09 20:05:54,795 - core.device_manager - INFO - Registered DLNA device: Hccast-3ADE76_dlna with action URL: http://10.0.0.154:49595/upnp/control/rendertransport1
+2025-05-09 20:05:54,796 - core.device_manager - INFO - Assigning video /Users/mannybhidya/PycharmProjects/nano-dlna/door6.mp4 to device Hccast-3ADE76_dlna
+```
+
+4. The error occurred in the loop monitoring setup, suggesting an issue with the playback monitoring thread.
+
+**Root Cause Analysis**:
+1. The 'NoneType' object has no attribute 'is_alive' error indicates that a thread or process that should be monitoring the playback is not properly initialized.
+2. The AirPlay discovery in the frontend is not properly connected to the backend API endpoints.
+3. There appears to be confusion in the system between using DLNA and AirPlay/Chrome for rendering.
+4. In the `RendererService.start_renderer` method, when a projector is configured to use AirPlay or DLNA as the sender, it still creates and starts a Chrome renderer. However, for DLNA devices, it then tries to send the content to the DLNA device directly using the device's `play` method, which bypasses the Chrome renderer entirely.
+5. The "proj-hccast" projector is configured to use AirPlay as the sender in renderer_config.json, but the test script is trying to use it with a Chrome renderer. This mismatch is causing confusion in the system.
+6. The renderer service is initialized with an empty files dictionary and a default IP address of 127.0.0.1, which might not be accessible from external devices.
+
+**Potential Solutions**:
+1. Fix the thread initialization in the DLNA device implementation to ensure the monitoring thread is properly created before checking its status.
+2. Review the frontend implementation of the AirPlay discovery to ensure it's properly calling the backend API.
+3. Ensure the renderer service correctly distinguishes between DLNA and AirPlay/Chrome rendering methods.
+4. Add better error handling in the playback monitoring to prevent NoneType errors.
+5. Update the renderer_config.json to ensure the "proj-hccast" projector is configured correctly - either change the sender type to match the test script or update the test script to use the correct sender type.
+6. Modify the RendererService initialization to use the correct IP address for the streaming server.
+7. Implement proper error handling in the start_renderer method to handle cases where the sender type doesn't match the expected renderer type.
+
+**Troubleshooting Steps**:
+1. Check the logs for renderer-related entries to identify when and how the renderer service is initialized.
+2. Examine the implementation of the loop monitoring in the DLNA device class.
+3. Test the renderer API endpoints directly using curl to bypass the frontend.
+4. Review the AirPlay discovery implementation in both frontend and backend.
+5. Update the renderer_config.json to ensure consistent configuration.
+6. Add more detailed logging in the RendererService to track the flow of execution.

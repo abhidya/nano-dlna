@@ -13,12 +13,29 @@ if __name__ == "__main__":
     parser.add_argument("--debug", action="store_true", help="Enable debug mode")
     args = parser.parse_args()
     
-    # Configure logging
+    # Configure logging - only if not already configured
     log_level = logging.DEBUG if args.debug else logging.INFO
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-    )
+    
+    # Check if root logger already has handlers (configured in main.py)
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        # Only configure logging if it hasn't been configured yet
+        logging.basicConfig(
+            level=log_level,
+            format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        )
+        
+        # Add a rotating file handler
+        file_handler = logging.handlers.RotatingFileHandler(
+            'dashboard_run.log',
+            maxBytes=10485760,  # 10MB
+            backupCount=5,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(log_level)
+        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
     
     # Run the server
     uvicorn.run(

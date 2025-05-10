@@ -24,7 +24,7 @@ streaming_service = StreamingService()
 
 # Create router
 router = APIRouter(
-    prefix="/api/videos",
+    prefix="/videos",
     tags=["videos"],
     responses={404: {"description": "Not found"}},
 )
