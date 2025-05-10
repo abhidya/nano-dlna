@@ -96,3 +96,6 @@ docker-compose.override.yml
 # Data
 /data
 /uploads
+
+# Running processes
+.running_pids
