@@ -1,5 +1,5 @@
-from models.device import DeviceModel
-from models.video import VideoModel
+from .device import DeviceModel
+from .video import VideoModel
 
 __all__ = [
     'DeviceModel',

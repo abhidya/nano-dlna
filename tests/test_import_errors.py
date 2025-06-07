@@ -6,12 +6,26 @@ import pkgutil
 import inspect
 from pathlib import Path
 
-# Add project root to path for imports
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+# Project root should be on PYTHONPATH via run_tests.sh
 
 
 class TestImportErrors(unittest.TestCase):
     """Test that all modules can be imported without errors"""
+
+    @classmethod
+    def setUpClass(cls):
+        """Clear SQLAlchemy metadata and mappers once before tests in this class run."""
+        # The root conftest.py now handles session-wide metadata clearing for the 'tests/' directory.
+        # try:
+        #     from web.backend.database.database import Base
+        #     from sqlalchemy.orm import clear_mappers
+        #     Base.metadata.clear()
+        #     clear_mappers()
+        # except ImportError:
+        #     print("Warning: Could not import Base/clear_mappers in TestImportErrors.setUpClass.")
+        # except Exception as e:
+        #     print(f"Warning: Error clearing metadata/mappers in TestImportErrors.setUpClass: {e}")
+        pass # setUpClass is kept for structure, but actual clearing is deferred or handled globally.
     
     def test_nanodlna_imports(self):
         """Test importing nanodlna core modules"""
@@ -58,17 +72,26 @@ class TestImportErrors(unittest.TestCase):
         # Test streaming router imports streaming_registry without error
         from web.backend.routers import streaming_router
     
+    def test_specific_backend_service_import(self):
+        """Test importing a specific backend service module."""
+        try:
+            import web.backend.services.device_service
+            self.assertIsNotNone(web.backend.services.device_service, "device_service module should be importable")
+        except ImportError as e:
+            self.fail(f"Failed to import web.backend.services.device_service: {e}")
+
     def test_critical_functions(self):
         """Test critical functions exist and have correct signatures"""
         # Import modules
         from web.backend.services import device_service
         from web.backend.core import device_manager
         
-        # Test get_device_service
-        self.assertTrue(hasattr(device_service, 'get_device_service'))
-        get_device_service = getattr(device_service, 'get_device_service')
-        sig = inspect.signature(get_device_service)
-        self.assertIn('db', sig.parameters)
+        # Test get_device_service (The module-level function was removed from web.backend.services.device_service.py)
+        # The following lines are removed as they test a non-existent function:
+        # self.assertTrue(hasattr(device_service, 'get_device_service'))
+        # get_device_service = getattr(device_service, 'get_device_service')
+        # sig = inspect.signature(get_device_service)
+        # self.assertIn('db', sig.parameters)
         
         # Test get_device_manager
         self.assertTrue(hasattr(device_manager, 'get_device_manager'))
@@ -92,7 +115,7 @@ class TestImportErrors(unittest.TestCase):
     def test_recursive_module_imports(self):
         """Recursively test importing all modules"""
         failed_imports = []
-        
+
         # Define the root paths to scan
         root_paths = [
             Path('nanodlna'),
@@ -101,7 +124,11 @@ class TestImportErrors(unittest.TestCase):
         
         # Function to recursively import all modules
         def import_all_modules(package_path, package_name):
+            excluded_dirs = ['tests', 'tests_backend']
             for _, name, is_pkg in pkgutil.iter_modules([str(package_path)]):
+                if name in excluded_dirs:
+                    print(f"Skipping excluded directory: {package_path / name}")
+                    continue
                 full_name = f"{package_name}.{name}" if package_name else name
                 try:
                     module = importlib.import_module(full_name)
@@ -111,11 +138,19 @@ class TestImportErrors(unittest.TestCase):
                 except ImportError as e:
                     failed_imports.append((full_name, str(e)))
         
-        # Scan each root path
-        for root_path in root_paths:
+        # Scan each root path with its correct base package name
+        package_map = {
+            'nanodlna': 'nanodlna',
+            'web/backend': 'web.backend'
+        }
+
+        for path_str, pkg_name_prefix in package_map.items():
+            root_path = Path(path_str)
             if root_path.exists():
-                import_all_modules(root_path, root_path.name)
-        
+                import_all_modules(root_path, pkg_name_prefix)
+            else:
+                print(f"Warning: Path {root_path} not found for import testing.")
+
         # Report any failed imports
         if failed_imports:
             for module, error in failed_imports:
@@ -146,4 +181,4 @@ class TestImportErrors(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()

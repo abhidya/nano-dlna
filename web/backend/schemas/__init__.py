@@ -1,4 +1,4 @@
-from schemas.device import (
+from .device import (
     DeviceBase,
     DeviceCreate,
     DeviceUpdate,
@@ -7,7 +7,7 @@ from schemas.device import (
     DevicePlayRequest,
     DeviceActionResponse,
 )
-from schemas.video import (
+from .video import (
     VideoBase,
     VideoCreate,
     VideoUpdate,

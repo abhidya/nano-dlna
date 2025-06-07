@@ -173,19 +173,47 @@ We are currently working on:
 5. **Performance Enhancements**: Optimized video assignment with prioritization.
 6. **Architecture Improvements**: Moving toward a more modular, component-based system.
 
+## Recent Cleanup Work
+
+We've completed an initial cleanup of the project repository:
+
+1. **Removed Unnecessary Files**:
+   - Deleted 13 log files (dashboard_run.log, nanodlna_output.log, etc.)
+   - Removed 3 old test files (conftest_old.py, test_models_old.py, test_routers_old.py)
+   - Cleaned up 1 backup/temporary directory (web/frontend/node_modules/postcss-initial/~)
+   - Removed Python bytecode files (__pycache__ directories and .pyc files)
+
+2. **Verified System Integrity**:
+   - Ran tests to ensure the cleanup didn't break existing functionality
+   - Committed and pushed changes to the repository
+
+3. **Updated Documentation and Configuration**:
+   - Fixed outdated Docker references in web/README.md
+   - Enhanced .gitignore with more comprehensive patterns:
+     - Added specific log file patterns (dashboard_run.log, nanodlna_output.log)
+     - Added database file patterns (nanodlna.db)
+     - Added IDE-specific file patterns (*.sublime-project, *.code-workspace)
+     - Added runtime file patterns (.running_pids, .pid, .lock)
+     - Added temporary file patterns (response.txt, proxy_response.txt)
+
 ## Next Steps
 
-1. Fix CLI Argument Handling and Configuration Issues (HIGH)
-2. Improve dashboard error handling
-3. Identify and fix broken paths in web dashboard
-4. Refactor `nanodlna play` CLI logic
-5. Implement the Renderer Service according to the plan in docs/plan_renderer_service.md
+1. Continue cleanup of unnecessary files:
+   - Identify any remaining obsolete Python scripts
+   - Review and clean up any unused test scripts
+   - Consider consolidating similar utility scripts
+
+2. Fix CLI Argument Handling and Configuration Issues (HIGH)
+3. Improve dashboard error handling
+4. Identify and fix broken paths in web dashboard
+5. Refactor `nanodlna play` CLI logic
+6. Implement the Renderer Service according to the plan in docs/plan_renderer_service.md
    - ⏳ Implement the HTML renderer component (IN PROGRESS)
    - Create the renderer directory structure
    - Implement the base Renderer class
    - Implement the Chrome-based renderer
    - Update the Renderer Service to use the new renderer
-6. Continue extending the test coverage
+7. Continue extending the test coverage
 
 ## Project Overview
 
@@ -283,11 +311,18 @@ We are currently working on:
       * Configuration disparity between components
 
 ## Current Issues
-- The backend server sometimes fails to start due to import errors, especially with the streaming_router.py file which has relative import issues.
-- The scan endpoint returns 405 Method Not Allowed when called, indicating implementation issues.
 - The CLI command interface has been recently modified to require a config file parameter, making direct video playback without a config file impossible. This is causing friction in the testing workflow and needs to be fixed.
 - Directory navigation issues when running scripts, particularly when attempting to run the dashboard from different directories.
 - There are path construction issues in API endpoints where requests fail without trailing slashes.
+- The API has several 500 Internal Server Errors when trying to play videos on devices
+- Error observed in dashboard_run.log: "POST /api/devices/1/play HTTP/1.1" 500 Internal Server Error
+- The AirPlay discovery feature in the frontend has a cast symbol but doesn't do anything when clicked
+- When attempting to use the Chrome renderer to play videos, the system tries to play them on DLNA devices instead
+- Error in playback monitoring: "'NoneType' object has no attribute 'is_alive'" in the DLNA device implementation
+
+## Fixed Issues
+- ✅ Fixed backend server startup issues related to import errors by modifying main.py to add the current directory to the Python path and changing imports in router files to use relative imports instead of absolute imports.
+- ✅ Fixed the scan endpoint implementation issues.
 
 ## CRITICAL PATH MANAGEMENT
 
@@ -550,6 +585,8 @@ For a more detailed overview of the current status and what's left to do, see th
 - When attempting to use the Chrome renderer to play videos, the system tries to play them on DLNA devices instead
 - Error in playback monitoring: "'NoneType' object has no attribute 'is_alive'" in the DLNA device implementation
 
+A comprehensive implementation plan has been created to address these issues and implement new features. See [tasks/nano_dlna_implementation_plan.md](tasks/nano_dlna_implementation_plan.md) for details.
+
 ## Functionality
 - Device discovery is working - devices are shown in the API
 - Video listing is working
@@ -564,18 +601,46 @@ For a more detailed overview of the current status and what's left to do, see th
 - Created a comprehensive test plan in `tasks/test_plan.md` to guide future testing efforts
 - Created an end-to-end test script in `web/test_renderer_depth_e2e.sh` to test the renderer and depth processing API endpoints
 - Updated the tasks plan to include the new test-related tasks and their status
+- Added comprehensive tests for renderer router endpoints in `web/backend/tests_backend/test_renderer_router.py`
+- Added comprehensive tests for depth router endpoints in `web/backend/tests_backend/test_depth_router.py`
+- Enhanced tests for streaming router endpoints in `web/backend/tests_backend/test_streaming_router.py`
+- Created a script to run all tests with coverage reporting in `run_all_tests.sh`
+- Created a test coverage plan document in `tasks/test_coverage_plan.md`
 
 ## Next Steps
-- Debug and fix the video playback issues (500 errors)
-- Fix the AirPlay discovery feature in the frontend
-- Fix the Chrome renderer to properly play videos instead of using DLNA devices
-- Fix the thread initialization in the DLNA device implementation to prevent "'NoneType' object has no attribute 'is_alive'" errors
-- Ensure the renderer service correctly distinguishes between DLNA and AirPlay/Chrome rendering methods
-- Test the depth processing functionality with actual depth maps
-- Test the projection mapping capability with DLNA devices
-- Consider creating a simpler UI for depth mask segmentation and projection
-- Implement the enhancements listed in the "What's Left to Do" section of the renderer_depth_status.md file
-- Continue expanding test coverage for the backend components
+Following the implementation plan in [tasks/nano_dlna_implementation_plan.md](tasks/nano_dlna_implementation_plan.md):
+
+1. Fix DLNA Device Thread Monitoring Error
+   - Implement proper null checking before accessing thread attributes
+   - Add defensive programming to handle potential thread-related errors
+   - Ensure thread cleanup happens properly when stopping playback
+
+2. Fix Renderer Service DLNA Integration
+   - Fix device lookup logic to use the correct device name or ID
+   - Update content URL handling to ensure it works with the DLNA device
+   - Ensure correct sender type is used for each device
+
+3. Implement AirPlay Discovery in Frontend
+   - Implement proper API calls to AirPlay discovery endpoints
+   - Create UI components for AirPlay device selection
+   - Add error handling and loading states
+
+4. Fix 500 Internal Server Error in Device Play API
+   - Implement proper error handling in `play_video` method
+   - Add validation for device and video path
+   - Add detailed logging for troubleshooting
+
+5. Implement Comprehensive Device Status Tracking
+   - Implement unified approach to status tracking
+   - Ensure status updates are propagated correctly
+   - Synchronize status between database and in-memory state
+
+6. Additional tasks:
+   - Test the depth processing functionality with actual depth maps
+   - Test the projection mapping capability with DLNA devices
+   - Consider creating a simpler UI for depth mask segmentation and projection
+   - Implement the enhancements listed in the "What's Left to Do" section of the renderer_depth_status.md file
+   - Continue expanding test coverage for the backend components
 
 ## Technical Architecture
 The system consists of:

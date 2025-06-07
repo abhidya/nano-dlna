@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 import os
 from unittest.mock import patch, MagicMock
 
-from app import app
+from web.backend.main import app
 
 
 class TestMain:
@@ -28,7 +28,7 @@ class TestMain:
         """Test that the device manager is initialized."""
         # Since we can't easily mock the singleton, we'll just check that the device manager has been initialized
         # by verifying it has the expected methods
-        from main import device_manager
+        from web.backend.main import device_manager
         assert hasattr(device_manager, 'register_device')
         assert hasattr(device_manager, 'get_device')
         assert hasattr(device_manager, 'start_discovery')
@@ -37,7 +37,7 @@ class TestMain:
         """Test that the streaming registry is initialized."""
         # Since we can't easily mock the singleton, we'll just check that the streaming registry has been initialized
         # by verifying it has the expected methods
-        from main import streaming_registry
+        from web.backend.main import streaming_registry
         assert hasattr(streaming_registry, 'register_session')
         assert hasattr(streaming_registry, 'get_session')
         assert hasattr(streaming_registry, 'get_active_sessions')
@@ -46,7 +46,7 @@ class TestMain:
         """Test that the twisted streaming service is initialized."""
         # Since we can't easily mock the singleton, we'll just check that the streaming service has been initialized
         # by verifying it has the expected methods
-        from main import streaming_service
+        from web.backend.main import streaming_service
         assert hasattr(streaming_service, 'start_server')
         assert hasattr(streaming_service, 'stop_server')
     
@@ -79,10 +79,10 @@ class TestMain:
 class TestMainWithMocks:
     """Tests for the main application with mocked dependencies."""
     
-    @patch("main.device_manager")
-    @patch("main.init_db")
-    @patch("main.get_db")
-    @patch("services.device_service.DeviceService")
+    @patch("web.backend.main.device_manager")
+    @patch("web.backend.main.init_db")
+    @patch("web.backend.main.get_db")
+    @patch("web.backend.services.device_service.DeviceService")
     def test_startup_event(self, mock_device_service, mock_get_db, mock_init_db, mock_device_manager):
         """Test the startup event."""
         # Mock the database session
@@ -94,7 +94,7 @@ class TestMainWithMocks:
         mock_device_service.return_value = mock_device_service_instance
         
         # Manually trigger the startup event
-        from main import startup_event
+        from web.backend.main import startup_event
         
         # Run the startup event
         import asyncio
@@ -106,15 +106,15 @@ class TestMainWithMocks:
         # Check that device discovery was started
         mock_device_manager.start_discovery.assert_called_once()
     
-    @patch("main.device_manager")
-    @patch("main.streaming_registry")
-    @patch("main.streaming_service")
-    @patch("main.renderer_service")
+    @patch("web.backend.main.device_manager")
+    @patch("web.backend.main.streaming_registry")
+    @patch("web.backend.main.streaming_service")
+    @patch("web.backend.main.renderer_service")
     def test_shutdown_event(self, mock_renderer_service, mock_streaming_service, 
                            mock_streaming_registry, mock_device_manager):
         """Test the shutdown event."""
         # Manually trigger the shutdown event
-        from main import shutdown_event
+        from web.backend.main import shutdown_event
         
         # Run the shutdown event
         import asyncio

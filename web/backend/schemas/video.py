@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, List
+from datetime import datetime
 
 class VideoBase(BaseModel):
     """
@@ -46,8 +47,8 @@ class VideoResponse(VideoBase):
     resolution: Optional[str] = Field(None, description="Video resolution")
     has_subtitle: bool = Field(False, description="Whether the video has subtitles")
     subtitle_path: Optional[str] = Field(None, description="Path to the subtitle file")
-    created_at: Optional[str] = Field(None, description="Creation timestamp")
-    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+    created_at: Optional[datetime] = Field(None, description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     
     class Config:
         from_attributes = True

@@ -39,12 +39,14 @@ class TestConfigService(unittest.TestCase):
                 "device_name": "TestDevice1",
                 "type": "dlna",
                 "hostname": "192.168.1.100",
+                "action_url": "http://192.168.1.100/action",
                 "video_file": "/tmp/test_video1.mp4"
             },
             {
                 "device_name": "TestDevice2",
-                "type": "dlna",
+                "type": "dlna", # Changed from transcreen for consistency, can be changed back if needed
                 "hostname": "192.168.1.101",
+                "action_url": "http://192.168.1.101/action",
                 "video_file": "/tmp/test_video2.mp4"
             }
         ]
@@ -120,6 +122,7 @@ class TestConfigService(unittest.TestCase):
         device_config = {
             "type": "dlna",
             "hostname": "192.168.1.102",
+            "action_url": "http://192.168.1.102/action",
             "video_file": "/tmp/test_video3.mp4"
         }
         
@@ -180,6 +183,7 @@ class TestConfigService(unittest.TestCase):
         device_config = {
             "type": "dlna",
             "hostname": "192.168.1.103",
+            "action_url": "http://192.168.1.103/action", # Added action_url
             "video_file": "/tmp/non_existent_video.mp4"
         }
         
@@ -221,9 +225,15 @@ class TestConfigService(unittest.TestCase):
         def add_configs(thread_id):
             for i in range(5):
                 device_name = f"ThreadDevice{thread_id}_{i}"
+                video_file_path = f"/tmp/thread_video_{thread_id}_{i}.mp4"
+                with open(video_file_path, "w") as f: # Create dummy video file
+                    f.write("dummy")
+                
                 config = {
                     "type": "dlna",
                     "hostname": f"192.168.{thread_id}.{i}",
+                    "action_url": f"http://192.168.{thread_id}.{i}/action",
+                    "video_file": video_file_path
                 }
                 self.config_service.add_device_config(device_name, config)
                 time.sleep(0.01)  # Small delay to increase thread interleaving
@@ -252,4 +262,4 @@ class TestConfigService(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()

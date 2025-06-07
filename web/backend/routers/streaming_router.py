@@ -9,14 +9,14 @@ import json
 import os
 
 # Fix the import causing startup errors
-from core.streaming_registry import StreamingSessionRegistry
-from core.device_manager import DeviceManager, get_device_manager
-from core.twisted_streaming import get_instance as get_twisted_streaming
-from services.device_service import DeviceService
-# Import get_device_service directly
-from services.device_service import get_device_service
-from services.video_service import VideoService, get_video_service
-from database.database import get_db
+from web.backend.core.streaming_registry import StreamingSessionRegistry
+from web.backend.core.device_manager import DeviceManager, get_device_manager # Import get_device_manager
+from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
+from web.backend.services.device_service import DeviceService # Import DeviceService class
+# DO NOT Import get_device_service from services.device_service
+from web.backend.services.video_service import VideoService, get_video_service # This is fine
+from web.backend.database.database import get_db
+from sqlalchemy.orm import Session # Import Session for type hinting
 
 router = APIRouter(
     prefix="/streaming",
@@ -26,6 +26,12 @@ router = APIRouter(
 
 # Add logger
 logger = logging.getLogger(__name__)
+
+# Dependency to get the device service, defined locally
+def get_device_service_local(db: Session = Depends(get_db)) -> DeviceService:
+    # Use get_device_manager to obtain the singleton instance
+    device_manager_instance = get_device_manager()
+    return DeviceService(db, device_manager_instance)
 
 @router.get("/")
 async def get_streaming_stats() -> Dict[str, Any]:
@@ -42,7 +48,7 @@ async def get_streaming_stats() -> Dict[str, Any]:
 async def start_streaming(
     device_id: int,
     video_path: str,
-    device_service: DeviceService = Depends(get_device_service)
+    device_service: DeviceService = Depends(get_device_service_local) # Use local version
 ) -> Dict[str, Any]:
     """
     Start streaming a video to a device

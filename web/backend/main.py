@@ -3,9 +3,6 @@ import os
 import sys
 import traceback
 
-# Add the current directory to the path
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -13,11 +10,11 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
-from database.database import init_db, get_db
-from routers import device_router, video_router, streaming_router, renderer_router
-from core.device_manager import DeviceManager
-from core.streaming_registry import StreamingSessionRegistry
-from core.twisted_streaming import get_instance as get_twisted_streaming
+from web.backend.database.database import init_db, get_db
+from web.backend.routers import device_router, video_router, streaming_router, renderer_router
+from web.backend.core.device_manager import DeviceManager
+from web.backend.core.streaming_registry import StreamingSessionRegistry
+from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
 
 # Configure logging
 import logging.handlers
@@ -87,7 +84,7 @@ try:
     import PIL
     import sklearn
     # Only if all dependencies are available, import the depth_router
-    from routers import depth_router
+    from web.backend.routers import depth_router
     app.include_router(depth_router, prefix="/api")  # Add the depth router
     logger.info("Depth processing module loaded successfully")
 except ImportError as e:
@@ -113,8 +110,8 @@ streaming_registry = StreamingSessionRegistry.get_instance()
 
 # Get or create the renderer service
 try:
-    from core.renderer_service.service import RendererService
-    from routers.renderer_router import get_renderer_service
+    from web.backend.core.renderer_service.service import RendererService
+    from web.backend.routers.renderer_router import get_renderer_service
     renderer_service = get_renderer_service()
     logger.info("Renderer Service initialized successfully")
 except Exception as e:
@@ -159,7 +156,7 @@ async def startup_event():
                     db = next(get_db())
                     
                     # Create a device service instance
-                    from services.device_service import DeviceService
+                    from web.backend.services.device_service import DeviceService
                     device_service = DeviceService(db, device_manager)
                     
                     # Load devices from the config file
@@ -188,6 +185,14 @@ async def startup_event():
         # Log all devices in the device manager
         for device_name, device in device_manager.devices.items():
             logger.info(f"Device in manager: {device_name}, type: {device.type}, hostname: {device.hostname}, action_url: {device.action_url}")
+
+        # Start the renderer service's streaming server
+        if renderer_service:
+            try:
+                renderer_service.start_streaming_server()
+                logger.info("RendererService streaming server started.")
+            except Exception as e:
+                logger.error(f"Failed to start RendererService streaming server: {e}")
         
     except Exception as e:
         logger.error(f"Error loading devices from config: {e}")

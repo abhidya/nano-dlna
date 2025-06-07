@@ -8,7 +8,7 @@ import time
 import logging
 from typing import Dict, Optional
 
-from core.renderer_service.sender.base import Sender
+from .base import Sender
 
 
 class AirPlaySender(Sender):
@@ -184,4 +184,4 @@ class AirPlaySender(Sender):
         else:
             status["process_running"] = False
             
-        return status 
+        return status

@@ -26,10 +26,10 @@ The easiest way to run the application is using Docker Compose:
 
 ```bash
 # Start the application
-./run.sh
+./run_direct.sh
 
 # Stop the application
-./stop.sh
+./stop_direct.sh
 ```
 
 This will start both the backend API and the frontend web interface.

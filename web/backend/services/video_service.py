@@ -9,10 +9,10 @@ import subprocess
 import json
 from fastapi import Depends
 
-from models.video import VideoModel
-from schemas.video import VideoCreate, VideoUpdate
-from core.twisted_streaming import get_instance as get_twisted_streaming
-from database.database import get_db
+from web.backend.models.video import VideoModel
+from web.backend.schemas.video import VideoCreate, VideoUpdate
+from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
+from web.backend.database.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def get_video_service(db: Session = Depends(get_db)) -> 'VideoService':
     Returns:
         VideoService: Video service instance
     """
-    from core.twisted_streaming import get_instance as get_twisted_streaming
+    from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
     streaming_service = get_twisted_streaming()
     return VideoService(db, streaming_service)
 
@@ -91,11 +91,15 @@ class VideoService:
                 raise ValueError(f"Video file not found: {video.path}")
             
             # Get video file information
-            file_name = os.path.basename(video.path)
-            file_size = os.path.getsize(video.path)
+            file_name = video.file_name if video.file_name else os.path.basename(video.path)
+            file_size = video.file_size if video.file_size is not None else os.path.getsize(video.path)
             
             # Get video metadata
-            duration, format_name, resolution = self._get_video_metadata(video.path)
+            _duration, _format_name, _resolution = self._get_video_metadata(video.path)
+
+            duration = video.duration if video.duration is not None else _duration
+            format_name = video.format if video.format else _format_name
+            resolution = video.resolution if video.resolution else _resolution
             
             # Check for subtitle file
             subtitle_path = self._find_subtitle_file(video.path)
@@ -388,3 +392,57 @@ class VideoService:
         except Exception as e:
             logger.error(f"Error finding subtitle file: {e}")
             return None
+
+    def scan_directory(self, directory_path: str) -> List[VideoModel]:
+        """
+        Scan a directory for videos and add new ones to the database.
+        Skips videos that already exist based on their path.
+
+        Args:
+            directory_path: The path to the directory to scan.
+
+        Returns:
+            List[VideoModel]: A list of all video models found or created from the directory.
+        """
+        logger.info(f"Scanning directory for videos: {directory_path}")
+        video_extensions = [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"]
+        found_videos: List[VideoModel] = []
+
+        if not os.path.exists(directory_path):
+            logger.error(f"Directory not found: {directory_path}")
+            return found_videos
+        
+        if not os.path.isdir(directory_path):
+            logger.error(f"Path is not a directory: {directory_path}")
+            return found_videos
+
+        for root, _, files in os.walk(directory_path):
+            for file_name in files:
+                if any(file_name.lower().endswith(ext) for ext in video_extensions):
+                    file_path = os.path.join(root, file_name)
+                    video_name = os.path.splitext(file_name)[0]
+                    
+                    try:
+                        existing_video = self.get_video_by_path(file_path)
+                        if existing_video:
+                            logger.debug(f"Video already exists in DB: {file_path}")
+                            found_videos.append(existing_video)
+                            continue
+                        
+                        logger.info(f"Found new video: {file_path}, adding to DB.")
+                        video_create_schema = VideoCreate(name=video_name, path=file_path)
+                        # create_video will handle ffprobe and other metadata
+                        db_video = self.create_video(video_create_schema)
+                        if db_video:
+                            found_videos.append(db_video)
+                    except ValueError as ve: # Raised by create_video if path doesn't exist (should not happen here)
+                        logger.error(f"Validation error adding video {file_path}: {ve}")
+                    except SQLAlchemyError as sqla_e:
+                        logger.error(f"Database error adding video {file_path}: {sqla_e}")
+                        self.db.rollback() # Ensure rollback on DB error during loop
+                    except Exception as e:
+                        logger.error(f"Unexpected error adding video {file_path}: {e}")
+                        logger.exception("Detailed error during video scan processing:") # Added for more detail
+        
+        logger.info(f"Finished scanning. Found/created {len(found_videos)} videos in {directory_path}.")
+        return found_videos

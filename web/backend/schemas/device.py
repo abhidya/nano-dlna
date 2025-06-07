@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 
 class DeviceBase(BaseModel):
     """
@@ -43,12 +44,14 @@ class DeviceResponse(DeviceBase):
     status: str = Field(..., description="Device status")
     is_playing: bool = Field(..., description="Whether the device is playing")
     current_video: Optional[str] = Field(None, description="Path to the current video")
+    playback_position: Optional[str] = Field(None, description="Current playback position (HH:MM:SS)")
+    playback_duration: Optional[str] = Field(None, description="Total video duration (HH:MM:SS)")
+    playback_progress: Optional[float] = Field(None, description="Playback progress as a percentage (0-100)")
     config: Optional[Dict[str, Any]] = Field(None, description="Additional device configuration")
-    created_at: str = Field(..., description="Creation timestamp")
-    updated_at: Optional[str] = Field(None, description="Last update timestamp")
+    created_at: datetime = Field(..., description="Creation timestamp")
+    updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     
-    class Config:
-        orm_mode = True
+    model_config = {"from_attributes": True}
 
 class DeviceList(BaseModel):
     """

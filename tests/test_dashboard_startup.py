@@ -35,20 +35,9 @@ class TestDashboardStartup(unittest.TestCase):
         # Test main app
         self.assertIsNotNone(importlib.import_module("web.backend.main"))
     
-    def test_get_device_service_function(self):
-        """Test that get_device_service works correctly"""
-        from web.backend.services.device_service import get_device_service
-        from web.backend.database.database import get_db
-        from sqlalchemy.orm import Session
-        
-        # Test creating with db session
-        session = next(get_db())
-        service = get_device_service(session)
-        self.assertIsNotNone(service)
-        
-        # Test dependency function returns callable
-        dependency_fn = get_device_service(None)
-        self.assertTrue(callable(dependency_fn))
+    # Removed test_get_device_service_function as the targeted function
+    # in web.backend.services.device_service was removed due to being problematic.
+    # Service instantiation is now handled by local dependency providers in routers.
     
     def test_get_device_manager_singleton(self):
         """Test that get_device_manager returns a singleton"""
@@ -89,4 +78,4 @@ class TestDashboardStartup(unittest.TestCase):
 
 
 if __name__ == "__main__":
-    unittest.main() 
+    unittest.main()

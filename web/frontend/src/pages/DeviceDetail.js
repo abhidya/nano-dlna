@@ -10,6 +10,7 @@ import {
   Chip,
   Divider,
   Grid,
+  LinearProgress,
   Paper,
   Typography,
   Alert,
@@ -206,20 +207,43 @@ function DeviceDetail() {
               </ListItem>
             )}
             {device.current_video && (
-              <ListItem>
-                <ListItemIcon>
-                  <MovieIcon />
-                </ListItemIcon>
-                <ListItemText 
-                  primary="Current Video" 
-                  secondary={device.current_video.split('/').pop()} 
-                  secondaryTypographyProps={{ 
-                    sx: { 
-                      wordBreak: 'break-all' 
-                    } 
-                  }} 
-                />
-              </ListItem>
+              <>
+                <ListItem>
+                  <ListItemIcon>
+                    <MovieIcon />
+                  </ListItemIcon>
+                  <ListItemText 
+                    primary="Current Video" 
+                    secondary={device.current_video.split('/').pop()} 
+                    secondaryTypographyProps={{ 
+                      sx: { 
+                        wordBreak: 'break-all' 
+                      } 
+                    }} 
+                  />
+                </ListItem>
+                {device.is_playing && device.playback_progress !== null && (
+                  <ListItem>
+                    <Box sx={{ width: '100%' }}>
+                      <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                        <Typography variant="caption" color="textSecondary">
+                          {device.playback_position || "00:00:00"}
+                        </Typography>
+                        <Typography variant="caption" color="textSecondary">
+                          {device.playback_duration || "00:00:00"}
+                        </Typography>
+                      </Box>
+                      <Box sx={{ width: '100%', mr: 1 }}>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={device.playback_progress || 0} 
+                          sx={{ height: 8, borderRadius: 4 }}
+                        />
+                      </Box>
+                    </Box>
+                  </ListItem>
+                )}
+              </>
             )}
           </List>
         </Paper>

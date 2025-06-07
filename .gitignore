@@ -219,11 +219,14 @@ backend_coverage_report.txt
 
 # Log files
 *.log
+dashboard_run.log
+nanodlna_output.log
 
 # Database files
 *.db
 *.sqlite
 *.sqlite3
+nanodlna.db
 
 # Media files
 *.mp4
@@ -245,6 +248,12 @@ package-lock.json
 *.swp
 *.swo
 .DS_Store
+*.sublime-project
+*.sublime-workspace
+*.code-workspace
+.project
+.classpath
+.settings/
 
 # Build artifacts
 web/frontend/build/
@@ -252,3 +261,13 @@ web/frontend/build/
 # Temporary files
 *.tmp
 *.bak
+*.swp
+*.swo
+*~
+.running_pids
+response.txt
+proxy_response.txt
+
+# Runtime files
+.pid
+.lock

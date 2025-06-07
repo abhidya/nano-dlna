@@ -8,7 +8,7 @@ import subprocess
 import time
 from typing import Dict, Optional
 
-from core.renderer_service.sender.base import Sender
+from .base import Sender
 
 
 class DirectSender(Sender):
@@ -267,4 +267,4 @@ class DirectSender(Sender):
         if self.content_url:
             status["content_url"] = self.content_url
             
-        return status 
+        return status

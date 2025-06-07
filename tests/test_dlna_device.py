@@ -8,12 +8,7 @@ import threading
 import time
 from unittest.mock import MagicMock, patch
 
-# Add the project root to the path so we can import modules
-sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-
-# Fix import path for backend modules
-# This is needed because the backend module has relative imports 
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../web/backend')))
+# sys.path modifications are handled by tests/conftest.py
 
 # Mock Device class that DLNADevice inherits from
 class MockDevice:
@@ -76,6 +71,134 @@ class TestDLNADevice:
         with mock_dlna_device._thread_lock:
             mock_dlna_device._loop_enabled = False
         mock_dlna_device._loop_thread.join(timeout=1.0)
+
+    def test_loop_monitoring_v2_setup_and_basic_run(self, mock_dlna_device):
+        """Test that the v2 loop monitoring thread is set up and runs."""
+        test_video_url = "http://example.com/video_v2.mp4"
+        
+        # Mock methods called by the monitor thread
+        mock_dlna_device._get_transport_info = MagicMock(return_value={"CurrentTransportState": "PLAYING"})
+        mock_dlna_device._get_position_info = MagicMock(return_value={"RelTime": "00:00:01", "TrackDuration": "00:01:00"})
+        mock_dlna_device.device_manager = MagicMock() # Mock device_manager if not already
+        mock_dlna_device._try_restart_video = MagicMock(return_value=True)
+
+        mock_dlna_device._setup_loop_monitoring_v2(test_video_url)
+        
+        assert mock_dlna_device._loop_enabled
+        assert mock_dlna_device._loop_thread is not None
+        assert mock_dlna_device._loop_thread.is_alive()
+        
+        # Allow thread to run a cycle
+        time.sleep(3) # Should be enough for one or two cycles of monitor_and_loop_v2
+
+        # Verify device_manager.update_device_playback_progress was called
+        mock_dlna_device.device_manager.update_device_playback_progress.assert_called()
+        
+        # Clean up
+        with mock_dlna_device._thread_lock:
+            mock_dlna_device._loop_enabled = False
+        if mock_dlna_device._loop_thread and mock_dlna_device._loop_thread.is_alive():
+            mock_dlna_device._loop_thread.join(timeout=5.0)
+        assert not (mock_dlna_device._loop_thread and mock_dlna_device._loop_thread.is_alive())
+
+    def test_loop_monitoring_v2_reaches_end_and_restarts(self, mock_dlna_device):
+        """Test v2 loop monitoring restarts video when it reaches the end."""
+        test_video_url = "http://example.com/short_video.mp4"
+        mock_dlna_device.current_video_duration = 5 # 5 seconds duration
+        
+        # Simulate video playing and then reaching near end
+        mock_dlna_device._get_transport_info = MagicMock(return_value={"CurrentTransportState": "PLAYING"})
+        # First call to get_position_info, video is playing
+        # Second call, video is near end (e.g., 99% progress)
+        mock_dlna_device._get_position_info = MagicMock(side_effect=[
+            {"RelTime": "00:00:01", "TrackDuration": "00:00:05"}, # Playing
+            {"RelTime": "00:00:04.9", "TrackDuration": "00:00:05"}, # Near end
+            {"RelTime": "00:00:01", "TrackDuration": "00:00:05"}, # After restart
+        ])
+        mock_dlna_device._try_restart_video = MagicMock(return_value=True)
+        mock_dlna_device.device_manager = MagicMock()
+
+        mock_dlna_device._setup_loop_monitoring_v2(test_video_url)
+        
+        time.sleep(7) # Allow time for one full play and restart attempt (5s video + 2s interval)
+
+        mock_dlna_device._try_restart_video.assert_called_with(test_video_url)
+        
+        # Clean up
+        with mock_dlna_device._thread_lock:
+            mock_dlna_device._loop_enabled = False
+        if mock_dlna_device._loop_thread and mock_dlna_device._loop_thread.is_alive():
+            mock_dlna_device._loop_thread.join(timeout=5.0)
+
+    def test_loop_monitoring_v2_handles_stopped_state_and_restarts(self, mock_dlna_device):
+        """Test v2 loop monitoring restarts video if found in STOPPED state."""
+        test_video_url = "http://example.com/stoppable_video.mp4"
+        mock_dlna_device.current_video_duration = 30
+
+        # Simulate video playing then suddenly stopping
+        mock_dlna_device._get_transport_info = MagicMock(side_effect=[
+            {"CurrentTransportState": "PLAYING"},
+            {"CurrentTransportState": "STOPPED"}, 
+            {"CurrentTransportState": "PLAYING"} # After restart
+        ])
+        mock_dlna_device._get_position_info = MagicMock(return_value={"RelTime": "00:00:05", "TrackDuration": "00:00:30"})
+        mock_dlna_device._try_restart_video = MagicMock(return_value=True)
+        mock_dlna_device.device_manager = MagicMock()
+
+        mock_dlna_device._setup_loop_monitoring_v2(test_video_url)
+        
+        time.sleep(5) # Allow time for state change and restart attempt
+
+        mock_dlna_device._try_restart_video.assert_called_with(test_video_url)
+        
+        # Clean up
+        with mock_dlna_device._thread_lock:
+            mock_dlna_device._loop_enabled = False
+        if mock_dlna_device._loop_thread and mock_dlna_device._loop_thread.is_alive():
+            mock_dlna_device._loop_thread.join(timeout=5.0)
+
+    def test_stop_method_cleans_up_v2_loop_thread(self, mock_dlna_device):
+        """Test that the stop() method correctly stops and joins the v2 loop monitoring thread."""
+        test_video_url = "http://example.com/video_for_stop_test.mp4"
+        
+        mock_dlna_device._get_transport_info = MagicMock(return_value={"CurrentTransportState": "PLAYING"})
+        mock_dlna_device._get_position_info = MagicMock(return_value={"RelTime": "00:00:01", "TrackDuration": "00:01:00"})
+        mock_dlna_device.device_manager = MagicMock()
+        mock_dlna_device._send_dlna_action = MagicMock(return_value=True) # Mock the actual stop SOAP call
+
+        # Start looping
+        mock_dlna_device._setup_loop_monitoring_v2(test_video_url)
+        assert mock_dlna_device._loop_thread is not None
+        assert mock_dlna_device._loop_thread.is_alive()
+        
+        # Call stop
+        mock_dlna_device.stop()
+        
+        # Assertions
+        assert not mock_dlna_device._loop_enabled
+        # The thread should have been joined and thus not alive
+        # Give a very short time for the join in stop() to complete
+        time.sleep(0.1) # Ensure join has time if thread was mid-operation
+        assert not (mock_dlna_device._loop_thread and mock_dlna_device._loop_thread.is_alive()), "Loop thread should not be alive after stop()"
+        mock_dlna_device._send_dlna_action.assert_called_with(None, "Stop")
+
+    def test_loop_monitoring_v2_thread_stops_when_loop_disabled(self, mock_dlna_device):
+        """Test that the v2 monitoring thread exits gracefully when _loop_enabled is set to False."""
+        test_video_url = "http://example.com/video_disable_test.mp4"
+        mock_dlna_device._get_transport_info = MagicMock(return_value={"CurrentTransportState": "PLAYING"})
+        mock_dlna_device._get_position_info = MagicMock(return_value={"RelTime": "00:00:01", "TrackDuration": "00:01:00"})
+        mock_dlna_device.device_manager = MagicMock()
+
+        mock_dlna_device._setup_loop_monitoring_v2(test_video_url)
+        loop_thread = mock_dlna_device._loop_thread
+        assert loop_thread is not None and loop_thread.is_alive()
+
+        # Disable loop
+        with mock_dlna_device._thread_lock:
+            mock_dlna_device._loop_enabled = False
+        
+        loop_thread.join(timeout=5.0) # Wait for thread to exit
+        assert not loop_thread.is_alive(), "Loop thread should exit when _loop_enabled is False."
     
     def test_loop_monitoring_stopped_state(self, mock_dlna_device):
         """Test that the loop monitoring correctly restarts video when it's stopped."""
@@ -148,4 +271,4 @@ class TestDLNADevice:
         # Clean up
         with mock_dlna_device._thread_lock:
             mock_dlna_device._loop_enabled = False
-        mock_dlna_device._loop_thread.join(timeout=1.0) 
+        mock_dlna_device._loop_thread.join(timeout=1.0)

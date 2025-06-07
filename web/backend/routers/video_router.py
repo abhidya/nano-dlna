@@ -4,17 +4,17 @@ from typing import List, Optional
 import os
 import logging
 
-from database.database import get_db
-from models.video import VideoModel
-from schemas.video import (
+from web.backend.database.database import get_db
+from web.backend.models.video import VideoModel
+from web.backend.schemas.video import (
     VideoCreate,
     VideoUpdate,
     VideoResponse,
     VideoList,
     VideoUploadResponse,
 )
-from services.video_service import VideoService, get_video_service
-from core.streaming_service import StreamingService
+from web.backend.services.video_service import VideoService # Local get_video_service is defined below
+from web.backend.core.streaming_service import StreamingService
 
 # Add logger
 logger = logging.getLogger(__name__)
@@ -195,65 +195,37 @@ def scan_directory(
     Accepts directory from either query parameter or JSON body
     """
     # Get directory from query parameter or body
-    scan_directory = directory
-    if scan_directory is None and body:
-        scan_directory = body.get("directory")
+    scan_dir_param = directory
+    if scan_dir_param is None and body:
+        scan_dir_param = body.get("directory")
     
-    if not scan_directory:
+    if not scan_dir_param:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Directory parameter is required (either in query or body)",
         )
     
-    # Check if directory exists
-    if not os.path.exists(scan_directory):
+    # Check if directory exists (moved to service, but good to have a quick check here too)
+    if not os.path.exists(scan_dir_param) or not os.path.isdir(scan_dir_param):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Directory {scan_directory} does not exist",
+            detail=f"Directory {scan_dir_param} does not exist or is not a directory.",
         )
-    
-    if not os.path.isdir(scan_directory):
+
+    try:
+        videos_models = video_service.scan_directory(scan_dir_param)
+        formatted_videos = [video.to_dict() for video in videos_models]
+        return {
+            "success": True,
+            "message": f"Found {len(formatted_videos)} videos in {scan_dir_param}",
+            "videos": formatted_videos,
+        }
+    except Exception as e:
+        logger.error(f"Error scanning directory {scan_dir_param}: {e}")
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"{scan_directory} is not a directory",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to scan directory: {str(e)}",
         )
-    
-    # Scan the directory for video files
-    video_extensions = [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"]
-    videos = []
-    
-    for root, _, files in os.walk(scan_directory):
-        for file in files:
-            if any(file.lower().endswith(ext) for ext in video_extensions):
-                file_path = os.path.join(root, file)
-                name = os.path.splitext(file)[0]
-                
-                try:
-                    # Check if the video already exists
-                    existing_video = video_service.get_video_by_path(file_path)
-                    if existing_video:
-                        videos.append(existing_video)
-                        continue
-                    
-                    # Create the video
-                    video = VideoCreate(name=name, path=file_path)
-                    db_video = video_service.create_video(video)
-                    videos.append(db_video)
-                except Exception as e:
-                    # Log the error and continue
-                    logger.error(f"Error adding video {file_path}: {e}")
-    
-    # Convert videos to dictionaries
-    formatted_videos = []
-    for video in videos:
-        video_dict = video.to_dict()
-        formatted_videos.append(video_dict)
-    
-    return {
-        "success": True,
-        "message": f"Found {len(videos)} videos in {scan_directory}",
-        "videos": formatted_videos,
-    }
 
 @router.post("/scan")
 def scan_videos(
@@ -267,15 +239,35 @@ def scan_videos(
     Accepts directory from either query parameter or JSON body
     """
     # Get directory from query parameter or body
-    scan_directory = directory
-    if scan_directory is None and body:
-        scan_directory = body.get("directory")
+    scan_dir_param = directory
+    if scan_dir_param is None and body:
+        scan_dir_param = body.get("directory")
     
-    if not scan_directory:
+    if not scan_dir_param:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Directory parameter is required (either as query parameter or in JSON body)"
         )
-    
-    videos = video_service.scan_directory(scan_directory)
-    return {"message": f"Found {len(videos)} videos in {scan_directory}", "videos": videos}
+
+    # Check if directory exists (moved to service, but good to have a quick check here too)
+    if not os.path.exists(scan_dir_param) or not os.path.isdir(scan_dir_param):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Directory {scan_dir_param} does not exist or is not a directory.",
+        )
+
+    try:
+        videos_models = video_service.scan_directory(scan_dir_param)
+        # The service returns a list of VideoModel, router should format it
+        formatted_videos = [video.to_dict() for video in videos_models]
+        return {
+            "success": True, # Adding success field for consistency
+            "message": f"Found {len(formatted_videos)} videos in {scan_dir_param}",
+            "videos": formatted_videos
+        }
+    except Exception as e:
+        logger.error(f"Error scanning directory {scan_dir_param} via /scan: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to scan directory: {str(e)}",
+        )

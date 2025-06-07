@@ -7,14 +7,14 @@ This package contains classes for sending content to different types of display 
 - AirPlaySender: AirPlay-compatible devices
 """
 
-from core.renderer_service.sender.base import Sender
-from core.renderer_service.sender.direct import DirectSender
-from core.renderer_service.sender.dlna import DLNASender
-from core.renderer_service.sender.airplay import AirPlaySender
+from .base import Sender
+from .direct import DirectSender
+from .dlna import DLNASender
+from .airplay import AirPlaySender
 
 __all__ = [
     'Sender',
     'DirectSender',
     'DLNASender',
     'AirPlaySender',
-] 
+]

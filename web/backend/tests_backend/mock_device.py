@@ -2,7 +2,7 @@
 Mock implementation of the Device class for testing.
 """
 from typing import Dict, Any, Optional
-from core.device import Device
+from web.backend.core.device import Device
 
 
 class MockDevice(Device):

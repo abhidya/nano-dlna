@@ -3,8 +3,8 @@ Mock implementation of the StreamingSession class for testing.
 """
 import uuid
 from typing import Dict, Any, Optional
-from core.streaming_session import StreamingSession
-from core.device import Device
+from web.backend.core.streaming_session import StreamingSession
+from web.backend.core.device import Device
 
 
 class MockStreamingSession(StreamingSession):

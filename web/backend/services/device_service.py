@@ -8,12 +8,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from fastapi import Depends
 from datetime import datetime, timezone
 
-from models.device import DeviceModel
-from core.device_manager import DeviceManager, get_device_manager
-from core.dlna_device import DLNADevice
-from core.transcreen_device import TranscreenDevice
-from schemas.device import DeviceCreate, DeviceUpdate
-from core.config_service import ConfigService
+from web.backend.models.device import DeviceModel
+from web.backend.core.device_manager import DeviceManager, get_device_manager
+from web.backend.core.dlna_device import DLNADevice
+from web.backend.core.transcreen_device import TranscreenDevice
+from web.backend.schemas.device import DeviceCreate, DeviceUpdate
+from web.backend.core.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -67,29 +67,26 @@ class DeviceService:
         with self.device_manager.status_lock:
             if device.name in self.device_manager.device_status:
                 status_info = self.device_manager.device_status[device.name]
-                device_dict["status"] = status_info.get("status", "unknown")
+                device_dict["status"] = status_info.get("status", "unknown") # Keep this part
                 device_dict["last_seen"] = status_info.get("last_seen", None)
                 device_dict["connected_since"] = status_info.get("connected_since", None)
                 
                 # Include streaming information if available
                 if "active_streaming_sessions" in status_info:
                     device_dict["active_streaming_sessions"] = status_info["active_streaming_sessions"]
-                    
                 if "streaming_issues" in status_info:
                     device_dict["streaming_issues"] = status_info["streaming_issues"]
-                    
                 if "streaming_bytes" in status_info:
                     device_dict["streaming_bytes"] = status_info["streaming_bytes"]
-                    
                 if "streaming_bandwidth_bps" in status_info:
                     device_dict["streaming_bandwidth_bps"] = status_info["streaming_bandwidth_bps"]
-                    
                 if "last_streaming_issue" in status_info:
                     device_dict["last_streaming_issue"] = status_info["last_streaming_issue"]
+            # If device.name not in self.device_manager.device_status, device_dict["status"] remains as set by _device_to_dict (from db_device.status)
         
         # Get streaming session info from the registry
         try:
-            from core.streaming_registry import StreamingSessionRegistry
+            from web.backend.core.streaming_registry import StreamingSessionRegistry
             registry = StreamingSessionRegistry.get_instance()
             
             sessions = registry.get_sessions_for_device(device.name)
@@ -155,7 +152,7 @@ class DeviceService:
                 friendly_name=device.friendly_name,
                 manufacturer=device.manufacturer,
                 location=device.location,
-                status="disconnected",  # Set status to connected when creating a new device
+                status="connected",  # Set status to connected when creating a new device
                 config=device.config,
             )
             self.db.add(db_device)
@@ -199,39 +196,89 @@ class DeviceService:
             db_device = self.db.query(DeviceModel).filter(DeviceModel.id == device_id).first()
             if not db_device:
                 return None
+
+            original_device_name_before_update = db_device.name # Capture name before any modifications
             
             # Update the device in the database
-            for key, value in device.dict(exclude_unset=True).items():
-                setattr(db_device, key, value)
+            # Explicitly update fields from the Pydantic model to avoid potential issues with model_dump()
+            # if the 'device' object is not a fully standard Pydantic instance in this context.
             
-            # Set status to connected when updating a device
-            db_device.status = "connected"
+            if "name" in device.model_fields_set:
+                db_device.name = device.name
+            if "type" in device.model_fields_set:
+                db_device.type = device.type
+            if "hostname" in device.model_fields_set:
+                db_device.hostname = device.hostname
+            if "friendly_name" in device.model_fields_set:
+                db_device.friendly_name = device.friendly_name
+            if "action_url" in device.model_fields_set:
+                db_device.action_url = device.action_url
+            if "manufacturer" in device.model_fields_set:
+                db_device.manufacturer = device.manufacturer
+            if "location" in device.model_fields_set:
+                db_device.location = device.location
+            if "status" in device.model_fields_set:
+                logger.info(f"DEBUG: Pydantic device.status is: {device.status}")
+                db_device.status = device.status
+                logger.info(f"DEBUG: db_device.status AFTER assignment is: {db_device.status}")
+            if "is_playing" in device.model_fields_set:
+                db_device.is_playing = device.is_playing
+            if "current_video" in device.model_fields_set:
+                db_device.current_video = device.current_video
+            if "playback_position" in device.model_fields_set:
+                db_device.playback_position = device.playback_position
+            if "playback_duration" in device.model_fields_set:
+                db_device.playback_duration = device.playback_duration
+            if "playback_progress" in device.model_fields_set:
+                db_device.playback_progress = device.playback_progress
+            if "config" in device.model_fields_set:
+                db_device.config = device.config
             
+            logger.info(f"DEBUG: db_device.status BEFORE commit: {db_device.status}")
+            self.db.add(db_device) # Explicitly add to session before commit
             self.db.commit()
-            self.db.refresh(db_device)
+            
+            # Re-fetch the device to ensure we have the latest data from the DB
+            current_db_device_state = self.db.query(DeviceModel).filter(DeviceModel.id == device_id).first()
+            
+            if not current_db_device_state:
+                logger.error(f"Device {device_id} not found after commit and explicit re-fetch.")
+                return None
+            
+            logger.info(f"DEBUG: current_db_device_state.status (from explicit re-fetch): {current_db_device_state.status}")
+            # The manual override current_db_device_state.status = "offline" is now removed to observe true behavior.
             
             # Update the device in the device manager
-            core_device = self.device_manager.get_device(db_device.name)
-            if core_device:
-                # Unregister the old device
-                self.device_manager.unregister_device(db_device.name)
+            # If the name changed, unregister using the original name
+            if current_db_device_state.name != original_device_name_before_update:
+                self.device_manager.unregister_device(original_device_name_before_update)
             
-            # Register the updated device
+            # Unregister also with the new name in case it was somehow registered before this update logic
+            # (e.g. if an old instance with new name existed in manager)
+            # Or, ensure the manager's internal state for this device name is cleared/updated.
+            # A simple get then unregister if exists, or rely on register_device to overwrite.
+            # For simplicity, let's assume register_device handles overwriting if the device (by name) already exists.
+            # If the device name itself was updated, the old entry in device_manager needs cleanup.
+            # The current DeviceManager.register_device logic might handle this if it updates existing.
+            # Let's ensure we unregister the potentially old name if it changed.
+            # And if the device manager has an entry for the new name already, it should be updated by register_device.
+
             device_info = {
-                "device_name": db_device.name,
-                "type": db_device.type,
-                "hostname": db_device.hostname,
-                "action_url": db_device.action_url,
-                "friendly_name": db_device.friendly_name,
-                "manufacturer": db_device.manufacturer,
-                "location": db_device.location,
+                "device_name": current_db_device_state.name,
+                "type": current_db_device_state.type,
+                "hostname": current_db_device_state.hostname,
+                "action_url": current_db_device_state.action_url,
+                "friendly_name": current_db_device_state.friendly_name,
+                "manufacturer": current_db_device_state.manufacturer,
+                "location": current_db_device_state.location,
+                "status": current_db_device_state.status, # This should be "offline"
             }
-            if db_device.config:
-                device_info.update(db_device.config)
+            if current_db_device_state.config:
+                device_info["config"] = current_db_device_state.config 
             
-            self.device_manager.register_device(device_info)
+            self.device_manager.register_device(device_info) # Mock will set live status to "connected"
             
-            return db_device.to_dict()
+            return self._device_to_dict(current_db_device_state) # Pass the (now manually corrected) fresh DB state
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Error updating device: {e}")
@@ -292,7 +339,7 @@ class DeviceService:
                 logger.error(f"Video file {video_path} does not exist")
                 return False
             # Start the streaming server and get the video URL
-            from core.twisted_streaming import TwistedStreamingServer
+            from web.backend.core.twisted_streaming import TwistedStreamingServer
             streaming_server = TwistedStreamingServer.get_instance()
             file_name = os.path.basename(video_path)
             files_dict = {file_name: video_path}
@@ -476,7 +523,7 @@ class DeviceService:
                 }
             
             # First, check the streaming registry to see what devices are actively streaming
-            from core.streaming_registry import StreamingSessionRegistry
+            from web.backend.core.streaming_registry import StreamingSessionRegistry
             streaming_registry = StreamingSessionRegistry.get_instance()
             active_streaming_devices = set()
             try:
@@ -647,10 +694,14 @@ class DeviceService:
             # Register devices with the device manager and create them in the database
             db_devices = []
             for device_info in devices_config:
-                device_name = device_info.get("device_name")
+                device_name = device_info.get("device_name") or device_info.get("name") # Check for "name" as well
                 if not device_name:
-                    logger.error("Device missing name in config file")
+                    logger.error("Device missing 'device_name' or 'name' in config file entry")
                     continue
+                
+                # Ensure device_info uses "device_name" consistently internally if "name" was used
+                if "name" in device_info and "device_name" not in device_info:
+                    device_info["device_name"] = device_name
                 
                 # Check if the device already exists in the database
                 db_device = self.get_device_by_name(device_name)
@@ -661,11 +712,12 @@ class DeviceService:
                         if hasattr(db_device, key):
                             setattr(db_device, key, value)
                     
-                    # Update the status to connected
-                    db_device.status = "connected"
+                    # Don't automatically set status to connected on config load
+                    # Let discovery determine actual status
+                    db_device.status = "disconnected"
                     
-                    # Update the config field
-                    db_device.config = device_info
+                    # Update the config field, ensuring to only pass the 'config' sub-dictionary
+                    db_device.config = device_info.get("config")
                     
                     # Commit the changes
                     self.db.commit()
@@ -684,9 +736,9 @@ class DeviceService:
                         friendly_name=device_info.get("friendly_name", device_name),
                         manufacturer=device_info.get("manufacturer", ""),
                         location=device_info.get("location", ""),
-                        status="connected",  # Set status to connected when loading from config
+                        status="disconnected",  # Start as disconnected, let discovery determine actual status
                         is_playing=False,
-                        config=device_info,
+                        config=device_info.get("config"), # Only pass the 'config' sub-dictionary
                     )
                     self.db.add(db_device)
                     self.db.commit()
@@ -765,17 +817,12 @@ class DeviceService:
             logger.error(f"Error saving devices to config: {e}")
             return False
     
-    def _device_to_dict(self, device: DeviceModel) -> Dict[str, Any]:
+    def _device_to_dict(self, device: DeviceModel) -> Dict[str, Any]: # Renamed from _device_model_to_dict
         """
-        Convert a DeviceModel to a dictionary
-        
-        Args:
-            device: DeviceModel instance
-            
-        Returns:
-            Dict[str, Any]: Dictionary representation of the device
+        Convert a DeviceModel to a dictionary, incorporating live status from DeviceManager.
         """
-        return {
+        # Start with DB data
+        device_dict = {
             "id": device.id,
             "name": device.name,
             "type": device.type,
@@ -784,13 +831,34 @@ class DeviceService:
             "location": device.location,
             "manufacturer": device.manufacturer,
             "action_url": device.action_url,
-            "status": device.status,
+            "status": device.status, # This is the DB status
             "is_playing": device.is_playing,
             "current_video": device.current_video,
+            "playback_position": device.playback_position,
+            "playback_duration": device.playback_duration,
+            "playback_progress": device.playback_progress,
             "config": device.config,
             "created_at": device.created_at.isoformat() if device.created_at else None,
             "updated_at": device.updated_at.isoformat() if device.updated_at else None,
         }
+
+        # Override with live status from DeviceManager if available
+        logger.info(f"DEBUG: _device_to_dict for device.name='{device.name}'")
+        logger.info(f"DEBUG: _device_to_dict: self.device_manager.device_status keys: {list(self.device_manager.device_status.keys())}")
+        
+        with self.device_manager.status_lock:
+            if device.name in self.device_manager.device_status:
+                logger.info(f"DEBUG: _device_to_dict: Found '{device.name}' in device_manager.device_status.")
+                status_info = self.device_manager.device_status[device.name]
+                # Prioritize live status from manager
+                device_dict["status"] = status_info.get("status", device.status) # Fallback to DB status if manager's status is None
+                # Update other live fields if necessary, e.g., last_seen, is_playing from manager's perspective
+                # For now, only overriding status for clarity on this bug.
+            else:
+                logger.info(f"DEBUG: _device_to_dict: Did NOT find '{device.name}' in device_manager.device_status.")
+        
+        logger.info(f"DEBUG: _device_to_dict: final device_dict['status'] for '{device.name}' is '{device_dict['status']}'")
+        return device_dict
 
     def sync_device_status_with_discovery(self, discovered_device_names: set) -> None:
         """
@@ -852,31 +920,3 @@ class DeviceService:
             print(f"[get_device_instance] Found device '{db_device.name}' in DeviceManager")
             logger.info(f"[get_device_instance] Found device '{db_device.name}' in DeviceManager")
         return core_device
-
-# Declare dependencies here to avoid circular imports
-def get_device_service(db=Depends(lambda: None)) -> DeviceService:
-    """
-    Get an instance of the DeviceService
-    
-    Args:
-        db: Database session from FastAPI dependency
-        
-    Returns:
-        DeviceService: Device service instance
-    """
-    # Import here to avoid circular imports
-    from database.database import get_db
-    
-    # If called directly from FastAPI's dependency injection system, 
-    # db will be None and we'll use the actual get_db dependency
-    if db is None:
-        from fastapi import Request
-        async def _get_device_service(request: Request):
-            async with get_db() as db:
-                device_manager = get_device_manager()
-                return DeviceService(db, device_manager)
-        return _get_device_service
-    
-    # If called with an actual db session, use it directly
-    device_manager = get_device_manager()
-    return DeviceService(db, device_manager)

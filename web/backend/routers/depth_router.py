@@ -12,9 +12,7 @@ import uuid
 # Try to import depth processing modules
 # These are wrapped in try-except to allow the app to start without these dependencies
 try:
-    from core.depth_processing.core.depth_loader import DepthLoader
-    from core.depth_processing.core.segmentation import DepthSegmenter
-    from core.depth_processing.utils.visualizer import DepthVisualizer
+    from web.backend.core.depth_processing import DepthLoader, DepthSegmenter, DepthVisualizer
     DEPTH_PROCESSING_AVAILABLE = True
 except ImportError as e:
     logging.warning(f"Depth processing modules not available: {e}")
@@ -429,14 +427,14 @@ async def create_projection(config: ProjectionConfig):
         # Start casting to the device if requested
         if config.device_id:
             # Import device service
-            from services.device_service import DeviceService
-            from database.database import get_db
+            from web.backend.services.device_service import DeviceService
+            from web.backend.database.database import get_db
             
             # Get database session
             db = next(get_db())
             
             # Create device service
-            from core.device_manager import DeviceManager
+            from web.backend.core.device_manager import DeviceManager
             device_service = DeviceService(db, DeviceManager())
             
             # Create a projection URL

@@ -39,23 +39,32 @@ class RendererService:
         self.active_renderers = {}
         self.lock = threading.Lock()
         self.streaming_server = TwistedStreamingServer()
-        # Initialize with an empty files dictionary and auto-detect the LAN IP
-        import socket
-        def get_lan_ip():
+        self._lan_ip = None
+        
+    def start_streaming_server(self):
+        """Starts the internal TwistedStreamingServer."""
+        if not self._lan_ip:
+            import socket
             try:
                 # Create a socket that connects to an external server
                 s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
                 s.connect(("8.8.8.8", 80))
-                ip = s.getsockname()[0]
+                self._lan_ip = s.getsockname()[0]
                 s.close()
-                return ip
             except Exception as e:
                 self.logger.error(f"Error detecting LAN IP: {str(e)}")
-                return '127.0.0.1'
-        
-        lan_ip = get_lan_ip()
-        self.logger.info(f"Auto-detected LAN IP for streaming: {lan_ip}")
-        self.streaming_server.start_server({}, serve_ip=lan_ip)
+                self._lan_ip = '127.0.0.1'
+            self.logger.info(f"Auto-detected LAN IP for streaming: {self._lan_ip}")
+
+        if self.streaming_server:
+            try:
+                # Pass an empty dict for files initially, can be updated later
+                self.streaming_server.start_server({}, serve_ip=self._lan_ip)
+                self.logger.info(f"Streaming server started on {self._lan_ip} using configured port range.")
+            except Exception as e:
+                self.logger.error(f"Failed to start streaming server in RendererService: {e}")
+                # Potentially re-raise or handle as critical failure
+                raise
         
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -228,7 +237,7 @@ class RendererService:
                 pass
             elif sender_type == 'airplay':
                 # Use the AirPlay sender
-                from core.renderer_service.sender.airplay import AirPlaySender
+                from .sender.airplay import AirPlaySender # Changed to relative
                 
                 # Create AirPlay sender
                 airplay_config = self.config.get('senders', {}).get('airplay', {})
@@ -296,10 +305,10 @@ class RendererService:
         """
         try:
             # Import here to avoid circular imports
-            from services.device_service import DeviceService
+            from ..services.device_service import DeviceService # Changed to relative
             
             # Get the device instance
-            device_service = DeviceService()
+            device_service = DeviceService() # This instantiation might be problematic if DeviceService expects db/manager
             device = device_service.get_device_instance(device_name)
             
             if not device:
@@ -352,10 +361,10 @@ class RendererService:
             if sender_type == 'dlna':
                 try:
                     # Import here to avoid circular imports
-                    from services.device_service import DeviceService
+                    from ..services.device_service import DeviceService # Changed to relative
                     
                     # Get the device instance
-                    device_service = DeviceService()
+                    device_service = DeviceService() # This instantiation might be problematic
                     device = device_service.get_device_instance(target_name)
                     
                     if device:

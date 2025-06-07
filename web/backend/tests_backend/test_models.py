@@ -4,9 +4,9 @@ Tests for database models.
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, Session
-from database.database import Base
-from models.device import DeviceModel
-from models.video import VideoModel
+from web.backend.database.database import Base
+from web.backend.models.device import DeviceModel
+from web.backend.models.video import VideoModel
 
 
 # Fixture to set up the database

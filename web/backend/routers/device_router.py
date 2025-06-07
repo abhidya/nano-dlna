@@ -4,9 +4,9 @@ from typing import List, Optional
 import os
 import logging
 
-from database.database import get_db
-from models.device import DeviceModel
-from schemas.device import (
+from web.backend.database.database import get_db
+from web.backend.models.device import DeviceModel
+from web.backend.schemas.device import (
     DeviceCreate,
     DeviceUpdate,
     DeviceResponse,
@@ -14,9 +14,9 @@ from schemas.device import (
     DevicePlayRequest,
     DeviceActionResponse,
 )
-from services.device_service import DeviceService
-from core.device_manager import DeviceManager
-from routers.video_router import get_video_service
+from web.backend.services.device_service import DeviceService
+from web.backend.core.device_manager import DeviceManager
+from web.backend.routers.video_router import get_video_service
 
 # Set up logger
 logger = logging.getLogger(__name__)
@@ -244,6 +244,53 @@ def seek_video(
         "success": True,
         "message": f"Seeked to position {position} on device with ID {device_id}",
     }
+
+@router.post("/{device_id}/update-progress", response_model=DeviceActionResponse)
+def update_playback_progress(
+    device_id: int,
+    position: str = Query(..., description="Current playback position (format: HH:MM:SS)"),
+    duration: str = Query(..., description="Total video duration (format: HH:MM:SS)"),
+    progress: int = Query(..., description="Playback progress as a percentage (0-100)"),
+    device_service: DeviceService = Depends(get_device_service),
+):
+    """
+    Update the playback progress for a device
+    """
+    # Get the device from the database
+    device = device_service.get_device_by_id(device_id)
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device with ID {device_id} not found",
+        )
+    
+    # Get the device from the device manager
+    core_device = device_service.get_device_instance(device_id)
+    if not core_device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device with ID {device_id} not found in device manager",
+        )
+    
+    # Update the playback progress
+    try:
+        device_manager.update_device_playback_progress(
+            device_name=core_device.name,
+            position=position,
+            duration=duration,
+            progress=progress
+        )
+        
+        return {
+            "success": True,
+            "message": f"Playback progress updated for device with ID {device_id}",
+        }
+    except Exception as e:
+        logger.error(f"Error updating playback progress: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to update playback progress for device with ID {device_id}: {str(e)}",
+        )
 
 # Move the discover endpoint to the top of the file, before the /{device_id} routes
 

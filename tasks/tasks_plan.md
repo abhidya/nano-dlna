@@ -338,16 +338,23 @@ This document outlines planned tasks for the `nano-dlna` project, organized by p
     *   *Definition of Done:* A comprehensive test plan document exists that covers all aspects of testing for the nano-dlna dashboard, with a focus on the renderer and depth processing features.
     *   *References:* `tasks/test_plan.md`
 
-13. **[CRITICAL] Increase Backend Test Coverage**
-   * **Status:** Pending
+13. **[HIGH] ⏳ Increase Backend Test Coverage** (PARTIALLY COMPLETED)
+   * **Status:** In Progress
    * **Goal:** Significantly increase test coverage for the FastAPI backend (`web/backend/`).
-   * **Definition of Done:**
+   * **Completed:**
+     * ✅ Added comprehensive tests for renderer router endpoints
+     * ✅ Added comprehensive tests for depth router endpoints
+     * ✅ Enhanced tests for streaming router endpoints
+     * ✅ Created a script to run all tests with coverage reporting
+     * ✅ Created a test coverage plan document
+   * **Remaining:**
      * Run backend coverage report (`pytest --cov=web.backend`).
-     * Analyze report for low-coverage modules (core, services, routers, models, database).
-     * Write new tests in `web/backend/tests` or `web/backend/tests_backend` to cover critical untested code paths.
-     * Achieve a target coverage percentage (e.g., >80%) for the `web/backend/` directory.
+     * Analyze report for remaining low-coverage modules (core, services, models, database).
+     * Write new tests to cover critical untested code paths.
+     * Achieve a target coverage percentage (>80%) for the `web/backend/` directory.
      * Ensure all backend tests pass.
    * **Notes:** Focus on unit and integration tests for API endpoints, service logic, and database interactions. Refactor code for testability if needed.
+   * **References:** `tasks/test_coverage_plan.md`
 
 ### Configuration & Dependencies
 
@@ -527,12 +534,43 @@ This document outlines planned tasks for the `nano-dlna` project, organized by p
 - [x] Fix depth processing module import errors
 - [x] Make dashboard start successfully with depth_router included
 - [x] Update memory bank with current state
+- [x] Fix backend import errors by modifying main.py to add the current directory to the Python path and changing imports in router files to use relative imports instead of absolute imports
+- [x] Fix test_main.py to pass all tests
 
 ## High Priority Tasks
-- [ ] Debug and fix 500 Internal Server Error in device play API
-- [ ] Test depth map upload and segmentation API endpoints
-- [ ] Test projection mapping with DLNA devices
-- [ ] Fix device disconnection/reconnection issues
+A comprehensive implementation plan has been created to address these issues and implement new features. See [tasks/nano_dlna_implementation_plan.md](tasks/nano_dlna_implementation_plan.md) for details.
+
+Following the implementation plan:
+
+1. [ ] Fix DLNA Device Thread Monitoring Error
+   - Implement proper null checking before accessing thread attributes
+   - Add defensive programming to handle potential thread-related errors
+   - Ensure thread cleanup happens properly when stopping playback
+
+2. [ ] Fix Renderer Service DLNA Integration
+   - Fix device lookup logic to use the correct device name or ID
+   - Update content URL handling to ensure it works with the DLNA device
+   - Ensure correct sender type is used for each device
+
+3. [ ] Implement AirPlay Discovery in Frontend
+   - Implement proper API calls to AirPlay discovery endpoints
+   - Create UI components for AirPlay device selection
+   - Add error handling and loading states
+
+4. [ ] Fix 500 Internal Server Error in Device Play API
+   - Implement proper error handling in `play_video` method
+   - Add validation for device and video path
+   - Add detailed logging for troubleshooting
+
+5. [ ] Implement Comprehensive Device Status Tracking
+   - Implement unified approach to status tracking
+   - Ensure status updates are propagated correctly
+   - Synchronize status between database and in-memory state
+
+6. [ ] Additional tasks:
+   - Test depth map upload and segmentation API endpoints
+   - Test projection mapping with DLNA devices
+   - Fix device disconnection/reconnection issues
 
 ## Medium Priority Tasks
 - [ ] Create test depth maps for testing segmentation

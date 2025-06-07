@@ -24,7 +24,8 @@ import {
   Chip,
   Divider,
   Alert,
-  Snackbar
+  Snackbar,
+  LinearProgress
 } from '@mui/material';
 import {
   Add as AddIcon,
@@ -408,9 +409,28 @@ function Devices() {
                   />
                 </Typography>
                 {device.current_video && (
-                  <Typography variant="body2" color="textSecondary" gutterBottom>
-                    Current Video: {device.current_video.split('/').pop()}
-                  </Typography>
+                  <>
+                    <Typography variant="body2" color="textSecondary" gutterBottom>
+                      Current Video: {device.current_video.split('/').pop()}
+                    </Typography>
+                    {device.is_playing && device.playback_progress !== null && (
+                      <Box sx={{ mt: 1, mb: 1 }}>
+                        <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
+                          <Typography variant="caption" color="textSecondary">
+                            {device.playback_position || "00:00:00"}
+                          </Typography>
+                          <Typography variant="caption" color="textSecondary">
+                            {device.playback_duration || "00:00:00"}
+                          </Typography>
+                        </Box>
+                        <LinearProgress 
+                          variant="determinate" 
+                          value={device.playback_progress || 0} 
+                          sx={{ height: 8, borderRadius: 4 }}
+                        />
+                      </Box>
+                    )}
+                  </>
                 )}
                 <Typography variant="body2" color="textSecondary">
                   Hostname: {device.hostname}

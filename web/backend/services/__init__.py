@@ -1,5 +1,5 @@
-from services.device_service import DeviceService
-from services.video_service import VideoService
+from .device_service import DeviceService
+from .video_service import VideoService
 
 __all__ = [
     'DeviceService',

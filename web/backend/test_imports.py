@@ -10,7 +10,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 try:
     print("Attempting to import from core.streaming_registry...")
-    from core.streaming_registry import StreamingSessionRegistry
+    from web.backend.core.streaming_registry import StreamingSessionRegistry
     print("✅ Successfully imported StreamingSessionRegistry from core.streaming_registry")
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -20,7 +20,7 @@ except ImportError as e:
 
 try:
     print("\nAttempting to import from routers...")
-    from routers import device_router, video_router, streaming_router
+    from web.backend.routers import device_router, video_router, streaming_router
     print("✅ Successfully imported routers")
 except ImportError as e:
     print(f"❌ Import error: {e}")
@@ -28,4 +28,4 @@ except ImportError as e:
     import traceback
     traceback.print_exc()
 
-print("\nImport test complete.") 
+print("\nImport test complete.")
