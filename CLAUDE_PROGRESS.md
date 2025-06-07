@@ -355,6 +355,60 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 
 **Impact**: This ensures all three components (Database, In-Memory Device, StreamingSessionRegistry) stay synchronized, preventing the "device not found" errors during streaming health checks.
 
+### 🚨 CRITICAL BUGS STILL ACTIVE (Found in 4-minute runtime logs)
+
+**FACTS from logs**:
+1. **2-minute restart loop is back**: 
+   - 04:30:50 - Last HTTP request
+   - 04:32:50 - "Inactivity detected" → RESTART 
+   - 04:34:52 - "Inactivity detected" → RESTART AGAIN
+   - Pattern: Restarts every ~2 minutes
+
+2. **Device not found error still occurs**:
+   - 04:32:23 - "Device Hccast-3ADE76_dlna not found for streaming issue handling"
+   - This happens AFTER we supposedly fixed state sync!
+
+3. **Wrong video duration detected**:
+   - Video is 30 minutes long
+   - System defaults to 60 seconds
+   - This causes premature inactivity detection
+
+4. **Duplicate log entries**:
+   - Every log line appears twice
+   - "Stopping all streaming servers" appears 4 times
+   - Logger configuration issue
+
+5. **90-second threshold still too short**:
+   - Device buffers entire 30-minute video
+   - No HTTP requests needed after buffering
+   - Triggers false inactivity
+
+**Low-Hanging Fruit Fixes (Priority Order)**:
+1. ✅ **Fix video duration detection** - Added ffprobe fallback + 30min default
+2. ✅ **Dynamic inactivity timeout** - Set to video duration + 30s for buffering devices
+3. ✅ **Fix duplicate logging** - Removed --reload flag from uvicorn
+4. ✅ **Add device re-registration handling** - Auto-recover from database
+
+**What We Just Fixed**:
+1. **Video Duration Detection**:
+   - Added ffprobe fallback to get duration from file
+   - Changed default from 60s to 1800s (30 minutes)
+   - This prevents premature inactivity detection
+
+2. **Dynamic Inactivity Timeout**:
+   - Added `_dynamic_inactivity_timeout` flag (enabled by default)
+   - Timeout now = video duration + 30 seconds
+   - Accommodates devices that buffer entire video
+
+3. **Duplicate Logging Fix**:
+   - Removed --reload flag from web/run_direct.sh
+   - This prevents uvicorn from running multiple instances
+
+4. **Device Re-registration**:
+   - Added recovery logic in _handle_streaming_issue
+   - Attempts to reload device from database if not found
+   - Preserves streaming URL/port during recovery
+
 ### Lessons Learned from This Debugging Session
 
 1. **Never Disable Features - Always Root Cause**

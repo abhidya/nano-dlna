@@ -57,7 +57,7 @@ fi
 
 # Run the backend in the background
 echo "Starting backend server..."
-PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 run.py --reload &
+PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 run.py &
 BACKEND_PID=$!
 
 # Wait for backend to start and verify it's running

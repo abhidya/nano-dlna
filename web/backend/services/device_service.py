@@ -425,6 +425,9 @@ class DeviceService:
             
             if video_url:
                 logger.info(f"Playing video {video_url} on device {device_id} (loop={loop})")
+                # Set the video file path on the device for duration detection
+                if hasattr(device, 'current_video_path'):
+                    device.current_video_path = video_path
                 success = device.play(video_url, loop)
             else:
                 logger.error(f"No video URL available for device {device_id}")

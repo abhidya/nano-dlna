@@ -39,10 +39,12 @@ class DLNADevice(Device):
         self._loop_enabled = False
         self._loop_thread = None  # Explicitly initialize loop_thread
         self._last_activity_time = None
-        self._inactivity_timeout = 90  # Seconds of inactivity before considering playback stalled (increased for buffering devices)
+        self._inactivity_timeout = 90  # Default seconds of inactivity before considering playback stalled
+        self._dynamic_inactivity_timeout = True  # Enable dynamic timeout based on video duration
         
         # Video playback attributes
         self.current_video_duration = None  # Duration of current video in seconds
+        self.current_video_path = None  # Local file path of current video
         # self._looping = False # Removed, self._loop_enabled will be used
         
         # Playback progress tracking
@@ -716,8 +718,77 @@ class DLNADevice(Device):
 
 
         if not self.current_video_duration:
-            logger.warning(f"[{self.name}] Couldn't determine video duration (v2), using default 60s.")
-            self.current_video_duration = 60 
+            # Try to get duration from video file if DLNA device doesn't provide it
+            try:
+                # Extract video path from URL (e.g., http://10.0.0.74:9001/door6.mp4 -> door6.mp4)
+                import os
+                from urllib.parse import urlparse, unquote
+                parsed_url = urlparse(video_url)
+                filename = unquote(os.path.basename(parsed_url.path))
+                logger.debug(f"[{self.name}] Extracted filename from URL: {filename}")
+                
+                # Try multiple ways to find the video file
+                video_path = None
+                
+                # Method 1: Check if we have the path stored directly
+                if hasattr(self, 'current_video_path') and self.current_video_path:
+                    video_path = self.current_video_path
+                    logger.debug(f"[{self.name}] Using stored video path: {video_path}")
+                
+                # Method 2: Check device_manager assigned videos
+                elif hasattr(self, 'device_manager') and self.device_manager:
+                    logger.debug(f"[{self.name}] Has device_manager, checking assigned_videos")
+                    if hasattr(self.device_manager, 'assigned_videos'):
+                        video_path = self.device_manager.assigned_videos.get(self.name)
+                        logger.debug(f"[{self.name}] Found in assigned_videos: {video_path}")
+                else:
+                    logger.debug(f"[{self.name}] No device_manager available")
+                
+                # Method 3: Try common paths if not found
+                if not video_path or not os.path.exists(video_path):
+                    # Try to find the file in common locations
+                    possible_paths = [
+                        os.path.join("/Users/mannybhidya/PycharmProjects/nano-dlna", filename),
+                        os.path.join(os.getcwd(), filename),
+                        os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", filename),
+                    ]
+                    for path in possible_paths:
+                        if os.path.exists(path):
+                            video_path = path
+                            logger.debug(f"[{self.name}] Found video at: {video_path}")
+                            break
+                
+                if video_path and os.path.exists(video_path):
+                            # Use ffprobe to get duration
+                            import subprocess
+                            try:
+                                result = subprocess.run(
+                                    ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                                     '-of', 'default=noprint_wrappers=1:nokey=1', video_path],
+                                    capture_output=True, text=True, timeout=5
+                                )
+                                logger.debug(f"[{self.name}] ffprobe result: returncode={result.returncode}, stdout='{result.stdout}', stderr='{result.stderr}'")
+                                if result.returncode == 0 and result.stdout.strip():
+                                    duration_seconds = float(result.stdout.strip())
+                                    self.current_video_duration = int(duration_seconds)
+                                    logger.info(f"[{self.name}] Got video duration from file: {self.current_video_duration}s")
+                                else:
+                                    logger.warning(f"[{self.name}] ffprobe failed: returncode={result.returncode}, stderr={result.stderr}")
+                            except subprocess.TimeoutExpired as e:
+                                logger.warning(f"[{self.name}] ffprobe timed out: {e}")
+                            except FileNotFoundError:
+                                logger.error(f"[{self.name}] ffprobe not found in PATH")
+                            except ValueError as e:
+                                logger.error(f"[{self.name}] Could not parse ffprobe output: {e}")
+                            except Exception as e:
+                                logger.error(f"[{self.name}] Unexpected error with ffprobe: {e}")
+            except Exception as e:
+                logger.debug(f"[{self.name}] Error getting duration from file: {e}")
+            
+            # Final fallback - use a more reasonable default for video files
+            if not self.current_video_duration:
+                logger.warning(f"[{self.name}] Couldn't determine video duration (v2), using default 1800s (30 min).")
+                self.current_video_duration = 1800  # 30 minutes is more reasonable default for videos 
             
         self.duration_formatted = self._format_time(self.current_video_duration)
         
@@ -820,8 +891,15 @@ class DLNADevice(Device):
                 except Exception as e:
                     logger.debug(f"[{self.name}] Could not check streaming registry: {e}")
                 
-                if not has_active_stream and self._last_activity_time and (time.time() - self._last_activity_time > self._inactivity_timeout):
-                    logger.warning(f"[{self.name}] Inactivity detected (v2). Checking state and attempting restart.")
+                # Calculate dynamic timeout based on video duration
+                effective_timeout = self._inactivity_timeout
+                if self._dynamic_inactivity_timeout and self.current_video_duration:
+                    # For buffering devices, set timeout to video duration + 30 seconds
+                    effective_timeout = self.current_video_duration + 30
+                    logger.debug(f"[{self.name}] Using dynamic timeout: {effective_timeout}s (video duration: {self.current_video_duration}s)")
+                
+                if not has_active_stream and self._last_activity_time and (time.time() - self._last_activity_time > effective_timeout):
+                    logger.warning(f"[{self.name}] Inactivity detected (v2) after {effective_timeout}s. Checking state and attempting restart.")
                     if self._try_restart_video(video_url):
                         monitoring_start_time = time.time() # Reset monitoring time
                         last_progress_update_time = time.time()

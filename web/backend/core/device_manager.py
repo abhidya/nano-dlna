@@ -135,7 +135,39 @@ class DeviceManager:
                     last_seen_time = self.last_seen.get(device_name, 0)
                     time_since_seen = time.time() - last_seen_time if last_seen_time else float('inf')
                     logger.debug(f"Device {device_name} last seen {time_since_seen:.1f}s ago")
-                return
+                
+                # Try to recover device from database if available
+                if self.device_service:
+                    try:
+                        logger.info(f"Attempting to recover device {device_name} from database")
+                        db_device = self.device_service.get_device_by_name(device_name)
+                        if db_device:
+                            device_info = {
+                                "device_name": db_device.name,
+                                "type": db_device.type,
+                                "hostname": db_device.hostname,
+                                "action_url": db_device.action_url,
+                                "friendly_name": db_device.friendly_name,
+                                "manufacturer": db_device.manufacturer,
+                                "location": db_device.location,
+                            }
+                            device = self.register_device(device_info)
+                            if device:
+                                logger.info(f"Successfully recovered device {device_name} from database")
+                                # Update with streaming info if available
+                                if db_device.streaming_url and db_device.streaming_port:
+                                    device.update_streaming_info(db_device.streaming_url, db_device.streaming_port)
+                            else:
+                                logger.error(f"Failed to re-register device {device_name}")
+                                return
+                        else:
+                            logger.error(f"Device {device_name} not found in database either")
+                            return
+                    except Exception as e:
+                        logger.error(f"Error recovering device from database: {e}")
+                        return
+                else:
+                    return
                 
             # Update status with streaming issue
             self.update_device_status(
@@ -988,6 +1020,10 @@ class DeviceManager:
             port_match = re.search(r':(\d+)/', video_url)
             streaming_port = int(port_match.group(1)) if port_match else None
             device.update_streaming_info(video_url, streaming_port)
+            
+            # Set the video file path on the device for duration detection
+            if hasattr(device, 'current_video_path'):
+                device.current_video_path = video_path
             
             success = device.play(video_url, loop)
             
