@@ -126,7 +126,7 @@ class DLNAMediaResource(Resource):
                 try:
                     from web.backend import main
                     if hasattr(main, 'device_manager'):
-                        device = main.device_manager.get_device_by_name(device_name)
+                        device = main.device_manager.get_device(device_name)
                         if device and hasattr(device, '_last_activity_time') and hasattr(device, '_thread_lock'):
                             import time
                             with device._thread_lock:

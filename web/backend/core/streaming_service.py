@@ -507,7 +507,7 @@ class StreamingService:
                 # Access the global device_manager from main
                 from web.backend import main
                 if hasattr(main, 'device_manager'):
-                    device = main.device_manager.get_device_by_name(session.device_name)
+                    device = main.device_manager.get_device(session.device_name)
                     if device:
                         # Let the device handle the streaming health check
                         if hasattr(device, '_handle_streaming_health_check'):

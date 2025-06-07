@@ -1,5 +1,15 @@
 # Claude Progress Document
 
+## IMPORTANT: Project Rules Location
+The project rules are located in `.cursor/rules/` directory:
+- `rules.mdc` - General instructions to always follow
+- `debug.mdc` - Debugging methodology and root cause principles
+- `implement.mdc` - Implementation patterns and protocols
+- `lessons-learned.mdc` - Project-specific patterns and debugging principles
+- `error-documentation.mdc` - Known errors and solutions
+
+**ALWAYS read and adhere to these rules first before making changes.**
+
 ## Session: June 7, 2025
 
 ### Initial Request
@@ -280,6 +290,32 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 4. Fix DeviceManager singleton pattern error (streaming_service.py)
 
 Now HTTP requests directly update the device's `_last_activity_time`, preventing false inactivity detection.
+
+### Lessons Learned from This Debugging Session
+
+1. **Never Disable Features - Always Root Cause**
+   - I tried to disable inactivity check instead of fixing it
+   - User correctly said: "don't disable features, we must root cause them"
+
+2. **Verify Method Names Exist**
+   - Used `get_device_by_name()` but the actual method was `get_device()`
+   - Always grep/search for correct method signatures
+
+3. **Question Previous Fixes**
+   - Progress doc claimed UNKNOWN state fix was "DONE" but loop continued
+   - Always verify with logs before marking complete
+
+4. **Trace Complete Data Flow**
+   - Issue involved: TwistedStreamingServer → StreamingSessionRegistry → dlna_device
+   - Missing integration between components caused the bug
+
+5. **Check All Code Paths**
+   - Found two play paths: API vs Discovery/auto-play
+   - Only fixing one path leaves bugs
+
+6. **Verify Architectural Patterns**
+   - Assumed DeviceManager was singleton with get_instance()
+   - It wasn't - always check before assuming
 
 **Better alternatives**:
 - Simple needs: Use original nano-dlna
