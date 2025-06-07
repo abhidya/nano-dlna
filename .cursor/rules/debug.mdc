@@ -25,4 +25,13 @@ Below debugging routine is for persistent errors or incomplete fixes. So use thi
 - Present your fix using <REASONING PRESENTATION> for validation.
 - Start modifying code to update and fix things using <SYSTEMATIC CODE PROTOCOL> and <TESTING> (both defined in [implement.mdc](mdc:.cursor/rules/implement.mdc) ).
 
+<ROOT CAUSE PRINCIPLES>
+1. NEVER disable features - always find and fix the root cause
+2. Question previous "fixes" - verify they actually work with logs/testing
+3. Trace data flow through ALL components end-to-end
+4. Identify ALL code paths that implement similar functionality
+5. Verify architectural patterns (singleton, etc.) before assuming
+6. When user says "don't do X", find the proper solution instead
+</ROOT CAUSE PRINCIPLES>
+
 </DEBUGGING>

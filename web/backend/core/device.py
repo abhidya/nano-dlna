@@ -16,6 +16,8 @@ class Device(ABC):
         self.status = "disconnected"
         self.current_video = None
         self.is_playing = False
+        self.streaming_url = None
+        self.streaming_port = None
         self._lock = threading.Lock()  # Lock for thread-safe status updates
 
     def update_status(self, status: str) -> None:
@@ -50,6 +52,19 @@ class Device(ABC):
         with self._lock:
             self.current_video = video_path
             logger.info(f"Device {self.name} current video updated to {video_path}")
+            
+    def update_streaming_info(self, streaming_url: Optional[str], streaming_port: Optional[int]) -> None:
+        """
+        Update the streaming URL and port for this device
+        
+        Args:
+            streaming_url: URL of the streaming server
+            streaming_port: Port of the streaming server
+        """
+        with self._lock:
+            self.streaming_url = streaming_url
+            self.streaming_port = streaming_port
+            logger.info(f"Device {self.name} streaming info updated: {streaming_url} on port {streaming_port}")
             
     @abstractmethod
     def play(self, video_url: str, loop: bool = False) -> bool:
@@ -111,5 +126,7 @@ class Device(ABC):
             "status": self.status,
             "current_video": self.current_video,
             "is_playing": self.is_playing,
+            "streaming_url": self.streaming_url,
+            "streaming_port": self.streaming_port,
             **self.device_info
         }

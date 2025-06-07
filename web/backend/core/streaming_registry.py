@@ -268,7 +268,8 @@ class StreamingSessionRegistry:
         for session in active_sessions:
             try:
                 # Check for stalled sessions
-                if session.is_stalled(inactivity_threshold=15.0):
+                # Increased from 15s to 90s to account for devices that buffer entire video
+                if session.is_stalled(inactivity_threshold=90.0):
                     logger.warning(f"Streaming session {session.session_id} for device {session.device_name} appears stalled")
                     
                     # Call registered health check handlers

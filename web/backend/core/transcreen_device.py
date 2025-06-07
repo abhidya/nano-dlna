@@ -80,6 +80,8 @@ class TranscreenDevice(Device):
             
             # Update device status
             self.update_playing(False)
+            self.current_video = None
+            self.update_streaming_info(None, None)  # Clear streaming info
             
             logger.debug(f"Sent Transcreen stop command to {self.name}")
             return True

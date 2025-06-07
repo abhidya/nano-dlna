@@ -39,7 +39,7 @@ class DLNADevice(Device):
         self._loop_enabled = False
         self._loop_thread = None  # Explicitly initialize loop_thread
         self._last_activity_time = None
-        self._inactivity_timeout = 30  # Seconds of inactivity before considering playback stalled
+        self._inactivity_timeout = 90  # Seconds of inactivity before considering playback stalled (increased for buffering devices)
         
         # Video playback attributes
         self.current_video_duration = None  # Duration of current video in seconds
@@ -428,6 +428,7 @@ class DLNADevice(Device):
             self.update_status("connected")
             self.update_playing(False)
             self.current_video = None
+            self.update_streaming_info(None, None)  # Clear streaming info
             
             return True
         except Exception as e:

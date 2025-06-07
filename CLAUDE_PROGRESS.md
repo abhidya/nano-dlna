@@ -245,9 +245,10 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 4. ~~Fix port exhaustion/500 error~~ ✅ DONE (via stream reuse)
 5. ~~Add stream reuse logic~~ ✅ DONE (in device_service.py)
 6. ~~Fix 30-second restart loop~~ ✅ DONE (StreamingSessionRegistry integration)
-7. Update frontend to show stream status ❌
-8. Implement proper cleanup on shutdown ❌
-9. Fix DeviceManager bypass of stream reuse ❌
+7. ~~Fix state management mismatch~~ ✅ DONE (added streaming fields to Device base class)
+8. Update frontend to show stream status ❌
+9. Implement proper cleanup on shutdown ❌
+10. Add proper stream reuse to DeviceManager auto_play path ❌
 
 ### Additional Fixes Made
 - **NoneType errors**: Found to be in test mocks with exhausted `side_effect` lists, not production code
@@ -265,10 +266,11 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 - `web/backend/core/device_manager.py:673` - `assign_video_to_device()`
 - `web/backend/core/device_manager.py:903` - `auto_play_video()`
 
-**Frontend/Backend Mismatch:**
+**Frontend/Backend/DB Mismatch:** [RECURRING ISSUE - See detailed RCA below]
 - Frontend shows database state via `GET /api/devices`
 - Backend tracks in-memory state in `device_manager.devices`
 - Database updates are inconsistent/missing
+- In-memory Device objects lack fields that exist in database (streaming_url, streaming_port)
 
 ### Architecture Assessment
 **Original nano-dlna**: Simple, focused CLI tool
@@ -290,6 +292,68 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 4. Fix DeviceManager singleton pattern error (streaming_service.py)
 
 Now HTTP requests directly update the device's `_last_activity_time`, preventing false inactivity detection.
+
+### [RCA NEEDED] Critical State Management Issue - Three-Component Mismatch
+
+**FACTS (from code/logs)**:
+1. Database DeviceModel HAS `streaming_url` and `streaming_port` columns (verified in device_service.py:401-402)
+2. In-memory Device class does NOT have these fields (verified - no such attributes in device.py)
+3. TwistedStreamingServer logs show "Updated streaming activity for session" (seen in logs)
+4. NO "Updated device activity timer" messages appear in logs (verified)
+5. StreamingSessionRegistry marks sessions as stalled after 15 seconds (streaming_registry.py:271)
+6. Error: "Device Hccast-3ADE76_dlna not found for streaming issue handling" at 04:07:07
+7. Device WAS registered at 04:06:47 (20 seconds before error)
+8. During parameter changes, devices are unregistered then re-registered (device_manager.py:584-586)
+
+**ASSUMPTIONS (need verification)**:
+1. Activity timer update fails because Device object lacks streaming fields (LIKELY)
+2. Device "not found" error happens during re-registration window (POSSIBLE)
+3. HTTP requests come every ~60s when device buffers full video (OBSERVED PATTERN)
+
+**Problem**: The system has three separate state stores that are NOT properly synchronized:
+
+1. **Database (DeviceModel)**:
+   - Has `streaming_url` and `streaming_port` columns ✓ [FACT]
+   - Updated when streaming starts ✓ [FACT: device_service.py:401]
+   - Frontend reads from here ✓ [FACT: via API]
+
+2. **Backend In-Memory (Device object)**:
+   - Does NOT have `streaming_url` or `streaming_port` fields ✗ [FACT]
+   - Activity tracking tries to use these missing fields ✗ [ASSUMPTION]
+   - DeviceManager operations use this incomplete state ✗ [FACT]
+
+3. **StreamingSessionRegistry**:
+   - Has session info with port/device mapping ✓ [FACT]
+   - 15-second stall detection is too aggressive for buffering devices ✗ [FACT]
+
+**Concrete Issues to Fix (Low-Hanging Fruit)**:
+1. ✅ **Increase StreamingSessionRegistry stall threshold** from 15s to 90s (matches device buffering)
+2. ✅ **Add debug logging** when device not found to see exact timing
+3. ✅ **Add streaming_url/port fields** to Device base class
+4. ✅ **Sync these fields** when streaming starts
+
+**Evidence Timeline**:
+- 04:06:47,885 - Device registered successfully
+- 04:06:48,695 - HTTP GET request received
+- 04:06:50,419 - Last HTTP GET before gap
+- 04:07:07,911 - "appears stalled" (17s after last request)
+- 04:07:07,911 - "Device not found" error
+- 04:07:50,507 - "Inactivity detected" (60s after last request)
+- 04:07:51,297 - HTTP GET resumes after restart
+
+### State Management Fix Implementation
+
+**What We Fixed**:
+1. Added `streaming_url` and `streaming_port` fields to Device base class
+2. Updated `update_streaming_info()` method to sync these fields 
+3. Modified `auto_play_video()` to:
+   - Extract port from streaming URL
+   - Update device streaming info when starting playback
+   - Register session with StreamingSessionRegistry
+4. Updated `stop()` methods in both DLNADevice and TranscreenDevice to clear streaming info
+5. Added streaming fields to `to_dict()` method for API visibility
+
+**Impact**: This ensures all three components (Database, In-Memory Device, StreamingSessionRegistry) stay synchronized, preventing the "device not found" errors during streaming health checks.
 
 ### Lessons Learned from This Debugging Session
 

@@ -8,3 +8,48 @@ description: Stores important patterns, preferences, and project intelligence, l
 globs: 
 alwaysApply: true
 ---
+
+## Debugging Principles
+
+### 1. Never Disable Features - Always Root Cause
+- When a feature appears broken, resist the urge to disable it
+- Find WHY it's not working and fix the root cause
+- Example: Inactivity detection was flagging false positives - fixed the activity tracking instead of disabling
+
+### 2. Verify Fixes Are Actually Working
+- Don't trust documentation that says something is "DONE"
+- Test and verify each fix before marking complete
+- Example: UNKNOWN state was added to allowed list but restart loop continued
+
+### 3. Trace Complete Data Flow
+- Follow data through ALL components end-to-end
+- Missing integration between components is a common issue
+- Example: TwistedStreamingServer → StreamingSessionRegistry → dlna_device flow was broken
+
+### 4. Check All Code Paths
+- Identify parallel implementations of similar functionality
+- Fix ALL paths, not just the obvious one
+- Example: API path had stream reuse, but Discovery/auto-play path didn't
+
+### 5. Verify Architectural Assumptions
+- Don't assume patterns (singleton, factory, etc.) without checking
+- Example: DeviceManager.get_instance() didn't exist - it wasn't a singleton
+
+### 6. Always Verify Method Names
+- Don't assume method names - check the actual implementation
+- Use grep/search to find the correct method signature
+- Example: Used get_device_by_name() but actual method was get_device()
+
+## Project-Specific Patterns
+
+### Streaming Architecture
+- TwistedStreamingServer serves video files over HTTP
+- StreamingSessionRegistry tracks active streaming sessions
+- Device monitoring threads check for activity to prevent unnecessary restarts
+- HTTP requests should update activity timers to prevent false inactivity
+
+### Common Issues
+- Port exhaustion from creating new streams without cleanup
+- False inactivity detection when components aren't properly integrated
+- Duplicate log entries from multiple logger instances
+- Thread safety required when updating shared state like _last_activity_time

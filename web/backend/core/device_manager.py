@@ -127,7 +127,14 @@ class DeviceManager:
             device = self.get_device(device_name)
             
             if not device:
+                # Add debug info to understand why device not found
                 logger.error(f"Device {device_name} not found for streaming issue handling")
+                logger.debug(f"Current devices in manager: {list(self.devices.keys())}")
+                logger.debug(f"Device lock held: {self.device_lock.locked()}")
+                with self.status_lock:
+                    last_seen_time = self.last_seen.get(device_name, 0)
+                    time_since_seen = time.time() - last_seen_time if last_seen_time else float('inf')
+                    logger.debug(f"Device {device_name} last seen {time_since_seen:.1f}s ago")
                 return
                 
             # Update status with streaming issue
@@ -975,6 +982,13 @@ class DeviceManager:
             
             # Get video URL and attempt playback
             video_url = urls[file_name]
+            
+            # Extract port from URL and update device streaming info
+            import re
+            port_match = re.search(r':(\d+)/', video_url)
+            streaming_port = int(port_match.group(1)) if port_match else None
+            device.update_streaming_info(video_url, streaming_port)
+            
             success = device.play(video_url, loop)
             
             if not success:
@@ -994,6 +1008,17 @@ class DeviceManager:
                 is_playing=True,
                 current_video=video_path
             )
+            
+            # Register session with StreamingSessionRegistry
+            from .streaming_registry import StreamingSessionRegistry
+            registry = StreamingSessionRegistry.get_instance()
+            session = registry.register_session(
+                device_name=device.name,
+                video_path=video_path,
+                server_ip=serve_ip,
+                server_port=streaming_port
+            )
+            logger.info(f"Registered streaming session {session.session_id} for device {device.name}")
             
             # Start health monitoring
             self._start_playback_health_check(device.name, video_path)
