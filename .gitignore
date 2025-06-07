@@ -273,4 +273,4 @@ proxy_response.txt
 .lock
 
 # Claude rules
-.claude_rules.md
+# .claude_rules.md - Keep this tracked for context restoration

@@ -352,6 +352,22 @@ class DeviceService:
                         # Reuse existing stream
                         logger.info(f"Reusing existing stream for {video_path} on port {db_device.streaming_port}")
                         video_url = db_device.streaming_url
+                        
+                        # Ensure session is registered in StreamingSessionRegistry
+                        from web.backend.core.streaming_registry import StreamingSessionRegistry
+                        registry = StreamingSessionRegistry.get_instance()
+                        # Check if session already exists
+                        existing_sessions = registry.get_sessions_for_device(device.name)
+                        session_exists = any(s.server_port == db_device.streaming_port for s in existing_sessions)
+                        
+                        if not session_exists:
+                            session = registry.register_session(
+                                device_name=device.name,
+                                video_path=video_path,
+                                server_ip=db_device.streaming_url.split(':')[1].strip('//'),
+                                server_port=db_device.streaming_port
+                            )
+                            logger.info(f"Re-registered streaming session {session.session_id} for existing stream")
                     else:
                         logger.warning(f"Existing stream at {db_device.streaming_url} returned {response.status_code}, creating new stream")
                         raise Exception("Stream not accessible")
@@ -386,6 +402,17 @@ class DeviceService:
                         db_device.streaming_port = streaming_port
                         db_device.current_video = video_path
                         self.db.commit()
+                        
+                        # Register session with StreamingSessionRegistry so monitoring thread can track it
+                        from web.backend.core.streaming_registry import StreamingSessionRegistry
+                        registry = StreamingSessionRegistry.get_instance()
+                        session = registry.register_session(
+                            device_name=device.name,
+                            video_path=video_path,
+                            server_ip=serve_ip,
+                            server_port=streaming_port
+                        )
+                        logger.info(f"Registered streaming session {session.session_id} for device {device.name}")
                 except RuntimeError as e:
                     if "No available port" in str(e):
                         logger.error(f"Port exhaustion: {e}")

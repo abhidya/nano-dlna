@@ -104,6 +104,39 @@ class DLNAMediaResource(Resource):
         logger.info(f"Received request from {client_ip} for {self.file_path}")
         logger.debug(f"Request URI: {request.uri}, method: {request.method}")
         
+        # Update streaming activity in the registry
+        try:
+            from web.backend.core.streaming_registry import StreamingSessionRegistry
+            registry = StreamingSessionRegistry.get_instance()
+            # Find which device this stream belongs to by looking at the port
+            port = request.getHost().port
+            device_name = None
+            
+            # Try to determine device from the file path or other context
+            # For now, update all active sessions on this port
+            sessions = registry.get_active_sessions()
+            for session in sessions:
+                if session.server_port == port:
+                    session.update_activity(client_ip=client_ip)
+                    logger.debug(f"Updated streaming activity for session {session.session_id}")
+                    device_name = session.device_name
+                    
+            # Also update the device's activity timer directly
+            if device_name:
+                try:
+                    from web.backend import main
+                    if hasattr(main, 'device_manager'):
+                        device = main.device_manager.get_device_by_name(device_name)
+                        if device and hasattr(device, '_last_activity_time') and hasattr(device, '_thread_lock'):
+                            import time
+                            with device._thread_lock:
+                                device._last_activity_time = time.time()
+                            logger.debug(f"Updated device {device_name} activity timer")
+                except Exception as e:
+                    logger.debug(f"Could not update device activity timer: {e}")
+        except Exception as e:
+            logger.debug(f"Could not update streaming registry: {e}")
+        
         # Add DLNA-specific headers
         request.setHeader(b'Content-Type', self.content_type.encode('utf-8'))
         request.setHeader(b'Accept-Ranges', b'bytes')

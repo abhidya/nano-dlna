@@ -6,6 +6,7 @@ import traceback
 import time
 import socket
 import threading
+from datetime import datetime
 from typing import Dict, List, Optional, Any, Tuple
 from xml.sax.saxutils import escape as xmlescape
 
@@ -798,7 +799,27 @@ class DLNADevice(Device):
                     last_progress_update_time = current_time
 
                 # Inactivity check (if no progress for a while)
-                if self._last_activity_time and (time.time() - self._last_activity_time > self._inactivity_timeout):
+                # First check if there's an active streaming session before declaring inactivity
+                has_active_stream = False
+                try:
+                    from web.backend.core.streaming_registry import StreamingSessionRegistry
+                    registry = StreamingSessionRegistry.get_instance()
+                    sessions = registry.get_sessions_for_device(self.name)
+                    for session in sessions:
+                        # Check if there's recent activity, regardless of session.active status
+                        # This prevents false inactivity detection when registry marks session as stalled
+                        time_since_activity = (datetime.now() - session.last_activity_time).total_seconds()
+                        if time_since_activity < 30:  # Accept activity within last 30 seconds
+                            has_active_stream = True
+                            # Update our last activity time based on streaming activity
+                            with self._thread_lock:
+                                self._last_activity_time = time.time()
+                            logger.debug(f"[{self.name}] Found recent streaming activity {time_since_activity:.1f}s ago")
+                            break
+                except Exception as e:
+                    logger.debug(f"[{self.name}] Could not check streaming registry: {e}")
+                
+                if not has_active_stream and self._last_activity_time and (time.time() - self._last_activity_time > self._inactivity_timeout):
                     logger.warning(f"[{self.name}] Inactivity detected (v2). Checking state and attempting restart.")
                     if self._try_restart_video(video_url):
                         monitoring_start_time = time.time() # Reset monitoring time

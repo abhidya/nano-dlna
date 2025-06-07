@@ -541,6 +541,36 @@ chmod +x fix_backend_env.sh
 2. Create helper scripts to set up and verify environments to make troubleshooting easier
 3. Check for module import errors in the logs as they often indicate environment setup issues rather than code issues
 
+### Issue: Incorrect Import Paths in Backend Modules
+**Error**: `ModuleNotFoundError: No module named 'web'`
+
+**Root Cause**:
+- Some modules were using absolute imports with the 'web' prefix (e.g., `from web.backend.database.database import get_db`)
+- This works when the project is installed as a package, but fails when running directly from the project directory
+- Python's import system couldn't find the 'web' module because it wasn't in the Python path
+
+**Solution**:
+1. Modified main.py to add the current directory to the Python path:
+```python
+import os
+import sys
+
+# Add the current directory to the path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+```
+
+2. Changed imports in router files to use relative imports instead of absolute imports:
+- Before: `from web.backend.database.database import get_db`
+- After: `from database.database import get_db`
+
+3. Ensured all imports in the project use consistent relative paths
+
+**Key Lessons**:
+1. Use relative imports for modules within the same package
+2. Be consistent with import styles throughout the project
+3. When running a Python application directly (not as an installed package), make sure the directory structure is properly reflected in the import statements
+4. Adding the current directory to sys.path can help resolve import issues in complex directory structures
+
 ## Renderer Service and AirPlay Issues
 
 ### Problem: AirPlay Discovery Not Working in Frontend

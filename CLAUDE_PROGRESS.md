@@ -121,6 +121,8 @@ API Docs: http://localhost:8000/docs
 1. **Monitor thread spam** - Added UNKNOWN to allowed states (line 789)
 2. **Startup bug** - Changed "connected" → "disconnected" on config load
 3. **Shell scripts** - Fixed python → python3
+4. **Stream reuse** - Added logic to reuse existing streams (partial fix)
+5. **30-second restart loop** - Fixed StreamingSessionRegistry integration
 
 ### What Still Needs Fixing ❌
 
@@ -230,14 +232,20 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 1. ~~Fix database corruption~~ ✅ DONE
 2. ~~Fix monitor thread spam~~ ✅ DONE  
 3. ~~Fix startup "connected" bug~~ ✅ DONE
-4. **Fix port exhaustion/500 error** ❌ URGENT
-5. Add stream reuse logic ❌
-6. Update frontend to show stream status ❌
-7. Implement proper cleanup on shutdown ❌
+4. ~~Fix port exhaustion/500 error~~ ✅ DONE (via stream reuse)
+5. ~~Add stream reuse logic~~ ✅ DONE (in device_service.py)
+6. ~~Fix 30-second restart loop~~ ✅ DONE (StreamingSessionRegistry integration)
+7. Update frontend to show stream status ❌
+8. Implement proper cleanup on shutdown ❌
+9. Fix DeviceManager bypass of stream reuse ❌
 
 ### Additional Fixes Made
 - **NoneType errors**: Found to be in test mocks with exhausted `side_effect` lists, not production code
 - **Database cleanup**: Enhanced to handle path normalization and prevent future corruption
+- **StreamingSessionRegistry integration**: Fixed missing session registration causing false inactivity
+- **DeviceManager.get_instance()**: Fixed incorrect singleton pattern usage
+- **Session activity tracking**: Fixed to check recent activity regardless of session.active flag
+- **Direct activity timer update**: TwistedStreamingServer now updates device._last_activity_time on each HTTP request
 
 ### Key Code Paths & Files
 **Discovery & Auto-play:**
@@ -255,6 +263,23 @@ ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
 ### Architecture Assessment
 **Original nano-dlna**: Simple, focused CLI tool
 **This implementation**: Over-engineered with problematic auto-play
+
+### Final Fix for 30-Second Restart Loop
+
+**Root Cause Chain**:
+1. TwistedStreamingServer sessions were not registered with StreamingSessionRegistry
+2. dlna_device checks registry for active sessions, finds none
+3. Triggers inactivity after 30 seconds despite active HTTP requests
+4. StreamingSessionRegistry marks sessions as stalled, setting active=False
+5. This prevented activity tracking even after we added session registration
+
+**Complete Fix**:
+1. Register streaming sessions when created (device_service.py)
+2. Update device activity timer directly on HTTP requests (twisted_streaming.py)
+3. Check recent activity regardless of session.active flag (dlna_device.py)
+4. Fix DeviceManager singleton pattern error (streaming_service.py)
+
+Now HTTP requests directly update the device's `_last_activity_time`, preventing false inactivity detection.
 
 **Better alternatives**:
 - Simple needs: Use original nano-dlna

@@ -503,16 +503,19 @@ class StreamingService:
             logger.info(f"Successfully recovered streaming session {session.session_id}")
         else:
             # If reconnection failed, notify the device manager to take action
-            from .device_manager import DeviceManager
             try:
-                device_manager = DeviceManager.get_instance()
-                device = device_manager.get_device_by_name(session.device_name)
-                if device:
-                    # Let the device handle the streaming health check
-                    if hasattr(device, '_handle_streaming_health_check'):
-                        device._handle_streaming_health_check(session)
-                    else:
-                        logger.warning(f"Device {session.device_name} does not support streaming health checks")
+                # Access the global device_manager from main
+                from web.backend import main
+                if hasattr(main, 'device_manager'):
+                    device = main.device_manager.get_device_by_name(session.device_name)
+                    if device:
+                        # Let the device handle the streaming health check
+                        if hasattr(device, '_handle_streaming_health_check'):
+                            device._handle_streaming_health_check(session)
+                        else:
+                            logger.warning(f"Device {session.device_name} does not support streaming health checks")
+                else:
+                    logger.warning("Device manager not available in main module")
             except Exception as e:
                 logger.error(f"Error notifying device manager about stalled session: {e}")
                 
