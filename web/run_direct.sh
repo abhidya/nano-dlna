@@ -20,7 +20,7 @@ mkdir -p data uploads
 cd backend
 if [ ! -d "venv" ]; then
     echo "Creating Python virtual environment..."
-    python -m venv venv
+    python3 -m venv venv
 fi
 
 # Activate virtual environment and install dependencies
@@ -29,7 +29,7 @@ pip install -r requirements.txt
 
 # Check for import errors before running the server
 echo "Checking for import errors..."
-python -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
+PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
 if [ $? -ne 0 ]; then
     echo "Import error detected. Check the error log:"
     cat /tmp/import_check.log
@@ -44,7 +44,7 @@ if [ $? -ne 0 ]; then
     fi
     
     # Check again after fix
-    python -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
+    PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
     if [ $? -ne 0 ]; then
         echo "Import issues persist after attempted fix:"
         cat /tmp/import_check.log
@@ -57,7 +57,7 @@ fi
 
 # Run the backend in the background
 echo "Starting backend server..."
-python run.py --reload &
+PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 run.py --reload &
 BACKEND_PID=$!
 
 # Wait for backend to start and verify it's running
