@@ -338,16 +338,70 @@ class DeviceService:
             if not os.path.exists(video_path):
                 logger.error(f"Video file {video_path} does not exist")
                 return False
-            # Start the streaming server and get the video URL
-            from web.backend.core.twisted_streaming import TwistedStreamingServer
-            streaming_server = TwistedStreamingServer.get_instance()
-            file_name = os.path.basename(video_path)
-            files_dict = {file_name: video_path}
-            serve_ip = self.device_manager.get_serve_ip() if hasattr(self.device_manager, 'get_serve_ip') else '127.0.0.1'
-            urls, server = streaming_server.start_server(files=files_dict, serve_ip=serve_ip, port=9000)
-            video_url = urls[file_name]
-            logger.info(f"Playing video {video_url} on device {device_id} (loop={loop})")
-            success = device.play(video_url, loop)
+            # Check if this device already has a stream for this video
+            db_device = self.db.query(DeviceModel).filter(DeviceModel.id == device_id).first()
+            video_url = None
+            
+            if db_device and db_device.streaming_url and db_device.current_video == video_path:
+                # Validate the stream is still alive
+                import requests
+                try:
+                    # Quick HEAD request to check if server is responding
+                    response = requests.head(db_device.streaming_url, timeout=1)
+                    if response.status_code < 400:
+                        # Reuse existing stream
+                        logger.info(f"Reusing existing stream for {video_path} on port {db_device.streaming_port}")
+                        video_url = db_device.streaming_url
+                    else:
+                        logger.warning(f"Existing stream at {db_device.streaming_url} returned {response.status_code}, creating new stream")
+                        raise Exception("Stream not accessible")
+                except Exception as e:
+                    logger.warning(f"Existing stream at {db_device.streaming_url} is not accessible: {e}")
+                    # Clear stale stream info and create new one
+                    db_device.streaming_url = None
+                    db_device.streaming_port = None
+                    self.db.commit()
+                    # Fall through to create new stream
+                    video_url = None
+            
+            if not video_url:
+                # Start new streaming server
+                from web.backend.core.twisted_streaming import TwistedStreamingServer
+                streaming_server = TwistedStreamingServer.get_instance()
+                file_name = os.path.basename(video_path)
+                files_dict = {file_name: video_path}
+                serve_ip = self.device_manager.get_serve_ip() if hasattr(self.device_manager, 'get_serve_ip') else '127.0.0.1'
+                
+                try:
+                    urls, server = streaming_server.start_server(files=files_dict, serve_ip=serve_ip, port=9000)
+                    video_url = urls[file_name]
+                    # Extract port from URL
+                    import re
+                    port_match = re.search(r':(\d+)/', video_url)
+                    streaming_port = int(port_match.group(1)) if port_match else None
+                    
+                    # Update database with streaming info
+                    if db_device:
+                        db_device.streaming_url = video_url
+                        db_device.streaming_port = streaming_port
+                        db_device.current_video = video_path
+                        self.db.commit()
+                except RuntimeError as e:
+                    if "No available port" in str(e):
+                        logger.error(f"Port exhaustion: {e}")
+                        # Try to clean up and retry once
+                        streaming_server.cleanup_old_servers(keep_last=3)
+                        urls, server = streaming_server.start_server(files=files_dict, serve_ip=serve_ip, port=9000)
+                        video_url = urls[file_name]
+                    else:
+                        raise
+            
+            if video_url:
+                logger.info(f"Playing video {video_url} on device {device_id} (loop={loop})")
+                success = device.play(video_url, loop)
+            else:
+                logger.error(f"No video URL available for device {device_id}")
+                return False
             if success:
                 self.update_device_status(device.name, "connected", is_playing=True)
                 logger.info(f"Video {video_url} is now playing on device {device_id}")
@@ -386,6 +440,13 @@ class DeviceService:
             # Stop playback
             logger.info(f"Stopping playback on device {db_device.name}")
             success = core_device.stop()
+            
+            # Clear streaming info from database
+            if success:
+                db_device.streaming_url = None
+                db_device.streaming_port = None
+                db_device.current_video = None
+                self.db.commit()
             
             # Update the device status in the database
             if success:

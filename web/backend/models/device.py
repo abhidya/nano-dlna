@@ -24,6 +24,8 @@ class DeviceModel(Base):
     playback_duration = Column(String, nullable=True)
     playback_progress = Column(Integer, nullable=True)
     config = Column(JSON, nullable=True)
+    streaming_url = Column(String, nullable=True)
+    streaming_port = Column(Integer, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -50,6 +52,8 @@ class DeviceModel(Base):
             "playback_duration": self.playback_duration,
             "playback_progress": self.playback_progress,
             "config": self.config,
+            "streaming_url": self.streaming_url,
+            "streaming_port": self.streaming_port,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

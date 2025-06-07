@@ -48,6 +48,8 @@ class DeviceResponse(DeviceBase):
     playback_duration: Optional[str] = Field(None, description="Total video duration (HH:MM:SS)")
     playback_progress: Optional[float] = Field(None, description="Playback progress as a percentage (0-100)")
     config: Optional[Dict[str, Any]] = Field(None, description="Additional device configuration")
+    streaming_url: Optional[str] = Field(None, description="Active streaming URL")
+    streaming_port: Optional[int] = Field(None, description="Active streaming port")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     

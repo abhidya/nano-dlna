@@ -271,3 +271,6 @@ proxy_response.txt
 # Runtime files
 .pid
 .lock
+
+# Claude rules
+.claude_rules.md

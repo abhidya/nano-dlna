@@ -90,6 +90,62 @@ API Docs: http://localhost:8000/docs
 - Creates new streaming URL each time (9002, 9003, etc)
 - Repeats every 3-4 seconds
 
+### Complete Root Cause Analysis
+
+**Primary Issue: Port Exhaustion → 500 Errors**
+- User clicks play → API returns 500 "Failed to play video"
+- All ports 9000-9100 exhausted by zombie streams
+- Each restart creates NEW stream, no cleanup
+- Line 347 `device_service.py`: Always calls `start_server()`
+- Error: "No available port found for streaming server in range 9000-9100"
+
+**Two Spam Sources**:
+1. **Discovery Loop (10s)**: 
+   - Startup bug marks all devices "connected"
+   - Auto-play attempts on offline devices
+   - SideProjector (OFF) gets continuous attempts
+
+2. **Monitor Thread (3-4s)**:
+   - Hccast returns UNKNOWN transport state
+   - Line 790 triggers restart
+   - New stream → new port → exhaustion
+   - Can crash/hang devices
+
+**Critical Code Locations**:
+- `services/device_service.py:347` - Creates new stream every time
+- `core/dlna_device.py:790` - Restarts on UNKNOWN state 
+- `services/device_service.py:716,738` - Startup "connected" bug
+- `core/device_manager.py:660-664` - Auto-play conditions
+
+### What We Fixed ✅
+1. **Monitor thread spam** - Added UNKNOWN to allowed states (line 789)
+2. **Startup bug** - Changed "connected" → "disconnected" on config load
+3. **Shell scripts** - Fixed python → python3
+
+### What Still Needs Fixing ❌
+
+**Immediate - Fix 500 Error**:
+1. **Database Changes**:
+   - Add `streaming_url` column to DeviceModel
+   - Add `streaming_port` column
+   - Track active streams
+
+2. **Backend Changes**:
+   - Check for existing stream before creating new
+   - Reuse stream if same video
+   - Proper cleanup when switching videos
+
+3. **Frontend Changes**:
+   - Show streaming status
+   - Update DeviceResponse schema
+   - Display active stream info
+
+**Architecture Issues**:
+- No central stream registry
+- Frontend/Backend/DB state mismatch  
+- No rate limiting
+- No cleanup on shutdown
+
 ### Missing Pieces & Untested Assumptions
 
 1. **Two Separate Spam Sources**:
@@ -106,13 +162,78 @@ API Docs: http://localhost:8000/docs
    - Why is there both DeviceManager discovery AND API discovery?
    - What is streaming registry for if it shows "no active sessions"?
 
-### Next Steps Needed
-1. ~~Fix database corruption (clean duplicate entries)~~ ✅ DONE
-2. Fix discovery API bug that marks all devices as "connected"
-3. Clean up port exhaustion (51 ports in use 9050-9100)
-4. Disable or rate-limit auto-play feature
-5. Fix thread monitoring in `dlna_device.py` (error was in test mocks, not production)
-6. Implement proper cleanup on shutdown
+### User Requirements for Fixes
+
+**Option 1: Stream Tracking/Reuse** - NOT READY
+- Requires proper state management across components
+- Need database schema changes first
+- Frontend must be updated to show stream status
+- Too complex for immediate fix
+
+**Option 2: Disable Monitoring** - REJECTED
+- Monitoring is an important feature
+- Helps detect when videos stop playing
+- Need to fix it, not disable it
+
+**Option 3: Port Cleanup** - CHOSEN APPROACH
+- Clean up zombie ports immediately
+- Add proper cleanup when creating new streams
+- Prevents port exhaustion without breaking features
+
+### Approved Implementation Plan: Stream Reuse with Error Handling
+
+**IMPLEMENTATION UPDATE**: 
+- ✅ Added streaming_url/streaming_port to DeviceModel and schema
+- ✅ Implemented stream reuse in device_service.play_video()
+- ❌ BUT: DeviceManager bypasses this and calls device.play() directly!
+
+**NEW FINDING**: Two different play paths:
+1. API → device_service.play_video() → Has stream reuse ✅
+2. Discovery → device_manager.auto_play_video() → device.play() → NO reuse ❌
+
+This is why spam got faster - we only fixed one path!
+
+**Goal**: Fix port exhaustion by reusing existing streams
+
+#### 1. Database Changes
+```sql
+ALTER TABLE devices ADD COLUMN streaming_url VARCHAR;
+ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
+```
+
+#### 2. Backend Changes
+- **TwistedStreamingServer**: Add `active_streams` dict to track video_path → (url, port)
+- **device_service.py:play_video()**:
+  - Check if video already streaming
+  - Reuse URL if same video
+  - Stop old stream if different video
+  - Update DB with stream info
+- **Error Handling**:
+  - Catch port exhaustion → return specific error
+  - Handle stale stream entries → cleanup and retry
+  - Validate stream is actually accessible before reuse
+
+#### 3. Frontend Changes  
+- Update `DeviceResponse` schema: add `streaming_url`, `streaming_port`
+- Show streaming status in device list
+- Display error when no ports available
+
+#### 4. Implementation Steps
+1. Create database migration script
+2. Update DeviceModel with streaming fields
+3. Add stream tracking to TwistedStreamingServer
+4. Modify play_video with reuse logic + error handling
+5. Update schemas and API responses
+6. Update frontend components
+
+### Next Steps
+1. ~~Fix database corruption~~ ✅ DONE
+2. ~~Fix monitor thread spam~~ ✅ DONE  
+3. ~~Fix startup "connected" bug~~ ✅ DONE
+4. **Fix port exhaustion/500 error** ❌ URGENT
+5. Add stream reuse logic ❌
+6. Update frontend to show stream status ❌
+7. Implement proper cleanup on shutdown ❌
 
 ### Additional Fixes Made
 - **NoneType errors**: Found to be in test mocks with exhausted `side_effect` lists, not production code

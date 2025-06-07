@@ -915,6 +915,17 @@ class DeviceManager:
         try:
             logger.info(f"Auto-playing video {video_path} on device {device.name}")
             
+            # Use device_service if available for stream reuse
+            if self.device_service:
+                try:
+                    # Get device ID from database
+                    db_device = self.device_service.get_device_by_name(device.name)
+                    if db_device and hasattr(db_device, 'id'):
+                        logger.info(f"Using device_service for stream reuse on device {device.name}")
+                        return self.device_service.play_video(db_device.id, video_path, loop)
+                except Exception as e:
+                    logger.warning(f"Failed to use device_service: {e}, falling back to direct play")
+            
             # Validate video file
             if not os.path.exists(video_path):
                 logger.error(f"Video file not found: {video_path}")

@@ -291,6 +291,27 @@ class TwistedStreamingServer:
         self.files_dict = {}
         self.lock = threading.Lock()
         
+    def cleanup_old_servers(self, keep_last=5):
+        """
+        Clean up old servers to prevent port exhaustion
+        Keep only the most recent servers
+        """
+        current_count = len(self.server_sites)
+        if current_count > keep_last:
+            logger.info(f"Cleaning up old servers. Current count: {current_count}, will keep {keep_last}")
+            # Sort by port number (assuming higher ports are newer)
+            sorted_ports = sorted(self.server_sites.keys())
+            # Stop oldest servers
+            ports_to_remove = sorted_ports[:-keep_last]
+            for port in ports_to_remove:
+                logger.info(f"Stopping old server on port {port}")
+                try:
+                    site = self.server_sites.pop(port)
+                    site.stopListening()
+                except Exception as e:
+                    logger.error(f"Error stopping old server on port {port}: {e}")
+            logger.info(f"Cleanup complete. Remaining servers: {len(self.server_sites)}")
+    
     def start_server(self, files: Dict[str, str], serve_ip: Optional[str] = None, 
                     port: Optional[int] = None, port_range: Optional[Tuple[int, int]] = None) -> Tuple[Dict[str, str], Any]:
         """
@@ -317,6 +338,9 @@ class TwistedStreamingServer:
             max_port = 9100
             base_port = port if port else 9000
             logger.debug(f"Using default port range: {base_port}-{max_port}")
+        
+        # Clean up old servers before trying to create new ones
+        self.cleanup_old_servers(keep_last=5)
         
         # Track ports we've already tried to avoid retrying the same port
         tried_ports = set()
@@ -366,12 +390,15 @@ class TwistedStreamingServer:
                 # Store the server instance
                 self._current_server = server
                 
+                # Track this server
+                self.server_sites[try_port] = server.server
+                
                 # Get the URLs for each file
                 urls = {}
                 for file_key, file_path in files.items():
                     urls[file_key] = f"http://{serve_ip}:{try_port}/{file_key}"
                 
-                logger.info(f"Started streaming server on {serve_ip}:{try_port}")
+                logger.info(f"Started streaming server on {serve_ip}:{try_port}. Total active servers: {len(self.server_sites)}")
                 return urls, server
             except Exception as e:
                 # Check if it's an address in use error
