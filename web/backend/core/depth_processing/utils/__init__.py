@@ -2,6 +2,6 @@
 Utilities for depth map processing.
 """
 
-from core.depth_processing.utils.visualizer import DepthVisualizer
+from .visualizer import DepthVisualizer
 
-__all__ = ['DepthVisualizer'] 
+__all__ = ['DepthVisualizer']

@@ -1,6 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
 from sqlalchemy.sql import func
-from web.backend.database.database import Base
+from sqlalchemy.orm import relationship
+from database.database import Base
 
 class VideoModel(Base):
     """
@@ -21,6 +22,9 @@ class VideoModel(Base):
     subtitle_path = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    
+    # Relationships - using string reference to avoid circular imports
+    overlay_configs = relationship("OverlayConfig", back_populates="video", cascade="all, delete-orphan")
     
     def to_dict(self):
         """

@@ -25,6 +25,7 @@ import {
   ViewInAr as RendererIcon,
   Layers as DepthIcon,
   CameraAlt as ProjectionIcon,
+  GridOn as OverlayIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -36,6 +37,7 @@ const menuItems = [
   { text: 'Renderer', icon: <RendererIcon />, path: '/renderer' },
   { text: 'Depth Processing', icon: <DepthIcon />, path: '/depth' },
   { text: 'Projection Mapping', icon: <ProjectionIcon />, path: '/projection' },
+  { text: 'Overlay', icon: <OverlayIcon />, path: '/overlay' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 

@@ -4,17 +4,17 @@ from typing import List, Optional
 import os
 import logging
 
-from web.backend.database.database import get_db
-from web.backend.models.video import VideoModel
-from web.backend.schemas.video import (
+from database.database import get_db
+from models.video import VideoModel
+from schemas.video import (
     VideoCreate,
     VideoUpdate,
     VideoResponse,
     VideoList,
     VideoUploadResponse,
 )
-from web.backend.services.video_service import VideoService # Local get_video_service is defined below
-from web.backend.core.streaming_service import StreamingService
+from services.video_service import VideoService # Local get_video_service is defined below
+from core.streaming_service import StreamingService
 
 # Add logger
 logger = logging.getLogger(__name__)

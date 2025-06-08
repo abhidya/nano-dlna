@@ -9,13 +9,13 @@ import json
 import os
 
 # Fix the import causing startup errors
-from web.backend.core.streaming_registry import StreamingSessionRegistry
-from web.backend.core.device_manager import DeviceManager, get_device_manager # Import get_device_manager
-from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
-from web.backend.services.device_service import DeviceService # Import DeviceService class
+from core.streaming_registry import StreamingSessionRegistry
+from core.device_manager import DeviceManager, get_device_manager # Import get_device_manager
+from core.twisted_streaming import get_instance as get_twisted_streaming
+from services.device_service import DeviceService # Import DeviceService class
 # DO NOT Import get_device_service from services.device_service
-from web.backend.services.video_service import VideoService, get_video_service # This is fine
-from web.backend.database.database import get_db
+from services.video_service import VideoService, get_video_service # This is fine
+from database.database import get_db
 from sqlalchemy.orm import Session # Import Session for type hinting
 
 router = APIRouter(

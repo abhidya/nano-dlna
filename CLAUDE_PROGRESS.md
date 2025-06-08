@@ -567,3 +567,127 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 - Container initialization corrected
 
 **Status**: ✅ Complete - Draggable handles fully functional
+
+## Session: January 7, 2025 (continued)
+
+### Overlay Projection Feature Design
+
+**Request**: Integrate a web interface to load projection-mapped videos with live information overlays (weather, time, transit) that can be extended to projectors via AirPlay.
+
+**Problem Statement**: 
+Users need a way to overlay live information widgets on top of projection-mapped videos. The current POC demonstrates this capability but lacks integration with the nano-dlna dashboard, proper alignment controls, widget management, and settings persistence. The solution must support AirPlay extend mode to project the overlay window to physical projectors.
+
+**User Story**:
+*As a user managing projection displays,*  
+*I want to select a video from the dashboard and launch an overlay projection window that I can extend to my projector via AirPlay,*  
+*So that I can display the video with live information widgets while having the ability to adjust alignments and save my configuration for future use.*
+
+**POC Analysis** (Located at `/Users/mannybhidya/PycharmProjects/overlay frontdoor/`):
+- **index.html**: Combined weather, time, and transit widgets with video background
+- **Video Loading**: Port scanning approach (9000-8990) matching nano-dlna's streaming server
+- **Live Data Sources**: 
+  - Weather: OpenWeatherMap API
+  - Transit: SF Muni API (stop ID: 13915)
+  - Time: Local system time
+- **Limitations**: Fixed positioning, no drag-drop, no save/load, hardcoded endpoints
+
+**Architecture Design**:
+
+1. **Database Component**:
+   - New `overlay_configs` table:
+     ```sql
+     CREATE TABLE overlay_configs (
+         id INTEGER PRIMARY KEY,
+         name VARCHAR NOT NULL,
+         video_id INTEGER,
+         device_id INTEGER,
+         video_transform JSON, -- {x, y, scale, rotation}
+         widgets JSON, -- [{type, position, size, config, visible}]
+         api_configs JSON, -- {weather_api_key, transit_stop_id, timezone}
+         created_at TIMESTAMP,
+         updated_at TIMESTAMP
+     );
+     ```
+   - Relations to videos and devices tables
+   - JSON fields for flexible widget configurations
+
+2. **Backend Services**:
+   - New API endpoints:
+     - `POST /api/overlay/configs` - Create configuration
+     - `GET /api/overlay/configs/{id}` - Get configuration
+     - `GET /api/overlay/video/{video_id}/configs` - Get configs for video
+     - `PUT /api/overlay/configs/{id}` - Update configuration
+     - `DELETE /api/overlay/configs/{id}` - Delete configuration
+   - OverlayService for CRUD operations
+   - Integration with existing streaming infrastructure
+
+3. **Frontend Components**:
+   - `OverlayProjection.js` - Dashboard page for video selection and config management
+   - `overlay_window.html` - Projection window with video and widgets
+   - Widget system with drag-drop and resize capabilities
+   - Transform controls similar to projection mapping tool
+
+**Key Features**:
+1. **Video Alignment**: Position, scale, rotation controls with persistence
+2. **Widget Management**: Drag-drop positioning, resize, show/hide, configurable per type
+3. **Live Data**: Weather, time, transit with configurable refresh intervals
+4. **AirPlay Support**: Window optimized for fullscreen projection via extend mode
+5. **Settings Persistence**: Save/load configurations per video/projector combination
+
+**Widget Types**:
+```javascript
+{
+    weather: { defaultSize: {400x200}, refresh: 5min, api: 'openweathermap' },
+    time: { defaultSize: {300x100}, refresh: 1sec, source: 'system' },
+    transit: { defaultSize: {400x300}, refresh: 1min, api: 'transit_api' }
+}
+```
+
+**Integration Points**:
+- Reuses projection window pattern from projection mapping tool
+- Leverages TwistedStreamingServer for video delivery
+- Uses postMessage API for parent-child communication
+- Follows existing UI/UX patterns for controls and persistence
+
+**Implementation Status**: ✅ Complete - Backend and frontend fully integrated
+
+### Implementation Details
+
+**Backend Components Created**:
+1. **Database Migration** (`add_overlay_configs.py`):
+   - Created `overlay_configs` table with all planned fields
+   - Added foreign key relationship to videos table
+   - Includes proper indexes for performance
+
+2. **Models** (`models/overlay.py`):
+   - OverlayConfig model with JSON fields for flexible widget/transform storage
+   - Bidirectional relationship with VideoModel
+
+3. **Schemas** (`schemas/overlay.py`):
+   - Pydantic models for request/response validation
+   - Nested schemas for widgets, transforms, and API configs
+   - Type-safe configuration management
+
+4. **Service Layer** (`services/overlay_service.py`):
+   - Full CRUD operations for overlay configurations
+   - Stream creation with port management
+   - Configuration duplication support
+
+5. **API Router** (`routers/overlay_router.py`):
+   - All planned endpoints implemented
+   - Template system for quick starts
+   - Proper error handling and validation
+
+**Frontend Updates**:
+- Updated API calls to use real endpoints
+- Proper async handling for streaming URLs
+- Error fallback for backward compatibility
+
+**Integration Complete**:
+- ✅ Database schema matches design
+- ✅ API endpoints fully functional
+- ✅ Frontend properly integrated with backend
+- ✅ Streaming service integration working
+- ✅ All three tiers (Frontend/Backend/DB) aligned
+
+The overlay projection feature is now fully operational with complete backend support for configuration persistence, streaming management, and proper API integration.

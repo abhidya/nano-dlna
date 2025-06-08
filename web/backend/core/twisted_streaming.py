@@ -106,7 +106,7 @@ class DLNAMediaResource(Resource):
         
         # Update streaming activity in the registry
         try:
-            from web.backend.core.streaming_registry import StreamingSessionRegistry
+            from core.streaming_registry import StreamingSessionRegistry
             registry = StreamingSessionRegistry.get_instance()
             # Find which device this stream belongs to by looking at the port
             port = request.getHost().port

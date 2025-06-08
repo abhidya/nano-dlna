@@ -15,6 +15,14 @@ from .video import (
     VideoList,
     VideoUploadResponse,
 )
+from .overlay import (
+    OverlayConfigBase,
+    OverlayConfigCreate,
+    OverlayConfigUpdate,
+    OverlayConfigResponse,
+    OverlayStreamRequest,
+    OverlayStreamResponse,
+)
 
 __all__ = [
     'DeviceBase',
@@ -30,4 +38,10 @@ __all__ = [
     'VideoResponse',
     'VideoList',
     'VideoUploadResponse',
+    'OverlayConfigBase',
+    'OverlayConfigCreate',
+    'OverlayConfigUpdate',
+    'OverlayConfigResponse',
+    'OverlayStreamRequest',
+    'OverlayStreamResponse',
 ]

@@ -874,7 +874,7 @@ class DLNADevice(Device):
                 # First check if there's an active streaming session before declaring inactivity
                 has_active_stream = False
                 try:
-                    from web.backend.core.streaming_registry import StreamingSessionRegistry
+                    from core.streaming_registry import StreamingSessionRegistry
                     registry = StreamingSessionRegistry.get_instance()
                     sessions = registry.get_sessions_for_device(self.name)
                     for session in sessions:

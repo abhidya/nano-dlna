@@ -4,9 +4,9 @@ from typing import List, Optional
 import os
 import logging
 
-from web.backend.database.database import get_db
-from web.backend.models.device import DeviceModel
-from web.backend.schemas.device import (
+from database.database import get_db
+from models.device import DeviceModel
+from schemas.device import (
     DeviceCreate,
     DeviceUpdate,
     DeviceResponse,
@@ -14,9 +14,9 @@ from web.backend.schemas.device import (
     DevicePlayRequest,
     DeviceActionResponse,
 )
-from web.backend.services.device_service import DeviceService
-from web.backend.core.device_manager import DeviceManager
-from web.backend.routers.video_router import get_video_service
+from services.device_service import DeviceService
+from core.device_manager import DeviceManager
+from routers.video_router import get_video_service
 
 # Set up logger
 logger = logging.getLogger(__name__)

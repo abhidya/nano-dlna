@@ -1,6 +1,6 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
 from sqlalchemy.sql import func
-from web.backend.database.database import Base
+from database.database import Base
 
 class DeviceModel(Base):
     """

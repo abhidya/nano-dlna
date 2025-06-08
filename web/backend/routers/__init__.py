@@ -7,6 +7,7 @@ from .device_router import router as device_router
 from .video_router import router as video_router
 from .streaming_router import router as streaming_router
 from .renderer_router import router as renderer_router
+from .overlay_router import router as overlay_router
 try:
     from .depth_router import router as depth_router
     __all__ = [
@@ -14,6 +15,7 @@ try:
         'video_router',
         'streaming_router',
         'renderer_router',
+        'overlay_router',
         'depth_router',
     ]
 except ImportError:
@@ -23,4 +25,5 @@ except ImportError:
         'video_router',
         'streaming_router',
         'renderer_router',
+        'overlay_router',
     ]

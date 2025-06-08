@@ -10,11 +10,11 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
-from web.backend.database.database import init_db, get_db
-from web.backend.routers import device_router, video_router, streaming_router, renderer_router
-from web.backend.core.device_manager import DeviceManager
-from web.backend.core.streaming_registry import StreamingSessionRegistry
-from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
+from database.database import init_db, get_db
+from routers import device_router, video_router, streaming_router, renderer_router, overlay_router
+from core.device_manager import DeviceManager
+from core.streaming_registry import StreamingSessionRegistry
+from core.twisted_streaming import get_instance as get_twisted_streaming
 
 # Configure logging
 import logging.handlers
@@ -75,6 +75,7 @@ app.include_router(device_router, prefix="/api")
 app.include_router(video_router, prefix="/api")
 app.include_router(streaming_router, prefix="/api")
 app.include_router(renderer_router, prefix="/api")  # Add the renderer router
+app.include_router(overlay_router)  # Overlay router already has /api prefix
 
 # Try to include depth_router if dependencies are available
 try:
@@ -84,7 +85,7 @@ try:
     import PIL
     import sklearn
     # Only if all dependencies are available, import the depth_router
-    from web.backend.routers import depth_router
+    from routers import depth_router
     app.include_router(depth_router, prefix="/api")  # Add the depth router
     logger.info("Depth processing module loaded successfully")
 except ImportError as e:
@@ -123,8 +124,8 @@ async def startup_event():
 
     # Get or create the renderer service
     try:
-        from web.backend.core.renderer_service.service import RendererService
-        from web.backend.routers.renderer_router import get_renderer_service
+        from core.renderer_service.service import RendererService
+        from routers.renderer_router import get_renderer_service
         renderer_service = get_renderer_service()
         logger.info("Renderer Service initialized successfully")
     except Exception as e:
@@ -164,7 +165,7 @@ async def startup_event():
                     db = next(get_db())
                     
                     # Create a device service instance
-                    from web.backend.services.device_service import DeviceService
+                    from services.device_service import DeviceService
                     device_service = DeviceService(db, device_manager)
                     
                     # Load devices from the config file
@@ -241,6 +242,7 @@ if not os.path.exists(static_dir):
     os.makedirs(static_dir)
     
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
+app.mount("/backend-static", StaticFiles(directory=static_dir), name="backend-static")
 
 if __name__ == "__main__":
     import uvicorn

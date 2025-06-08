@@ -9,10 +9,10 @@ import subprocess
 import json
 from fastapi import Depends
 
-from web.backend.models.video import VideoModel
-from web.backend.schemas.video import VideoCreate, VideoUpdate
-from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
-from web.backend.database.database import get_db
+from models.video import VideoModel
+from schemas.video import VideoCreate, VideoUpdate
+from core.twisted_streaming import get_instance as get_twisted_streaming
+from database.database import get_db
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def get_video_service(db: Session = Depends(get_db)) -> 'VideoService':
     Returns:
         VideoService: Video service instance
     """
-    from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming
+    from core.twisted_streaming import get_instance as get_twisted_streaming
     streaming_service = get_twisted_streaming()
     return VideoService(db, streaming_service)
 

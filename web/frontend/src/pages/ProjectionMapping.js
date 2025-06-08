@@ -250,12 +250,23 @@ function ProjectionMapping() {
         const history = layerHistoryRef.current.get(layerId);
         if (!history) return;
         
-        history.states = history.states.slice(0, history.currentIndex + 1);
-        const newState = new ImageData(layer.mask.data.slice(), layer.mask.width, layer.mask.height);
+        // If we're at -1 (empty state), don't truncate, just start fresh
+        if (history.currentIndex === -1) {
+            history.states = [];
+        } else {
+            // Truncate any future history when saving a new state
+            history.states = history.states.slice(0, history.currentIndex + 1);
+        }
+        
+        // Use the cached mask if available, as it contains the most recent changes
+        const cachedMask = canvasWorkRef.current.maskCache.get(layerId);
+        const maskToSave = cachedMask || layer.mask;
+        const newState = new ImageData(maskToSave.data.slice(), maskToSave.width, maskToSave.height);
         history.states.push(newState);
         
         if (history.states.length > 50) {
             history.states.shift();
+            // Don't increment currentIndex if we removed an item
         } else {
             history.currentIndex++;
         }
@@ -367,6 +378,11 @@ function ProjectionMapping() {
     
     const selectLayer = (index) => {
         setCurrentLayerIndex(index);
+        // Ensure mask cache is synchronized when switching layers
+        const layer = layers[index];
+        if (layer && !canvasWorkRef.current.maskCache.has(layer.id)) {
+            canvasWorkRef.current.maskCache.set(layer.id, layer.mask);
+        }
     };
     
     const deleteLayer = (index) => {
@@ -987,15 +1003,36 @@ function ProjectionMapping() {
         const layer = layers[currentLayerIndex];
         const history = layerHistoryRef.current.get(layer.id);
         
-        if (!history || history.currentIndex <= 0) return;
+        if (!history || history.currentIndex < 0 || history.states.length === 0) return;
+        
+        // Special case: if we're at index 0, we're going back to empty state
+        if (history.currentIndex === 0) {
+            // Create an empty mask
+            const emptyMask = new ImageData(layer.mask.width, layer.mask.height);
+            const newLayers = [...layers];
+            newLayers[currentLayerIndex].mask = emptyMask;
+            newLayers[currentLayerIndex].pixelCount = 0;
+            
+            // Update the mask cache to empty
+            canvasWorkRef.current.maskCache.set(layer.id, emptyMask);
+            
+            history.currentIndex = -1;
+            setLayers(newLayers);
+            setStatus('Undo - Cleared');
+            return;
+        }
         
         history.currentIndex--;
         const newLayers = [...layers];
-        newLayers[currentLayerIndex].mask = new ImageData(
+        const restoredMask = new ImageData(
             history.states[history.currentIndex].data.slice(),
             history.states[history.currentIndex].width,
             history.states[history.currentIndex].height
         );
+        newLayers[currentLayerIndex].mask = restoredMask;
+        
+        // Update the mask cache to match the restored state
+        canvasWorkRef.current.maskCache.set(layer.id, restoredMask);
         
         let pixelCount = 0;
         for (let i = 3; i < newLayers[currentLayerIndex].mask.data.length; i += 4) {
@@ -1013,15 +1050,28 @@ function ProjectionMapping() {
         const layer = layers[currentLayerIndex];
         const history = layerHistoryRef.current.get(layer.id);
         
-        if (!history || history.currentIndex >= history.states.length - 1) return;
+        if (!history) return;
         
-        history.currentIndex++;
+        // Check if we can redo
+        if (history.currentIndex >= history.states.length - 1) return;
+        
+        // Special case: if we're at -1, we're redoing from empty state
+        if (history.currentIndex === -1 && history.states.length > 0) {
+            history.currentIndex = 0;
+        } else {
+            history.currentIndex++;
+        }
+        
         const newLayers = [...layers];
-        newLayers[currentLayerIndex].mask = new ImageData(
+        const restoredMask = new ImageData(
             history.states[history.currentIndex].data.slice(),
             history.states[history.currentIndex].width,
             history.states[history.currentIndex].height
         );
+        newLayers[currentLayerIndex].mask = restoredMask;
+        
+        // Update the mask cache to match the restored state
+        canvasWorkRef.current.maskCache.set(layer.id, restoredMask);
         
         let pixelCount = 0;
         for (let i = 3; i < newLayers[currentLayerIndex].mask.data.length; i += 4) {

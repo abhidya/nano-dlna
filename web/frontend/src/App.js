@@ -17,6 +17,7 @@ import NotFound from './pages/NotFound';
 import Renderer from './pages/Renderer';
 import DepthProcessing from './pages/DepthProcessing';
 import ProjectionMapping from './pages/ProjectionMapping';
+import OverlayProjection from './pages/OverlayProjection';
 
 // Create a theme instance
 const theme = createTheme({
@@ -53,6 +54,7 @@ function App() {
           <Route path="/renderer" element={<Renderer />} />
           <Route path="/depth" element={<DepthProcessing />} />
           <Route path="/projection" element={<ProjectionMapping />} />
+          <Route path="/overlay" element={<OverlayProjection />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Layout>

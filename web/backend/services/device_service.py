@@ -8,12 +8,12 @@ from sqlalchemy.exc import SQLAlchemyError
 from fastapi import Depends
 from datetime import datetime, timezone
 
-from web.backend.models.device import DeviceModel
-from web.backend.core.device_manager import DeviceManager, get_device_manager
-from web.backend.core.dlna_device import DLNADevice
-from web.backend.core.transcreen_device import TranscreenDevice
-from web.backend.schemas.device import DeviceCreate, DeviceUpdate
-from web.backend.core.config_service import ConfigService
+from models.device import DeviceModel
+from core.device_manager import DeviceManager, get_device_manager
+from core.dlna_device import DLNADevice
+from core.transcreen_device import TranscreenDevice
+from schemas.device import DeviceCreate, DeviceUpdate
+from core.config_service import ConfigService
 
 logger = logging.getLogger(__name__)
 
@@ -90,7 +90,7 @@ class DeviceService:
         
         # Get streaming session info from the registry
         try:
-            from web.backend.core.streaming_registry import StreamingSessionRegistry
+            from core.streaming_registry import StreamingSessionRegistry
             registry = StreamingSessionRegistry.get_instance()
             
             sessions = registry.get_sessions_for_device(device.name)
@@ -350,7 +350,7 @@ class DeviceService:
                         video_url = db_device.streaming_url
                         
                         # Ensure session is registered in StreamingSessionRegistry
-                        from web.backend.core.streaming_registry import StreamingSessionRegistry
+                        from core.streaming_registry import StreamingSessionRegistry
                         registry = StreamingSessionRegistry.get_instance()
                         # Check if session already exists
                         existing_sessions = registry.get_sessions_for_device(device.name)
@@ -378,7 +378,7 @@ class DeviceService:
             
             if not video_url:
                 # Start new streaming server
-                from web.backend.core.twisted_streaming import TwistedStreamingServer
+                from core.twisted_streaming import TwistedStreamingServer
                 streaming_server = TwistedStreamingServer.get_instance()
                 file_name = os.path.basename(video_path)
                 files_dict = {file_name: video_path}
@@ -400,7 +400,7 @@ class DeviceService:
                         self.db.commit()
                         
                         # Register session with StreamingSessionRegistry so monitoring thread can track it
-                        from web.backend.core.streaming_registry import StreamingSessionRegistry
+                        from core.streaming_registry import StreamingSessionRegistry
                         registry = StreamingSessionRegistry.get_instance()
                         session = registry.register_session(
                             device_name=device.name,
@@ -638,7 +638,7 @@ class DeviceService:
                 }
             
             # First, check the streaming registry to see what devices are actively streaming
-            from web.backend.core.streaming_registry import StreamingSessionRegistry
+            from core.streaming_registry import StreamingSessionRegistry
             streaming_registry = StreamingSessionRegistry.get_instance()
             active_streaming_devices = set()
             try:
