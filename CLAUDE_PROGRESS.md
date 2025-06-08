@@ -499,3 +499,71 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 - Applied scaling to mouse coordinates before processing
 
 **Status**: ✅ Fixed - clicks now properly align with visual elements
+
+### Tool Improvements
+
+**Bezier Tool**:
+- Added visual markers for control points (numbered 1-4)
+- Red endpoints, blue control points
+- Preview lines show connections
+- Curve preview after 3 points
+- Clear points when switching tools
+
+**Brush/Eraser**:
+- Fixed cursor preview scaling with canvas size
+- Preview circle now accurately shows brush size
+- Works correctly on all canvases including edge detection
+- Alignment fixed for different canvas scales
+
+**Tool Differences Clarified**:
+- Flood Fill: Respects edge boundaries, fills by color similarity
+- Magic Wand: Ignores edges, fills by color AND brightness similarity
+
+### Auto-Layer Feature
+
+**Implementation**:
+- K-means++ clustering to find dominant colors
+- Connected component analysis to identify regions
+- Smart naming based on position (Top/Bottom/Left/Right)
+- Size filtering (removes regions <1% of image)
+- User control via slider (3-10 layers)
+
+**Performance Optimizations**:
+- Chunked processing to prevent UI freezing
+- Progress bar with step indicators
+- Optimized position calculations using sampling
+- Fixed stack overflow on large images
+- Respects user's layer count setting
+
+**Status**: ✅ Complete with full progress tracking
+
+### Layer Management Enhancements
+
+**History**:
+- Increased undo/redo limit from 20 to 50 steps per layer
+
+**Layer Names**:
+- Made editable names more discoverable
+- Added hover effects and focus outline
+- Tooltip shows "Click to edit layer name"
+
+### Projection Window Enhancements
+
+**Draggable Transform Handles**:
+- Corner handles (green) for proportional scaling
+- Center handle (red) for moving
+- Rotation handle (blue) above top edge
+- Dashed outline shows current bounds
+- Real-time visual feedback
+
+**Download Options**:
+- Original mask (⬇) - No transforms applied
+- Transformed mask (⬇📐) - Position/scale/rotation baked in
+- Perfect for video editing workflows
+
+**Bug Fixes**:
+- Fixed handle alignment issues
+- Handles now properly positioned over mask
+- Container initialization corrected
+
+**Status**: ✅ Complete - Draggable handles fully functional
