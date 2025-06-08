@@ -1299,21 +1299,49 @@ function ProjectionMapping() {
                 } while (usedColors.has(color));
                 usedColors.add(color);
                 
-                // Create mask for this component
+                // Create mask for this component in chunks
                 const mask = new ImageData(originalImage.width, originalImage.height);
                 const maskData = mask.data;
                 
-                component.pixels.forEach(idx => {
-                    const pixelIdx = idx * 4;
-                    maskData[pixelIdx] = 255;
-                    maskData[pixelIdx + 1] = 255;
-                    maskData[pixelIdx + 2] = 255;
-                    maskData[pixelIdx + 3] = 255;
-                });
+                // Process pixels in chunks to prevent blocking
+                const pixelChunkSize = 50000;
+                for (let i = 0; i < component.pixels.length; i += pixelChunkSize) {
+                    const end = Math.min(i + pixelChunkSize, component.pixels.length);
+                    
+                    for (let j = i; j < end; j++) {
+                        const idx = component.pixels[j];
+                        const pixelIdx = idx * 4;
+                        maskData[pixelIdx] = 255;
+                        maskData[pixelIdx + 1] = 255;
+                        maskData[pixelIdx + 2] = 255;
+                        maskData[pixelIdx + 3] = 255;
+                    }
+                    
+                    // Update progress more granularly
+                    if (i % (pixelChunkSize * 2) === 0) {
+                        const componentProgress = i / component.pixels.length;
+                        const overallProgress = 70 + (index / Math.min(components.length, 10)) * 25 + 
+                                              (componentProgress * 25 / Math.min(components.length, 10));
+                        setProcessingProgress(Math.round(overallProgress));
+                        setProcessingStep(`Creating layer ${index + 1} of ${Math.min(components.length, 10)}...`);
+                        await new Promise(resolve => setTimeout(resolve, 1));
+                    }
+                }
                 
-                // Determine layer name based on position and size
-                const avgX = component.pixels.reduce((sum, idx) => sum + (idx % originalImage.width), 0) / component.pixels.length;
-                const avgY = component.pixels.reduce((sum, idx) => sum + Math.floor(idx / originalImage.width), 0) / component.pixels.length;
+                // Determine layer name based on position (sample subset for speed)
+                const sampleSize = Math.min(1000, component.pixels.length);
+                const sampleStep = Math.floor(component.pixels.length / sampleSize);
+                let sumX = 0, sumY = 0;
+                
+                for (let i = 0; i < component.pixels.length; i += sampleStep) {
+                    const idx = component.pixels[i];
+                    sumX += idx % originalImage.width;
+                    sumY += Math.floor(idx / originalImage.width);
+                }
+                
+                const sampledCount = Math.ceil(component.pixels.length / sampleStep);
+                const avgX = sumX / sampledCount;
+                const avgY = sumY / sampledCount;
                 
                 let name = 'Region ' + (index + 1);
                 if (avgY < originalImage.height * 0.3) name = 'Top ' + name;
