@@ -95,6 +95,7 @@ function Devices() {
       }
       setError(null); // Clear any previous errors
       const response = await deviceApi.getDevices();
+      console.log('Devices response:', response.data.devices[0]); // Debug first device
       setDevices(response.data.devices);
       if (!isPolling) {
         setLoading(false);
@@ -516,6 +517,11 @@ function Devices() {
                           value={calculateProgress(device)} 
                           sx={{ height: 8, borderRadius: 4 }}
                         />
+                        {!device.playback_started_at && (
+                          <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block' }}>
+                            Timer requires restart (Stop → Play)
+                          </Typography>
+                        )}
                       </Box>
                     )}
                   </>

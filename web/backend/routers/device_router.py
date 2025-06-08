@@ -52,7 +52,7 @@ def discover_devices(
         "total": len(devices),
     }
 
-@router.get("/", response_model=DeviceList)
+@router.get("/")
 def get_devices(
     skip: int = 0,
     limit: int = 100,

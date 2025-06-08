@@ -140,6 +140,22 @@ input[type="number"] {
     border: 2px solid #2196F3;
 }
 
+.layer-item span[contenteditable] {
+    cursor: text;
+    padding: 2px 4px;
+    border-radius: 3px;
+    transition: background-color 0.2s;
+}
+
+.layer-item span[contenteditable]:hover {
+    background-color: #444;
+}
+
+.layer-item span[contenteditable]:focus {
+    background-color: #555;
+    outline: 1px solid #2196F3;
+}
+
 .layer-controls {
     display: flex;
     gap: 5px;

@@ -13,6 +13,8 @@ function ProjectionMapping() {
     const [status, setStatus] = useState('');
     const [bezierPoints, setBezierPoints] = useState([]);
     const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false, activeCanvas: null });
+    const [autoLayerCount, setAutoLayerCount] = useState(5);
+    const [isProcessingAutoLayers, setIsProcessingAutoLayers] = useState(false);
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -250,7 +252,7 @@ function ProjectionMapping() {
         const newState = new ImageData(layer.mask.data.slice(), layer.mask.width, layer.mask.height);
         history.states.push(newState);
         
-        if (history.states.length > 20) {
+        if (history.states.length > 50) {
             history.states.shift();
         } else {
             history.currentIndex++;
@@ -1040,6 +1042,274 @@ function ProjectionMapping() {
         setStatus(`Copied ${original.name}`);
     };
     
+    // K-means clustering for auto-layer detection
+    const kMeansClustering = (pixels, k, maxIterations = 20) => {
+        // Initialize centroids with k-means++ method
+        const centroids = [];
+        centroids.push(pixels[Math.floor(Math.random() * pixels.length)]);
+        
+        for (let i = 1; i < k; i++) {
+            const distances = pixels.map(pixel => {
+                let minDist = Infinity;
+                centroids.forEach(centroid => {
+                    const dist = Math.sqrt(
+                        Math.pow(pixel[0] - centroid[0], 2) +
+                        Math.pow(pixel[1] - centroid[1], 2) +
+                        Math.pow(pixel[2] - centroid[2], 2)
+                    );
+                    minDist = Math.min(minDist, dist);
+                });
+                return minDist;
+            });
+            
+            const sum = distances.reduce((a, b) => a + b, 0);
+            let rand = Math.random() * sum;
+            for (let j = 0; j < distances.length; j++) {
+                rand -= distances[j];
+                if (rand <= 0) {
+                    centroids.push(pixels[j]);
+                    break;
+                }
+            }
+        }
+        
+        // Assign pixels to clusters
+        let assignments = new Array(pixels.length);
+        
+        for (let iter = 0; iter < maxIterations; iter++) {
+            // Assign each pixel to nearest centroid
+            let changed = false;
+            for (let i = 0; i < pixels.length; i++) {
+                let minDist = Infinity;
+                let bestCluster = 0;
+                
+                for (let j = 0; j < k; j++) {
+                    const dist = Math.sqrt(
+                        Math.pow(pixels[i][0] - centroids[j][0], 2) +
+                        Math.pow(pixels[i][1] - centroids[j][1], 2) +
+                        Math.pow(pixels[i][2] - centroids[j][2], 2)
+                    );
+                    
+                    if (dist < minDist) {
+                        minDist = dist;
+                        bestCluster = j;
+                    }
+                }
+                
+                if (assignments[i] !== bestCluster) {
+                    changed = true;
+                    assignments[i] = bestCluster;
+                }
+            }
+            
+            if (!changed) break;
+            
+            // Update centroids
+            const sums = Array(k).fill(null).map(() => [0, 0, 0, 0]);
+            for (let i = 0; i < pixels.length; i++) {
+                const cluster = assignments[i];
+                sums[cluster][0] += pixels[i][0];
+                sums[cluster][1] += pixels[i][1];
+                sums[cluster][2] += pixels[i][2];
+                sums[cluster][3]++;
+            }
+            
+            for (let i = 0; i < k; i++) {
+                if (sums[i][3] > 0) {
+                    centroids[i] = [
+                        sums[i][0] / sums[i][3],
+                        sums[i][1] / sums[i][3],
+                        sums[i][2] / sums[i][3]
+                    ];
+                }
+            }
+        }
+        
+        return { centroids, assignments };
+    };
+    
+    // Find connected components for each cluster
+    const findConnectedComponents = (assignments, width, height, minSize = 100) => {
+        const visited = new Uint8Array(width * height);
+        const components = [];
+        
+        for (let cluster = 0; cluster < Math.max(...assignments) + 1; cluster++) {
+            for (let i = 0; i < assignments.length; i++) {
+                if (assignments[i] === cluster && !visited[i]) {
+                    const component = [];
+                    const stack = [i];
+                    
+                    while (stack.length > 0) {
+                        const idx = stack.pop();
+                        if (visited[idx]) continue;
+                        
+                        visited[idx] = 1;
+                        component.push(idx);
+                        
+                        const x = idx % width;
+                        const y = Math.floor(idx / width);
+                        
+                        // Check 4-connected neighbors
+                        const neighbors = [
+                            { x: x - 1, y },
+                            { x: x + 1, y },
+                            { x, y: y - 1 },
+                            { x, y: y + 1 }
+                        ];
+                        
+                        for (const neighbor of neighbors) {
+                            if (neighbor.x >= 0 && neighbor.x < width && 
+                                neighbor.y >= 0 && neighbor.y < height) {
+                                const nIdx = neighbor.y * width + neighbor.x;
+                                if (assignments[nIdx] === cluster && !visited[nIdx]) {
+                                    stack.push(nIdx);
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (component.length >= minSize) {
+                        components.push({ cluster, pixels: component });
+                    }
+                }
+            }
+        }
+        
+        return components;
+    };
+    
+    const autoCreateLayers = async () => {
+        if (!originalImage) {
+            setStatus('Please upload an image first');
+            return;
+        }
+        
+        setIsProcessingAutoLayers(true);
+        setStatus('Processing image...');
+        
+        try {
+            const ctx = getContext(originalCanvasRef, 'original');
+            const imageData = ctx.getImageData(0, 0, originalImage.width, originalImage.height);
+            const data = imageData.data;
+            
+            // Sample pixels for k-means (every 4th pixel for speed)
+            const sampledPixels = [];
+            for (let i = 0; i < data.length; i += 16) {
+                sampledPixels.push([data[i], data[i + 1], data[i + 2]]);
+            }
+            
+            setStatus('Finding color clusters...');
+            
+            // Run k-means clustering
+            const { centroids, assignments } = kMeansClustering(sampledPixels, autoLayerCount);
+            
+            // Map all pixels to clusters
+            const fullAssignments = new Array(originalImage.width * originalImage.height);
+            for (let i = 0; i < fullAssignments.length; i++) {
+                const pixelIdx = i * 4;
+                let minDist = Infinity;
+                let bestCluster = 0;
+                
+                for (let j = 0; j < centroids.length; j++) {
+                    const dist = Math.sqrt(
+                        Math.pow(data[pixelIdx] - centroids[j][0], 2) +
+                        Math.pow(data[pixelIdx + 1] - centroids[j][1], 2) +
+                        Math.pow(data[pixelIdx + 2] - centroids[j][2], 2)
+                    );
+                    
+                    if (dist < minDist) {
+                        minDist = dist;
+                        bestCluster = j;
+                    }
+                }
+                
+                fullAssignments[i] = bestCluster;
+            }
+            
+            setStatus('Finding regions...');
+            
+            // Find connected components
+            const components = findConnectedComponents(
+                fullAssignments, 
+                originalImage.width, 
+                originalImage.height,
+                (originalImage.width * originalImage.height) / 100 // Min 1% of image
+            );
+            
+            // Sort components by size
+            components.sort((a, b) => b.pixels.length - a.pixels.length);
+            
+            // Clear existing layers
+            setLayers([]);
+            layerHistoryRef.current.clear();
+            canvasWorkRef.current.maskCache.clear();
+            
+            // Create layers for each significant component
+            const newLayers = [];
+            const usedColors = new Set();
+            
+            components.forEach((component, index) => {
+                if (index >= 10) return; // Max 10 layers
+                
+                const layerId = Date.now() + index;
+                
+                // Generate unique color
+                let color;
+                do {
+                    color = getRandomColor();
+                } while (usedColors.has(color));
+                usedColors.add(color);
+                
+                // Create mask for this component
+                const mask = new ImageData(originalImage.width, originalImage.height);
+                const maskData = mask.data;
+                
+                component.pixels.forEach(idx => {
+                    const pixelIdx = idx * 4;
+                    maskData[pixelIdx] = 255;
+                    maskData[pixelIdx + 1] = 255;
+                    maskData[pixelIdx + 2] = 255;
+                    maskData[pixelIdx + 3] = 255;
+                });
+                
+                // Determine layer name based on position and size
+                const avgX = component.pixels.reduce((sum, idx) => sum + (idx % originalImage.width), 0) / component.pixels.length;
+                const avgY = component.pixels.reduce((sum, idx) => sum + Math.floor(idx / originalImage.width), 0) / component.pixels.length;
+                
+                let name = 'Region ' + (index + 1);
+                if (avgY < originalImage.height * 0.3) name = 'Top ' + name;
+                else if (avgY > originalImage.height * 0.7) name = 'Bottom ' + name;
+                if (avgX < originalImage.width * 0.3) name = 'Left ' + name;
+                else if (avgX > originalImage.width * 0.7) name = 'Right ' + name;
+                
+                const newLayer = {
+                    id: layerId,
+                    name,
+                    color,
+                    mask,
+                    visible: true,
+                    pixelCount: component.pixels.length,
+                    transform: { x: 0, y: 0, scale: 1, rotation: 0 }
+                };
+                
+                newLayers.push(newLayer);
+                layerHistoryRef.current.set(layerId, { states: [], currentIndex: -1 });
+                canvasWorkRef.current.maskCache.set(layerId, mask);
+            });
+            
+            setLayers(newLayers);
+            setCurrentLayerIndex(0);
+            
+            setStatus(`Created ${newLayers.length} layers automatically`);
+            
+        } catch (error) {
+            console.error('Auto-layer error:', error);
+            setStatus('Error creating layers');
+        } finally {
+            setIsProcessingAutoLayers(false);
+        }
+    };
+    
     return (
         <div className="projection-mapping-container">
             <div className="tools-panel">
@@ -1116,6 +1386,25 @@ function ProjectionMapping() {
                 <button onClick={createNewLayer}>+ New Layer</button>
                 <button onClick={downloadAllLayers}>⬇ Download All</button>
                 
+                <div className="control-group">
+                    <label>Auto Create Layers: <span>{autoLayerCount}</span></label>
+                    <input 
+                        type="range" 
+                        min="3" 
+                        max="10" 
+                        value={autoLayerCount}
+                        onChange={(e) => setAutoLayerCount(parseInt(e.target.value))}
+                        disabled={isProcessingAutoLayers}
+                    />
+                    <button 
+                        onClick={autoCreateLayers}
+                        disabled={isProcessingAutoLayers || !originalImage}
+                        style={{ width: '100%', marginTop: '10px' }}
+                    >
+                        {isProcessingAutoLayers ? 'Processing...' : '🎨 Auto Create Layers'}
+                    </button>
+                </div>
+                
                 <div className="layers-list">
                     {layers.map((layer, index) => {
                         const coverage = ((layer.pixelCount / (originalImage?.width * originalImage?.height || 1)) * 100).toFixed(1);
@@ -1135,6 +1424,7 @@ function ProjectionMapping() {
                                         contentEditable
                                         suppressContentEditableWarning
                                         onBlur={(e) => renameLayer(index, e.target.textContent)}
+                                        title="Click to edit layer name"
                                     >
                                         {layer.name}
                                     </span>
