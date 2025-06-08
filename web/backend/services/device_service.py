@@ -37,7 +37,7 @@ class DeviceService:
             List[Dict[str, Any]]: List of devices as dictionaries
         """
         devices = self.db.query(DeviceModel).offset(skip).limit(limit).all()
-        return [device.to_dict() for device in devices]
+        return [self._device_to_dict(device) for device in devices]
     
     def get_device_by_id(self, device_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -886,23 +886,23 @@ class DeviceService:
             device.status = status
             
             # Track playback state changes
-            if is_playing and not device.is_playing:
+            was_playing = device.is_playing
+            
+            if is_playing and not was_playing:
                 # Starting playback - store start time
                 device.playback_position = "00:00:00"
                 device.playback_progress = 0
                 # Store start time in updated_at for now (we'll use this as playback_started_at)
                 device.updated_at = datetime.now(timezone.utc)
-            elif not is_playing and device.is_playing:
+                logger.info(f"Device {device_name} started playing at {device.updated_at}")
+            elif not is_playing and was_playing:
                 # Stopping playback
                 device.current_video = None
                 device.playback_position = "00:00:00"
                 device.playback_progress = 0
+                device.updated_at = datetime.now(timezone.utc)
             
             device.is_playing = is_playing
-            
-            # Always update the timestamp if not setting it above
-            if not (is_playing and not device.is_playing):
-                device.updated_at = datetime.now(timezone.utc)
             
             # Update device manager status
             core_device = self.device_manager.get_device(device_name)
@@ -936,6 +936,37 @@ class DeviceService:
             logger.error(f"Error saving devices to config: {e}")
             return False
     
+    def _get_playback_started_at(self, device: DeviceModel) -> Optional[str]:
+        """
+        Get the playback start time for a device.
+        If the device is playing but updated_at is old, assume it just started.
+        """
+        if not device.is_playing:
+            return None
+            
+        if not device.updated_at:
+            # No timestamp, assume just started
+            return datetime.now(timezone.utc).isoformat()
+            
+        # If we have a duration, check if updated_at is older than the duration
+        if device.playback_duration:
+            try:
+                # Parse duration to seconds
+                parts = device.playback_duration.split(':')
+                duration_seconds = int(parts[0]) * 3600 + int(parts[1]) * 60 + int(parts[2])
+                
+                # Check how long ago updated_at was
+                time_since_update = (datetime.now(timezone.utc) - device.updated_at).total_seconds()
+                
+                # If updated_at is older than the video duration, assume video just started
+                if time_since_update > duration_seconds:
+                    return datetime.now(timezone.utc).isoformat()
+            except Exception as e:
+                logger.warning(f"Error parsing duration for playback time calculation: {e}")
+        
+        # Otherwise use updated_at
+        return device.updated_at.isoformat()
+
     def _device_to_dict(self, device: DeviceModel) -> Dict[str, Any]: # Renamed from _device_model_to_dict
         """
         Convert a DeviceModel to a dictionary, incorporating live status from DeviceManager.
@@ -960,7 +991,8 @@ class DeviceService:
             "created_at": device.created_at.isoformat() if device.created_at else None,
             "updated_at": device.updated_at.isoformat() if device.updated_at else None,
             # Use updated_at as playback_started_at when playing
-            "playback_started_at": device.updated_at.isoformat() if device.is_playing and device.updated_at else None,
+            # If device is playing but updated_at is old (more than duration), assume it just started
+            "playback_started_at": self._get_playback_started_at(device),
         }
 
         # Override with live status from DeviceManager if available

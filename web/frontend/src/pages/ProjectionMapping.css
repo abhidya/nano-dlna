@@ -48,6 +48,19 @@
     display: block;
 }
 
+.canvas-container canvas.brush-cursor {
+    cursor: none;
+}
+
+.cursor-preview {
+    position: absolute;
+    border: 2px solid;
+    border-radius: 50%;
+    pointer-events: none;
+    opacity: 0.5;
+    z-index: 15;
+}
+
 .canvas-label {
     position: absolute;
     top: 5px;

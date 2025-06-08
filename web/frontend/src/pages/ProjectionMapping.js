@@ -12,6 +12,7 @@ function ProjectionMapping() {
     const [isDrawing, setIsDrawing] = useState(false);
     const [status, setStatus] = useState('');
     const [bezierPoints, setBezierPoints] = useState([]);
+    const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false });
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -46,6 +47,23 @@ function ProjectionMapping() {
         }
         return contextsRef.current[contextKey];
     }, []);
+    
+    // Get the appropriate cursor style based on the current tool
+    const getCursorStyle = useCallback(() => {
+        switch (currentTool) {
+            case 'brush':
+            case 'eraser':
+                return 'none'; // Hide cursor for brush/eraser (we show custom preview)
+            case 'floodFill':
+                return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><path d=\'M16 2 L12 10 L20 10 Z\' fill=\'white\' stroke=\'black\'/><rect x=\'14\' y=\'10\' width=\'4\' height=\'20\' fill=\'white\' stroke=\'black\'/></svg>") 16 2, auto';
+            case 'magicWand':
+                return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><circle cx=\'16\' cy=\'16\' r=\'8\' fill=\'none\' stroke=\'white\' stroke-width=\'2\'/><circle cx=\'16\' cy=\'16\' r=\'8\' fill=\'none\' stroke=\'black\' stroke-width=\'1\'/><line x1=\'16\' y1=\'4\' x2=\'16\' y2=\'8\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'16\' y1=\'24\' x2=\'16\' y2=\'28\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'4\' y1=\'16\' x2=\'8\' y2=\'16\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'24\' y1=\'16\' x2=\'28\' y2=\'16\' stroke=\'white\' stroke-width=\'2\'/></svg>") 16 16, auto';
+            case 'bezier':
+                return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><circle cx=\'16\' cy=\'16\' r=\'4\' fill=\'white\' stroke=\'black\'/><path d=\'M8 24 Q 16 8, 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\'/><path d=\'M8 24 Q 16 8, 24 24\' fill=\'none\' stroke=\'black\' stroke-width=\'1\'/></svg>") 16 16, auto';
+            default:
+                return 'crosshair';
+        }
+    }, [currentTool]);
     
     // Batch update system
     const flushPendingUpdates = useCallback(() => {
@@ -471,9 +489,7 @@ function ProjectionMapping() {
     };
     
     const handleCanvasMouseMove = (e) => {
-        if (!isDrawing || currentLayerIndex < 0 || !currentCanvasRef.current) return;
-        
-        const canvas = currentCanvasRef.current;
+        const canvas = e.currentTarget;
         const rect = canvas.getBoundingClientRect();
         
         // Calculate scale factors between displayed size and internal resolution
@@ -484,12 +500,31 @@ function ProjectionMapping() {
         const x = Math.floor((e.clientX - rect.left) * scaleX);
         const y = Math.floor((e.clientY - rect.top) * scaleY);
         
+        // Update cursor position for preview (both screen and canvas coordinates)
+        setCursorPosition({ 
+            x: e.clientX - rect.left, 
+            y: e.clientY - rect.top,
+            canvasX: x,
+            canvasY: y,
+            visible: true 
+        });
+        
+        if (!isDrawing || currentLayerIndex < 0) return;
+        
         if (currentTool === 'brush' || currentTool === 'eraser') {
             drawBrush(x, y);
         }
     };
     
     const handleCanvasMouseUp = () => {
+        if (isDrawing) {
+            setIsDrawing(false);
+            saveLayerState(layers[currentLayerIndex].id);
+        }
+    };
+    
+    const handleCanvasMouseLeave = () => {
+        setCursorPosition({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false });
         if (isDrawing) {
             setIsDrawing(false);
             saveLayerState(layers[currentLayerIndex].id);
@@ -1072,7 +1107,14 @@ function ProjectionMapping() {
                 </div>
                 <div className="canvas-container">
                     <div className="canvas-label">Edge Detection</div>
-                    <canvas ref={edgeCanvasRef}></canvas>
+                    <canvas 
+                        ref={edgeCanvasRef}
+                        style={{ cursor: getCursorStyle() }}
+                        onMouseDown={handleCanvasMouseDown}
+                        onMouseMove={handleCanvasMouseMove}
+                        onMouseUp={handleCanvasMouseUp}
+                        onMouseLeave={handleCanvasMouseLeave}
+                    ></canvas>
                 </div>
                 <div className="canvas-container">
                     <div className="canvas-label">All Layers Combined</div>
@@ -1084,11 +1126,24 @@ function ProjectionMapping() {
                     </div>
                     <canvas 
                         ref={currentCanvasRef}
+                        style={{ cursor: getCursorStyle() }}
                         onMouseDown={handleCanvasMouseDown}
                         onMouseMove={handleCanvasMouseMove}
                         onMouseUp={handleCanvasMouseUp}
-                        onMouseLeave={handleCanvasMouseUp}
+                        onMouseLeave={handleCanvasMouseLeave}
                     ></canvas>
+                    {cursorPosition.visible && (currentTool === 'brush' || currentTool === 'eraser') && currentCanvasRef.current && (
+                        <div 
+                            className="cursor-preview"
+                            style={{
+                                left: cursorPosition.x - brushSize,
+                                top: cursorPosition.y - brushSize,
+                                width: brushSize * 2,
+                                height: brushSize * 2,
+                                borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
+                            }}
+                        />
+                    )}
                 </div>
             </div>
             
