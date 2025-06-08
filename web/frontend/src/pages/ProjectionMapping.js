@@ -388,45 +388,88 @@ function ProjectionMapping() {
         setStatus(`Deleted ${layer.name}`);
     };
     
-    const downloadLayer = (index) => {
+    const downloadLayer = (index, includeTransform = true) => {
         const layer = layers[index];
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = layer.mask.width;
-        tempCanvas.height = layer.mask.height;
-        const tempCtx = tempCanvas.getContext('2d');
         
-        tempCtx.save();
-        tempCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
-        tempCtx.rotate(layer.transform.rotation * Math.PI / 180);
-        tempCtx.scale(layer.transform.scale, layer.transform.scale);
-        tempCtx.translate(-tempCanvas.width/2 + layer.transform.x, -tempCanvas.height/2 + layer.transform.y);
-        
-        tempCtx.fillStyle = 'black';
-        tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
-        
-        const maskData = layer.mask;
-        for (let i = 0; i < maskData.data.length; i += 4) {
-            if (maskData.data[i + 3] > 0) {
-                maskData.data[i] = 255;
-                maskData.data[i + 1] = 255;
-                maskData.data[i + 2] = 255;
+        if (includeTransform) {
+            // Calculate bounds with transform
+            const bounds = getTransformedBounds(layer);
+            tempCanvas.width = bounds.width;
+            tempCanvas.height = bounds.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Black background
+            tempCtx.fillStyle = 'black';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            // Apply transforms from center
+            tempCtx.save();
+            tempCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
+            tempCtx.rotate(layer.transform.rotation * Math.PI / 180);
+            tempCtx.scale(layer.transform.scale, layer.transform.scale);
+            
+            // Create white mask
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = layer.mask.width;
+            maskCanvas.height = layer.mask.height;
+            const maskCtx = maskCanvas.getContext('2d');
+            
+            const whiteMask = new ImageData(layer.mask.width, layer.mask.height);
+            for (let i = 0; i < layer.mask.data.length; i += 4) {
+                if (layer.mask.data[i + 3] > 0) {
+                    whiteMask.data[i] = 255;
+                    whiteMask.data[i + 1] = 255;
+                    whiteMask.data[i + 2] = 255;
+                    whiteMask.data[i + 3] = 255;
+                }
             }
+            maskCtx.putImageData(whiteMask, 0, 0);
+            
+            // Draw centered
+            tempCtx.drawImage(maskCanvas, -maskCanvas.width/2, -maskCanvas.height/2);
+            tempCtx.restore();
+        } else {
+            // Original size without transform
+            tempCanvas.width = layer.mask.width;
+            tempCanvas.height = layer.mask.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            tempCtx.fillStyle = 'black';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            const whiteMask = new ImageData(layer.mask.width, layer.mask.height);
+            for (let i = 0; i < layer.mask.data.length; i += 4) {
+                if (layer.mask.data[i + 3] > 0) {
+                    whiteMask.data[i] = 255;
+                    whiteMask.data[i + 1] = 255;
+                    whiteMask.data[i + 2] = 255;
+                    whiteMask.data[i + 3] = 255;
+                }
+            }
+            tempCtx.putImageData(whiteMask, 0, 0);
         }
         
-        const maskCanvas = document.createElement('canvas');
-        maskCanvas.width = layer.mask.width;
-        maskCanvas.height = layer.mask.height;
-        maskCanvas.getContext('2d').putImageData(maskData, 0, 0);
-        
-        tempCtx.drawImage(maskCanvas, 0, 0);
-        tempCtx.restore();
-        
         const link = document.createElement('a');
-        link.download = layer.name.replace(/[^a-z0-9]/gi, '_') + '.png';
+        link.download = layer.name.replace(/[^a-z0-9]/gi, '_') + (includeTransform ? '_transformed' : '') + '.png';
         link.href = tempCanvas.toDataURL();
         link.click();
         
         setStatus(`Downloaded ${layer.name}`);
+    };
+    
+    const getTransformedBounds = (layer) => {
+        const w = layer.mask.width * layer.transform.scale;
+        const h = layer.mask.height * layer.transform.scale;
+        const angle = layer.transform.rotation * Math.PI / 180;
+        
+        // Calculate rotated bounds
+        const cos = Math.abs(Math.cos(angle));
+        const sin = Math.abs(Math.sin(angle));
+        const width = Math.ceil(w * cos + h * sin);
+        const height = Math.ceil(w * sin + h * cos);
+        
+        return { width, height };
     };
     
     const downloadAllLayers = () => {
@@ -1538,7 +1581,8 @@ function ProjectionMapping() {
                                     <button onClick={() => selectLayer(index)}>Edit</button>
                                     <button onClick={() => copyLayer(index)}>Copy</button>
                                     <button onClick={() => deleteLayer(index)}>Delete</button>
-                                    <button onClick={() => downloadLayer(index)}>⬇</button>
+                                    <button onClick={() => downloadLayer(index, false)} title="Download original">⬇</button>
+                                    <button onClick={() => downloadLayer(index, true)} title="Download with transform">⬇📐</button>
                                     <button onClick={() => openProjectionWindow(index)}>📺</button>
                                 </div>
                             </div>
