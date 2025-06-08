@@ -74,6 +74,11 @@
         .transform-handles {
             position: absolute;
             pointer-events: none;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none;
         }
         .handle {
             position: absolute;
@@ -192,6 +197,10 @@
                 layerData = event.data.layer;
                 layerIndex = event.data.layerIndex;
                 transform = { ...layerData.transform };
+                maskBounds = {
+                    width: layerData.mask.width,
+                    height: layerData.mask.height
+                };
                 
                 // Update UI
                 document.getElementById('layerName').textContent = layerData.name;
@@ -257,7 +266,14 @@
         }
         
         function updateHandles() {
-            if (!layerData || !layerData.mask) return;
+            if (!layerData || !layerData.mask) {
+                // Hide handles if no layer data
+                document.getElementById('transformHandles').style.display = 'none';
+                return;
+            }
+            
+            // Show handles
+            document.getElementById('transformHandles').style.display = 'block';
             
             const width = layerData.mask.width;
             const height = layerData.mask.height;
