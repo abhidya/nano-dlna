@@ -1582,10 +1582,10 @@ function ProjectionMapping() {
                         <div 
                             className="cursor-preview"
                             style={{
-                                left: cursorPosition.x - brushSize,
-                                top: cursorPosition.y - brushSize,
-                                width: brushSize * 2,
-                                height: brushSize * 2,
+                                left: cursorPosition.x - (brushSize * edgeCanvasRef.current.getBoundingClientRect().width / edgeCanvasRef.current.width),
+                                top: cursorPosition.y - (brushSize * edgeCanvasRef.current.getBoundingClientRect().height / edgeCanvasRef.current.height),
+                                width: (brushSize * 2 * edgeCanvasRef.current.getBoundingClientRect().width / edgeCanvasRef.current.width),
+                                height: (brushSize * 2 * edgeCanvasRef.current.getBoundingClientRect().height / edgeCanvasRef.current.height),
                                 borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
                             }}
                         />
@@ -1611,10 +1611,10 @@ function ProjectionMapping() {
                         <div 
                             className="cursor-preview"
                             style={{
-                                left: cursorPosition.x - brushSize,
-                                top: cursorPosition.y - brushSize,
-                                width: brushSize * 2,
-                                height: brushSize * 2,
+                                left: cursorPosition.x - (brushSize * currentCanvasRef.current.getBoundingClientRect().width / currentCanvasRef.current.width),
+                                top: cursorPosition.y - (brushSize * currentCanvasRef.current.getBoundingClientRect().height / currentCanvasRef.current.height),
+                                width: (brushSize * 2 * currentCanvasRef.current.getBoundingClientRect().width / currentCanvasRef.current.width),
+                                height: (brushSize * 2 * currentCanvasRef.current.getBoundingClientRect().height / currentCanvasRef.current.height),
                                 borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
                             }}
                         />
