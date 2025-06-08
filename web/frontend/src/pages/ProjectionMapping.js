@@ -1287,7 +1287,10 @@ function ProjectionMapping() {
             const newLayers = [];
             const usedColors = new Set();
             
-            for (let index = 0; index < components.length && index < 10; index++) {
+            // Limit to user's requested number of layers
+            const maxLayers = Math.min(autoLayerCount, components.length, 10);
+            
+            for (let index = 0; index < maxLayers; index++) {
                 const component = components[index];
                 
                 const layerId = Date.now() + index;
@@ -1320,10 +1323,10 @@ function ProjectionMapping() {
                     // Update progress more granularly
                     if (i % (pixelChunkSize * 2) === 0) {
                         const componentProgress = i / component.pixels.length;
-                        const overallProgress = 70 + (index / Math.min(components.length, 10)) * 25 + 
-                                              (componentProgress * 25 / Math.min(components.length, 10));
+                        const overallProgress = 70 + (index / maxLayers) * 25 + 
+                                              (componentProgress * 25 / maxLayers);
                         setProcessingProgress(Math.round(overallProgress));
-                        setProcessingStep(`Creating layer ${index + 1} of ${Math.min(components.length, 10)}...`);
+                        setProcessingStep(`Creating layer ${index + 1} of ${maxLayers}...`);
                         await new Promise(resolve => setTimeout(resolve, 1));
                     }
                 }
@@ -1364,7 +1367,7 @@ function ProjectionMapping() {
                 canvasWorkRef.current.maskCache.set(layerId, mask);
                 
                 // Update progress
-                const progress = 70 + (index / Math.min(components.length, 10)) * 25;
+                const progress = 70 + (index / maxLayers) * 25;
                 setProcessingProgress(Math.round(progress));
                 await new Promise(resolve => setTimeout(resolve, 10));
             }
