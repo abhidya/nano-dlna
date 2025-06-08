@@ -12,7 +12,7 @@ function ProjectionMapping() {
     const [isDrawing, setIsDrawing] = useState(false);
     const [status, setStatus] = useState('');
     const [bezierPoints, setBezierPoints] = useState([]);
-    const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false });
+    const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false, activeCanvas: null });
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -345,7 +345,11 @@ function ProjectionMapping() {
     useEffect(() => {
         updateCurrentCanvas();
         updateCombinedCanvas();
-    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas]);
+        // Redraw bezier markers if we have points
+        if (bezierPoints.length > 0) {
+            drawBezierMarkers(bezierPoints);
+        }
+    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, bezierPoints]);
     
     useEffect(() => {
         updateEdgeDetection();
@@ -458,9 +462,10 @@ function ProjectionMapping() {
     };
     
     const handleCanvasMouseDown = (e) => {
-        if (currentLayerIndex < 0 || !currentCanvasRef.current) return;
+        if (currentLayerIndex < 0) return;
         
-        const canvas = currentCanvasRef.current;
+        // Get the actual canvas that was clicked
+        const canvas = e.currentTarget;
         const rect = canvas.getBoundingClientRect();
         
         // Calculate scale factors between displayed size and internal resolution
@@ -471,16 +476,23 @@ function ProjectionMapping() {
         const x = Math.floor((e.clientX - rect.left) * scaleX);
         const y = Math.floor((e.clientY - rect.top) * scaleY);
         
+        // For edge detection canvas, we need to apply the selection to the current layer
+        const isEdgeCanvas = canvas === edgeCanvasRef.current;
+        
         if (currentTool === 'floodFill') {
-            smartFloodFill(x, y);
+            smartFloodFill(x, y, isEdgeCanvas);
         } else if (currentTool === 'magicWand') {
-            magicWandFloodFill(x, y);
+            magicWandFloodFill(x, y, isEdgeCanvas);
         } else if (currentTool === 'brush' || currentTool === 'eraser') {
             setIsDrawing(true);
             drawBrush(x, y);
         } else if (currentTool === 'bezier') {
             const newPoints = [...bezierPoints, {x, y}];
             setBezierPoints(newPoints);
+            
+            // Draw temporary markers for bezier points
+            drawBezierMarkers(newPoints);
+            
             if (newPoints.length === 4) {
                 drawBezier(newPoints);
                 setBezierPoints([]);
@@ -506,7 +518,8 @@ function ProjectionMapping() {
             y: e.clientY - rect.top,
             canvasX: x,
             canvasY: y,
-            visible: true 
+            visible: true,
+            activeCanvas: canvas
         });
         
         if (!isDrawing || currentLayerIndex < 0) return;
@@ -524,14 +537,14 @@ function ProjectionMapping() {
     };
     
     const handleCanvasMouseLeave = () => {
-        setCursorPosition({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false });
+        setCursorPosition({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false, activeCanvas: null });
         if (isDrawing) {
             setIsDrawing(false);
             saveLayerState(layers[currentLayerIndex].id);
         }
     };
     
-    const smartFloodFill = (startX, startY) => {
+    const smartFloodFill = (startX, startY, fromEdgeCanvas = false) => {
         const layer = layers[currentLayerIndex];
         const width = originalImage.width;
         const height = originalImage.height;
@@ -666,7 +679,7 @@ function ProjectionMapping() {
         }, 16); // ~60fps
     };
     
-    const magicWandFloodFill = (startX, startY) => {
+    const magicWandFloodFill = (startX, startY, fromEdgeCanvas = false) => {
         const layer = layers[currentLayerIndex];
         const width = originalImage.width;
         const height = originalImage.height;
@@ -758,8 +771,14 @@ function ProjectionMapping() {
     };
     
     const drawBrush = (x, y) => {
+        if (currentLayerIndex < 0) return;
+        
         const layer = layers[currentLayerIndex];
         const width = originalImage.width;
+        const height = originalImage.height;
+        
+        // Ensure coordinates are within bounds
+        if (x < 0 || x >= width || y < 0 || y >= height) return;
         
         // Work directly on cached mask
         let maskData;
@@ -767,7 +786,7 @@ function ProjectionMapping() {
         if (cachedMask) {
             maskData = cachedMask.data;
         } else {
-            const newMask = new ImageData(layer.mask.data.slice(), width, originalImage.height);
+            const newMask = new ImageData(layer.mask.data.slice(), width, height);
             maskData = newMask.data;
             canvasWorkRef.current.maskCache.set(layer.id, newMask);
         }
@@ -816,6 +835,58 @@ function ProjectionMapping() {
                 updateCurrentCanvas();
             });
         }
+    };
+    
+    const drawBezierMarkers = (points) => {
+        const ctx = getContext(currentCanvasRef, 'current');
+        if (!ctx) return;
+        
+        // Redraw current canvas first
+        updateCurrentCanvas();
+        
+        // Draw markers and preview line
+        ctx.save();
+        points.forEach((point, index) => {
+            // Draw point marker
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = index === 0 || index === 3 ? '#ff4444' : '#4444ff'; // Red for endpoints, blue for control points
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Draw point number
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Arial';
+            ctx.fillText(index + 1, point.x + 8, point.y - 8);
+        });
+        
+        // Draw preview lines connecting points
+        if (points.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        
+        // If we have 3 points, show preview of the curve
+        if (points.length === 3) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            ctx.quadraticCurveTo(points[1].x, points[1].y, points[2].x, points[2].y);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        ctx.restore();
     };
     
     const drawBezier = (points) => {
@@ -991,31 +1062,31 @@ function ProjectionMapping() {
                 <div className="tool-buttons">
                     <button 
                         className={`tool-button ${currentTool === 'floodFill' ? 'active' : ''}`}
-                        onClick={() => setCurrentTool('floodFill')}
+                        onClick={() => { setCurrentTool('floodFill'); setBezierPoints([]); }}
                     >
                         🪣 Fill
                     </button>
                     <button 
                         className={`tool-button ${currentTool === 'magicWand' ? 'active' : ''}`}
-                        onClick={() => setCurrentTool('magicWand')}
+                        onClick={() => { setCurrentTool('magicWand'); setBezierPoints([]); }}
                     >
                         ✨ Magic
                     </button>
                     <button 
                         className={`tool-button ${currentTool === 'brush' ? 'active' : ''}`}
-                        onClick={() => setCurrentTool('brush')}
+                        onClick={() => { setCurrentTool('brush'); setBezierPoints([]); }}
                     >
                         🖌️ Brush
                     </button>
                     <button 
                         className={`tool-button ${currentTool === 'eraser' ? 'active' : ''}`}
-                        onClick={() => setCurrentTool('eraser')}
+                        onClick={() => { setCurrentTool('eraser'); setBezierPoints([]); }}
                     >
                         🗑️ Eraser
                     </button>
                     <button 
                         className={`tool-button ${currentTool === 'bezier' ? 'active' : ''}`}
-                        onClick={() => setCurrentTool('bezier')}
+                        onClick={() => { setCurrentTool('bezier'); setBezierPoints([]); }}
                     >
                         📐 Bezier
                     </button>
@@ -1115,6 +1186,18 @@ function ProjectionMapping() {
                         onMouseUp={handleCanvasMouseUp}
                         onMouseLeave={handleCanvasMouseLeave}
                     ></canvas>
+                    {cursorPosition.visible && (currentTool === 'brush' || currentTool === 'eraser') && cursorPosition.activeCanvas === edgeCanvasRef.current && (
+                        <div 
+                            className="cursor-preview"
+                            style={{
+                                left: cursorPosition.x - brushSize,
+                                top: cursorPosition.y - brushSize,
+                                width: brushSize * 2,
+                                height: brushSize * 2,
+                                borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
+                            }}
+                        />
+                    )}
                 </div>
                 <div className="canvas-container">
                     <div className="canvas-label">All Layers Combined</div>
@@ -1132,7 +1215,7 @@ function ProjectionMapping() {
                         onMouseUp={handleCanvasMouseUp}
                         onMouseLeave={handleCanvasMouseLeave}
                     ></canvas>
-                    {cursorPosition.visible && (currentTool === 'brush' || currentTool === 'eraser') && currentCanvasRef.current && (
+                    {cursorPosition.visible && (currentTool === 'brush' || currentTool === 'eraser') && cursorPosition.activeCanvas === currentCanvasRef.current && (
                         <div 
                             className="cursor-preview"
                             style={{

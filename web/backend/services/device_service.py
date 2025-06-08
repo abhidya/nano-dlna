@@ -892,7 +892,8 @@ class DeviceService:
                 # Starting playback - store start time
                 device.playback_position = "00:00:00"
                 device.playback_progress = 0
-                # Store start time in updated_at for now (we'll use this as playback_started_at)
+                # Store start time in updated_at for now
+                # device.playback_started_at = datetime.now(timezone.utc)  # Uncomment when field exists
                 device.updated_at = datetime.now(timezone.utc)
                 logger.info(f"Device {device_name} started playing at {device.updated_at}")
             elif not is_playing and was_playing:
@@ -900,6 +901,7 @@ class DeviceService:
                 device.current_video = None
                 device.playback_position = "00:00:00"
                 device.playback_progress = 0
+                # device.playback_started_at = None  # Uncomment when field exists
                 device.updated_at = datetime.now(timezone.utc)
             
             device.is_playing = is_playing
@@ -987,14 +989,15 @@ class DeviceService:
             "playback_position": device.playback_position,
             "playback_duration": device.playback_duration,
             "playback_progress": device.playback_progress,
+            "playback_started_at": device.updated_at.isoformat() if device.is_playing and device.updated_at else None,
             "config": device.config,
             "created_at": device.created_at.isoformat() if device.created_at else None,
             "updated_at": device.updated_at.isoformat() if device.updated_at else None,
-            # Use updated_at as playback_started_at when playing
-            # If device is playing but updated_at is old (more than duration), assume it just started
-            "playback_started_at": self._get_playback_started_at(device),
         }
 
+        # Debug logging
+        logger.info(f"Device {device.name}: is_playing={device.is_playing}, updated_at={device.updated_at}, playback_started_at={device_dict.get('playback_started_at')}")
+        
         # Override with live status from DeviceManager if available
         logger.info(f"DEBUG: _device_to_dict for device.name='{device.name}'")
         logger.info(f"DEBUG: _device_to_dict: self.device_manager.device_status keys: {list(self.device_manager.device_status.keys())}")
