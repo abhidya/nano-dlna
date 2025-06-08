@@ -328,10 +328,28 @@ class StreamingService:
         # Create symbolic links to the files in the temporary directory
         normalized_files = {}
         for file_key, file_path in files.items():
-            file_name = self.normalize_file_name(os.path.basename(file_path))
-            os.symlink(os.path.abspath(file_path), os.path.join(temp_dir.name, file_name))
-            normalized_files[file_key] = file_name
-            logger.debug(f"Created symlink for {file_key}: {file_path} -> {file_name}")
+            # Check if file_key contains path separators (indicating full path preservation is needed)
+            if '/' in file_key and not file_key.startswith('file_'):
+                # Preserve directory structure for paths like 'uploads/door6.mp4'
+                dir_path = os.path.dirname(file_key)
+                
+                # Create subdirectory in temp dir if needed
+                if dir_path:
+                    os.makedirs(os.path.join(temp_dir.name, dir_path), exist_ok=True)
+                    symlink_path = os.path.join(temp_dir.name, file_key)
+                else:
+                    symlink_path = os.path.join(temp_dir.name, file_key)
+                
+                os.symlink(os.path.abspath(file_path), symlink_path)
+                normalized_files[file_key] = file_key  # Keep full path
+                logger.debug(f"Created symlink with path for {file_key}: {file_path} -> {symlink_path}")
+            else:
+                # Standard behavior for backward compatibility
+                # This handles both "video.mp4" and "file_video" style keys
+                file_name = self.normalize_file_name(os.path.basename(file_path))
+                os.symlink(os.path.abspath(file_path), os.path.join(temp_dir.name, file_name))
+                normalized_files[file_key] = file_name
+                logger.debug(f"Created symlink for {file_key}: {file_path} -> {file_name}")
         
         # Try ports in the specified range
         max_tries = max_port - min_port + 1
@@ -520,6 +538,126 @@ class StreamingService:
             except Exception as e:
                 logger.error(f"Error notifying device manager about stalled session: {e}")
                 
+    def get_or_create_stream(self, video_path: str, device_name: str = "overlay") -> dict:
+        """
+        Get an existing stream or create a new one for the given video path
+        Implements stream reuse to prevent port exhaustion (9000-9100 range)
+        
+        Args:
+            video_path: Path to the video file
+            device_name: Name for the streaming session (default: "overlay")
+            
+        Returns:
+            dict: Dictionary with 'port' and 'url' keys
+        """
+        # Check for existing streams in file_to_session_map
+        basename = os.path.basename(video_path)
+        logger.debug(f"Looking for existing stream for {video_path}, basename: {basename}")
+        logger.debug(f"Current file_to_session_map: {list(self.file_to_session_map.keys())}")
+        
+        # Also check for uploads path
+        uploads_path = None
+        if '/uploads/videos/' in video_path:
+            idx = video_path.find('uploads/videos/')
+            uploads_path = video_path[idx:]
+        
+        for map_key, session_id in self.file_to_session_map.items():
+            # map_key format: "10.0.0.74:9000/door6.mp4" or "10.0.0.74:9000/uploads/videos/door6.mp4"
+            if basename in map_key or (uploads_path and uploads_path in map_key):
+                # Extract server info from key
+                if '/' in map_key:
+                    server_part = map_key.split('/')[0]  # "10.0.0.74:9000"
+                    file_part = '/'.join(map_key.split('/')[1:])  # "door6.mp4" or "uploads/door6.mp4"
+                    
+                    logger.info(f"Reusing existing stream for {video_path} at {server_part}")
+                    return {
+                        "port": int(server_part.split(':')[1]),
+                        "url": f"http://{server_part}/{file_part}"
+                    }
+        
+        # No existing stream, create new one
+        logger.info(f"Creating new stream for {video_path}")
+        
+        # Determine the file key for URL
+        # Check if this is a video in the uploads directory
+        if '/uploads/videos/' in video_path:
+            # Extract the relative path from uploads/
+            idx = video_path.find('uploads/videos/')
+            file_key = video_path[idx:].replace('\\', '/')
+            logger.info(f"Video is in uploads directory, using key: {file_key}")
+        elif video_path.startswith('uploads/'):
+            file_key = video_path.replace('\\', '/')
+            logger.info(f"Video starts with uploads/, using key: {file_key}")
+        else:
+            file_key = basename
+            logger.info(f"Using basename as key: {file_key}")
+            
+        files = {file_key: video_path}
+        serve_ip = self.get_serve_ip()
+        
+        try:
+            files_urls, server = self.start_server(
+                files=files,
+                serve_ip=serve_ip,
+                port_range=(9000, 9100),
+                device_name=device_name
+            )
+            
+            actual_port = server.server_address[1]
+            
+            result = {
+                "port": actual_port,
+                "url": files_urls.get(file_key, "")
+            }
+            logger.info(f"Created new stream, returning: {result}")
+            return result
+        except OSError as e:
+            if "No available port" in str(e):
+                logger.error(f"Port exhaustion detected: {e}")
+                # Try to clean up stale streams
+                self._cleanup_stale_streams()
+                # Retry once after cleanup
+                files_urls, server = self.start_server(
+                    files=files,
+                    serve_ip=serve_ip,
+                    port_range=(9000, 9100),
+                    device_name=device_name
+                )
+                actual_port = server.server_address[1]
+                return {
+                    "port": actual_port,
+                    "url": files_urls.get("video", "")
+                }
+            raise
+    
+    def _cleanup_stale_streams(self):
+        """Clean up streams that have no active sessions"""
+        logger.info("Cleaning up stale streaming servers")
+        
+        for server_id in list(self.servers.keys()):
+            # Check if any sessions are active for this server
+            has_active_session = False
+            for url, session_id in self.file_to_session_map.items():
+                if server_id in url:
+                    session = self.registry.get_session(session_id)
+                    if session and session.is_active():
+                        has_active_session = True
+                        break
+            
+            if not has_active_session:
+                logger.info(f"Removing stale server {server_id}")
+                server = self.servers[server_id]
+                try:
+                    server.shutdown()
+                    server.server_close()
+                except:
+                    pass
+                
+                del self.servers[server_id]
+                if server_id in self.temp_dirs:
+                    self.temp_dirs[server_id].cleanup()
+                    del self.temp_dirs[server_id]
+
     def _attempt_streaming_reconnection(self, session) -> bool:
         """
         Attempt to recover a stalled streaming session

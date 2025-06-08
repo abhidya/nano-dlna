@@ -121,14 +121,32 @@ class OverlayService:
         if not video:
             raise ValueError(f"Video with id {video_id} not found")
         
+        # Log video details
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"Creating overlay stream for video: {video.path}, filename: {video.file_name}")
+        
         # Start streaming if not already active
         stream_info = self.streaming_service.get_or_create_stream(video.path)
+        logger.info(f"Stream info returned: {stream_info}")
         
-        # Get the actual port from the stream info
+        # Get the actual port and URL from the stream info
         port = stream_info.get('port', 9000)
+        streaming_url = stream_info.get('url', '')
         
-        # Build streaming URL
-        streaming_url = f"http://localhost:{port}/file_video/{video.file_name}"
+        # If no URL returned, build one (fallback)
+        if not streaming_url:
+            logger.warning(f"No URL returned from streaming service, using fallback")
+            streaming_url = f"http://localhost:{port}/{video.file_name}"
+        
+        # Add /uploads/ path if not already present
+        if streaming_url and '/uploads/' not in streaming_url:
+            # Insert /uploads/ before the filename
+            parts = streaming_url.rsplit('/', 1)
+            if len(parts) == 2:
+                streaming_url = f"{parts[0]}/uploads/{parts[1]}"
+        
+        logger.info(f"Returning streaming URL: {streaming_url}")
         
         return OverlayStreamResponse(
             streaming_url=streaming_url,

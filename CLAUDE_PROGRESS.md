@@ -127,128 +127,16 @@ API Docs: http://localhost:8000/docs
 - `services/device_service.py:716,738` - Startup "connected" bug
 - `core/device_manager.py:660-664` - Auto-play conditions
 
-### What We Fixed ✅
-1. **Monitor thread spam** - Added UNKNOWN to allowed states (line 789)
-2. **Startup bug** - Changed "connected" → "disconnected" on config load
-3. **Shell scripts** - Fixed python → python3
-4. **Stream reuse** - Added logic to reuse existing streams (partial fix)
-5. **30-second restart loop** - Fixed StreamingSessionRegistry integration
+### Architecture Summary
+- **Discovery Loop**: Runs every 10s, auto-assigns videos to devices
+- **Monitor Thread**: Checks device playback state, can restart if not playing
+- **StreamingService**: HTTP server for video files, tracks sessions in `file_to_session_map`
+- **Port Range**: 9000-9100 for streaming servers
 
-### What Still Needs Fixing ❌
-
-**Immediate - Fix 500 Error**:
-1. **Database Changes**:
-   - Add `streaming_url` column to DeviceModel
-   - Add `streaming_port` column
-   - Track active streams
-
-2. **Backend Changes**:
-   - Check for existing stream before creating new
-   - Reuse stream if same video
-   - Proper cleanup when switching videos
-
-3. **Frontend Changes**:
-   - Show streaming status
-   - Update DeviceResponse schema
-   - Display active stream info
-
-**Architecture Issues**:
-- No central stream registry
-- Frontend/Backend/DB state mismatch  
-- No rate limiting
-- No cleanup on shutdown
-
-### Missing Pieces & Untested Assumptions
-
-1. **Two Separate Spam Sources**:
-   - DeviceManager discovery loop (10s) → auto-play spam
-   - Monitoring thread (3-4s) → restart spam for UNKNOWN state
-   
-2. **Untested Assumptions**:
-   - Is Hccast actually playing video despite UNKNOWN state?
-   - Why does Hccast return UNKNOWN but SideProjector fails completely?
-   - Different DLNA implementations for different device models?
-   
-3. **Configuration Mystery**:
-   - How does config map videos to devices? (need to check my_device_config.json)
-   - Why is there both DeviceManager discovery AND API discovery?
-   - What is streaming registry for if it shows "no active sessions"?
-
-### User Requirements for Fixes
-
-**Option 1: Stream Tracking/Reuse** - NOT READY
-- Requires proper state management across components
-- Need database schema changes first
-- Frontend must be updated to show stream status
-- Too complex for immediate fix
-
-**Option 2: Disable Monitoring** - REJECTED
-- Monitoring is an important feature
-- Helps detect when videos stop playing
-- Need to fix it, not disable it
-
-**Option 3: Port Cleanup** - CHOSEN APPROACH
-- Clean up zombie ports immediately
-- Add proper cleanup when creating new streams
-- Prevents port exhaustion without breaking features
-
-### Approved Implementation Plan: Stream Reuse with Error Handling
-
-**IMPLEMENTATION UPDATE**: 
-- ✅ Added streaming_url/streaming_port to DeviceModel and schema
-- ✅ Implemented stream reuse in device_service.play_video()
-- ❌ BUT: DeviceManager bypasses this and calls device.play() directly!
-
-**NEW FINDING**: Two different play paths:
-1. API → device_service.play_video() → Has stream reuse ✅
-2. Discovery → device_manager.auto_play_video() → device.play() → NO reuse ❌
-
-This is why spam got faster - we only fixed one path!
-
-**Goal**: Fix port exhaustion by reusing existing streams
-
-#### 1. Database Changes
-```sql
-ALTER TABLE devices ADD COLUMN streaming_url VARCHAR;
-ALTER TABLE devices ADD COLUMN streaming_port INTEGER;
-```
-
-#### 2. Backend Changes
-- **TwistedStreamingServer**: Add `active_streams` dict to track video_path → (url, port)
-- **device_service.py:play_video()**:
-  - Check if video already streaming
-  - Reuse URL if same video
-  - Stop old stream if different video
-  - Update DB with stream info
-- **Error Handling**:
-  - Catch port exhaustion → return specific error
-  - Handle stale stream entries → cleanup and retry
-  - Validate stream is actually accessible before reuse
-
-#### 3. Frontend Changes  
-- Update `DeviceResponse` schema: add `streaming_url`, `streaming_port`
-- Show streaming status in device list
-- Display error when no ports available
-
-#### 4. Implementation Steps
-1. Create database migration script
-2. Update DeviceModel with streaming fields
-3. Add stream tracking to TwistedStreamingServer
-4. Modify play_video with reuse logic + error handling
-5. Update schemas and API responses
-6. Update frontend components
-
-### Next Steps
-1. ~~Fix database corruption~~ ✅ DONE
-2. ~~Fix monitor thread spam~~ ✅ DONE  
-3. ~~Fix startup "connected" bug~~ ✅ DONE
-4. ~~Fix port exhaustion/500 error~~ ✅ DONE (via stream reuse)
-5. ~~Add stream reuse logic~~ ✅ DONE (in device_service.py)
-6. ~~Fix 30-second restart loop~~ ✅ DONE (StreamingSessionRegistry integration)
-7. ~~Fix state management mismatch~~ ✅ DONE (added streaming fields to Device base class)
-8. Update frontend to show stream status ❌
-9. Implement proper cleanup on shutdown ❌
-10. Add proper stream reuse to DeviceManager auto_play path ❌
+### Key Architecture Points
+- **StreamingService** tracks all active streams in `file_to_session_map`
+- Map format: `"IP:PORT/filename": session_id` (e.g., `"10.0.0.74:9000/door6.mp4"`)
+- `get_or_create_stream` must check this map before creating new streams
 
 ### Additional Fixes Made
 - **NoneType errors**: Found to be in test mocks with exhausted `side_effect` lists, not production code
@@ -434,6 +322,11 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 6. **Verify Architectural Patterns**
    - Assumed DeviceManager was singleton with get_instance()
    - It wasn't - always check before assuming
+
+7. **Check Existing Tracking Mechanisms**
+   - StreamingService already tracks streams in `file_to_session_map`
+   - Don't create new tracking when one exists
+   - Always understand existing code before adding complexity
 
 **Better alternatives**:
 - Simple needs: Use original nano-dlna
@@ -691,3 +584,30 @@ Users need a way to overlay live information widgets on top of projection-mapped
 - ✅ All three tiers (Frontend/Backend/DB) aligned
 
 The overlay projection feature is now fully operational with complete backend support for configuration persistence, streaming management, and proper API integration.
+
+## Session: January 8, 2025
+
+### Overlay Streaming Implementation Issues
+
+**Problem**: `'StreamingService' object has no attribute 'get_or_create_stream'` error when launching overlay projection.
+
+**Root Cause**: 
+- The `OverlayService` was calling a non-existent method `get_or_create_stream()`
+- This method needed to be implemented in `StreamingService`
+
+**Initial Implementation Issues**:
+1. **Symlink Error**: `[Errno 17] File exists` - trying to create symlink from file to itself
+2. **Wrong URL Format**: Generated `http://door6.mp4` instead of proper `http://10.0.0.74:9006/uploads/door6.mp4`
+3. **Device Manager Warnings**: "Device overlay not found" - overlay streams aren't real devices
+
+**Key Discovery**:
+- `StreamingService` already tracks all active streams in `file_to_session_map`
+- Format: `"IP:PORT/filename": session_id`
+- Should check this map for existing streams before creating new ones
+
+**Solution**:
+1. Implemented `get_or_create_stream()` that checks `file_to_session_map` first
+2. Added special handling for "overlay" device in `DeviceManager._handle_streaming_issue()`
+3. Preserved path structure for URLs when needed (e.g., `uploads/door6.mp4`)
+
+**Lesson Learned**: Always check existing tracking mechanisms before creating new ones. The streaming infrastructure already had everything needed - just needed to use it properly.

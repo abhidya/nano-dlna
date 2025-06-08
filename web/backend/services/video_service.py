@@ -274,7 +274,7 @@ class VideoService:
                     logger.warning(f"Defaulting to serve IP: {serve_ip}")
             else:
                 logger.info(f"Using provided serve IP: {serve_ip}")
-            
+
             # Try to determine a better serve IP based on the device's hostname
             if serve_ip and serve_ip.startswith("10.0.0."):
                 # We're on the same network, use our local IP
@@ -283,166 +283,42 @@ class VideoService:
                     s.connect((serve_ip, 80))
                     local_ip = s.getsockname()[0]
                     s.close()
-                    
+
                     if local_ip.startswith("10.0.0."):
                         serve_ip = local_ip
                         logger.info(f"Using local network IP: {serve_ip}")
                 except Exception as e:
                     logger.error(f"Error determining local IP: {e}")
-            
+
             # Start the streaming server using the Twisted implementation
             files = {"file_video": db_video.path}
             if db_video.has_subtitle and db_video.subtitle_path:
                 files["file_subtitle"] = db_video.subtitle_path
-            
+
             # Make sure we have absolute paths
             for key, path in files.items():
                 files[key] = os.path.abspath(path)
                 if not os.path.exists(files[key]):
                     logger.error(f"File not found: {files[key]}")
                     files.pop(key)
-            
+
             logger.info(f"Starting twisted streaming server for {db_video.path} on {serve_ip}")
-            
+
             # Explicitly use port 8001 to avoid conflicts
-            files_urls, server = self.streaming_service.start_server(files, serve_ip, serve_port=8001)
-            
-            # Return the video URL
-            video_url = files_urls.get("file_video")
-            logger.info(f"Streaming URL: {video_url}")
-            return video_url
+            try:
+                files_urls, server = self.streaming_service.start_server(files, serve_ip, serve_port=8001, device_name=db_video.name)
+
+                # Return the video URL
+                video_url = files_urls.get("file_video")
+                logger.info(f"Streaming URL: {video_url}")
+                return video_url
+            except Exception as e:
+                logger.error(f"Error starting streaming server: {e}")
+                import traceback
+                logger.error(traceback.format_exc())
+                return None
         except Exception as e:
             logger.error(f"Error streaming video: {e}")
             import traceback
             logger.error(traceback.format_exc())
             return None
-    
-    def _get_video_metadata(self, video_path: str) -> tuple:
-        """
-        Get metadata for a video file
-        
-        Args:
-            video_path: Path to the video file
-            
-        Returns:
-            tuple: (duration, format_name, resolution)
-        """
-        try:
-            # Use ffprobe to get video metadata
-            cmd = [
-                "ffprobe",
-                "-v", "error",
-                "-show_entries", "format=duration : stream=width,height",
-                "-of", "json",
-                video_path
-            ]
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode != 0:
-                logger.error(f"Error getting video metadata: {result.stderr}")
-                return None, None, None
-            
-            # Parse the JSON output
-            metadata = json.loads(result.stdout)
-            
-            # Get duration
-            duration = float(metadata["format"]["duration"]) if "format" in metadata and "duration" in metadata["format"] else None
-            
-            # Get resolution
-            width = height = None
-            if "streams" in metadata:
-                for stream in metadata["streams"]:
-                    if "width" in stream and "height" in stream:
-                        width = stream["width"]
-                        height = stream["height"]
-                        break
-            
-            resolution = f"{width}x{height}" if width and height else None
-            
-            # Get format
-            format_name = os.path.splitext(video_path)[1][1:] if "." in os.path.basename(video_path) else None
-            
-            return duration, format_name, resolution
-        except Exception as e:
-            logger.error(f"Error getting video metadata: {e}")
-            return None, None, None
-    
-    def _find_subtitle_file(self, video_path: str) -> Optional[str]:
-        """
-        Find a subtitle file for a video
-        
-        Args:
-            video_path: Path to the video file
-            
-        Returns:
-            Optional[str]: Path to the subtitle file if found, None otherwise
-        """
-        try:
-            # Get the video file name without extension
-            video_name = os.path.splitext(video_path)[0]
-            
-            # Check for common subtitle extensions
-            subtitle_extensions = [".srt", ".sub", ".sbv", ".ass", ".ssa", ".vtt"]
-            for ext in subtitle_extensions:
-                subtitle_path = f"{video_name}{ext}"
-                if os.path.exists(subtitle_path):
-                    return subtitle_path
-            
-            return None
-        except Exception as e:
-            logger.error(f"Error finding subtitle file: {e}")
-            return None
-
-    def scan_directory(self, directory_path: str) -> List[VideoModel]:
-        """
-        Scan a directory for videos and add new ones to the database.
-        Skips videos that already exist based on their path.
-
-        Args:
-            directory_path: The path to the directory to scan.
-
-        Returns:
-            List[VideoModel]: A list of all video models found or created from the directory.
-        """
-        logger.info(f"Scanning directory for videos: {directory_path}")
-        video_extensions = [".mp4", ".avi", ".mkv", ".mov", ".wmv", ".flv", ".webm"]
-        found_videos: List[VideoModel] = []
-
-        if not os.path.exists(directory_path):
-            logger.error(f"Directory not found: {directory_path}")
-            return found_videos
-        
-        if not os.path.isdir(directory_path):
-            logger.error(f"Path is not a directory: {directory_path}")
-            return found_videos
-
-        for root, _, files in os.walk(directory_path):
-            for file_name in files:
-                if any(file_name.lower().endswith(ext) for ext in video_extensions):
-                    file_path = os.path.join(root, file_name)
-                    video_name = os.path.splitext(file_name)[0]
-                    
-                    try:
-                        existing_video = self.get_video_by_path(file_path)
-                        if existing_video:
-                            logger.debug(f"Video already exists in DB: {file_path}")
-                            found_videos.append(existing_video)
-                            continue
-                        
-                        logger.info(f"Found new video: {file_path}, adding to DB.")
-                        video_create_schema = VideoCreate(name=video_name, path=file_path)
-                        # create_video will handle ffprobe and other metadata
-                        db_video = self.create_video(video_create_schema)
-                        if db_video:
-                            found_videos.append(db_video)
-                    except ValueError as ve: # Raised by create_video if path doesn't exist (should not happen here)
-                        logger.error(f"Validation error adding video {file_path}: {ve}")
-                    except SQLAlchemyError as sqla_e:
-                        logger.error(f"Database error adding video {file_path}: {sqla_e}")
-                        self.db.rollback() # Ensure rollback on DB error during loop
-                    except Exception as e:
-                        logger.error(f"Unexpected error adding video {file_path}: {e}")
-                        logger.exception("Detailed error during video scan processing:") # Added for more detail
-        
-        logger.info(f"Finished scanning. Found/created {len(found_videos)} videos in {directory_path}.")
-        return found_videos

@@ -124,6 +124,13 @@ class DeviceManager:
         """Handle streaming issues and attempt recovery"""
         try:
             device_name = session.device_name
+            
+            # Special handling for overlay streams or other non-device streams
+            if device_name == "overlay":
+                logger.info(f"Streaming issue for overlay session {session.session_id}, skipping device-specific handling")
+                # Overlay streams don't have associated devices, so no device recovery needed
+                return
+            
             device = self.get_device(device_name)
             
             if not device:

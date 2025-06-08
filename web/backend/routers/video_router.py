@@ -13,14 +13,12 @@ from schemas.video import (
     VideoList,
     VideoUploadResponse,
 )
-from services.video_service import VideoService # Local get_video_service is defined below
+from services.video_service import VideoService  # Local get_video_service is defined below
 from core.streaming_service import StreamingService
+from core.twisted_streaming import get_instance as get_twisted_streaming
 
 # Add logger
 logger = logging.getLogger(__name__)
-
-# Create a streaming service instance
-streaming_service = StreamingService()
 
 # Create router
 router = APIRouter(
@@ -29,9 +27,12 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+
 # Dependency to get the video service
 def get_video_service(db: Session = Depends(get_db)) -> VideoService:
+    streaming_service = get_twisted_streaming()
     return VideoService(db, streaming_service)
+
 
 @router.get("/", response_model=VideoList)
 def get_videos(
@@ -48,11 +49,12 @@ def get_videos(
     for video in videos:
         video_dict = video.to_dict()
         formatted_videos.append(video_dict)
-    
+
     return {
         "videos": formatted_videos,
         "total": len(videos),
     }
+
 
 @router.get("/{video_id}", response_model=VideoResponse)
 def get_video(
@@ -69,6 +71,7 @@ def get_video(
             detail=f"Video with ID {video_id} not found",
         )
     return video.to_dict()
+
 
 @router.post("/", response_model=VideoResponse, status_code=status.HTTP_201_CREATED)
 def create_video(
@@ -87,6 +90,7 @@ def create_video(
             detail=str(e),
         )
 
+
 @router.put("/{video_id}", response_model=VideoResponse)
 def update_video(
     video_id: int,
@@ -104,6 +108,7 @@ def update_video(
         )
     return db_video.to_dict()
 
+
 @router.delete("/{video_id}")
 def delete_video(
     video_id: int,
@@ -119,6 +124,7 @@ def delete_video(
             detail=f"Video with ID {video_id} not found",
         )
     return {"success": True, "message": f"Video with ID {video_id} deleted"}
+
 
 @router.post("/upload", response_model=VideoUploadResponse)
 async def upload_video(
@@ -137,7 +143,7 @@ async def upload_video(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File is not a video",
         )
-    
+
     # Get the file extension
     filename = file.filename
     if not filename:
@@ -145,7 +151,7 @@ async def upload_video(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="File has no name",
         )
-    
+
     # Upload the video
     video = video_service.upload_video(
         file.file,
@@ -153,18 +159,19 @@ async def upload_video(
         upload_dir,
         name,
     )
-    
+
     if not video:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to upload video",
         )
-    
+
     return {
         "success": True,
         "message": f"Video {filename} uploaded successfully",
         "video": video.to_dict() if video else None,
     }
+
 
 @router.post("/{video_id}/stream")
 def stream_video(
@@ -181,8 +188,9 @@ def stream_video(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to stream video with ID {video_id}",
         )
-    
+
     return {"success": True, "url": video_url}
+
 
 @router.post("/scan-directory")
 def scan_directory(
@@ -198,13 +206,13 @@ def scan_directory(
     scan_dir_param = directory
     if scan_dir_param is None and body:
         scan_dir_param = body.get("directory")
-    
+
     if not scan_dir_param:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Directory parameter is required (either in query or body)",
         )
-    
+
     # Check if directory exists (moved to service, but good to have a quick check here too)
     if not os.path.exists(scan_dir_param) or not os.path.isdir(scan_dir_param):
         raise HTTPException(
@@ -227,6 +235,7 @@ def scan_directory(
             detail=f"Failed to scan directory: {str(e)}",
         )
 
+
 @router.post("/scan")
 def scan_videos(
     directory: str = Query(None, description="Directory to scan for videos"),
@@ -242,18 +251,11 @@ def scan_videos(
     scan_dir_param = directory
     if scan_dir_param is None and body:
         scan_dir_param = body.get("directory")
-    
+
     if not scan_dir_param:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Directory parameter is required (either as query parameter or in JSON body)"
-        )
-
-    # Check if directory exists (moved to service, but good to have a quick check here too)
-    if not os.path.exists(scan_dir_param) or not os.path.isdir(scan_dir_param):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Directory {scan_dir_param} does not exist or is not a directory.",
         )
 
     try:
@@ -261,7 +263,7 @@ def scan_videos(
         # The service returns a list of VideoModel, router should format it
         formatted_videos = [video.to_dict() for video in videos_models]
         return {
-            "success": True, # Adding success field for consistency
+            "success": True,  # Adding success field for consistency
             "message": f"Found {len(formatted_videos)} videos in {scan_dir_param}",
             "videos": formatted_videos
         }

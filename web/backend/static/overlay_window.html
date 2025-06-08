@@ -371,44 +371,24 @@
             }
         });
         
-        function loadVideoWithRetry(baseUrl) {
+        function loadVideoWithRetry(streamingUrl) {
             const video = document.getElementById('bg-video');
             const source = document.getElementById('video-source');
             
-            // Extract base URL and filename
-            const urlParts = baseUrl.split('/');
-            const filename = urlParts.pop();
-            const baseUrlWithoutFile = urlParts.slice(0, -1).join('/');
+            console.log('Loading video from streaming URL:', streamingUrl);
             
-            // Try different ports
-            let currentPort = 9000;
-            const maxPort = 9010;
-            let attempts = 0;
+            // Use the URL directly from backend
+            source.src = streamingUrl;
+            video.load();
             
-            function tryNextPort() {
-                if (currentPort > maxPort) {
-                    showError('Unable to load video stream. Please check streaming server.');
-                    return;
-                }
-                
-                const url = baseUrlWithoutFile.replace(/:\d+/, `:${currentPort}`) + '/' + filename;
-                console.log('Trying video URL:', url);
-                
-                source.src = url;
-                video.load();
-                
-                video.onerror = () => {
-                    console.error('Failed to load video on port', currentPort);
-                    currentPort++;
-                    setTimeout(tryNextPort, 500);
-                };
-                
-                video.oncanplay = () => {
-                    console.log('Video loaded successfully from:', url);
-                };
-            }
+            video.onerror = () => {
+                console.error('Failed to load video from:', streamingUrl);
+                showError('Unable to load video stream. Please check the streaming server is running and the video path is correct.');
+            };
             
-            tryNextPort();
+            video.oncanplay = () => {
+                console.log('Video loaded successfully from:', streamingUrl);
+            };
         }
         
         function showError(message) {
