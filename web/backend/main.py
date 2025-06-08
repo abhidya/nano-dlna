@@ -101,27 +101,35 @@ async def root():
 async def health_check():
     return {"status": "healthy"}
 
-# Initialize services
-device_manager = DeviceManager()
-# Stop any existing streaming servers to prevent port conflicts
-streaming_service = get_twisted_streaming()
-streaming_service.stop_server()  # Explicitly stop any existing servers
-streaming_registry = StreamingSessionRegistry.get_instance()
-
-# Get or create the renderer service
-try:
-    from web.backend.core.renderer_service.service import RendererService
-    from web.backend.routers.renderer_router import get_renderer_service
-    renderer_service = get_renderer_service()
-    logger.info("Renderer Service initialized successfully")
-except Exception as e:
-    logger.warning(f"Renderer Service initialization failed: {e}")
-    renderer_service = None
+# Global service variables (initialized in startup)
+device_manager = None
+streaming_service = None
+streaming_registry = None
+renderer_service = None
 
 # Mount static files for the frontend
 @app.on_event("startup")
 async def startup_event():
+    global device_manager, streaming_service, streaming_registry, renderer_service
+    
     logger.info("Starting nano-dlna Dashboard API")
+    
+    # Initialize services here to prevent multiple executions during imports  
+    device_manager = DeviceManager()
+    # Stop any existing streaming servers to prevent port conflicts
+    streaming_service = get_twisted_streaming()
+    streaming_service.stop_server()  # Explicitly stop any existing servers
+    streaming_registry = StreamingSessionRegistry.get_instance()
+
+    # Get or create the renderer service
+    try:
+        from web.backend.core.renderer_service.service import RendererService
+        from web.backend.routers.renderer_router import get_renderer_service
+        renderer_service = get_renderer_service()
+        logger.info("Renderer Service initialized successfully")
+    except Exception as e:
+        logger.warning(f"Renderer Service initialization failed: {e}")
+        renderer_service = None
     
     # Initialize the database
     try:
@@ -203,13 +211,16 @@ async def shutdown_event():
     logger.info("Shutting down nano-dlna Dashboard API")
     
     # Stop streaming session monitoring
-    streaming_registry.stop_monitoring()
+    if streaming_registry:
+        streaming_registry.stop_monitoring()
     
     # Stop all streaming servers
-    streaming_service.stop_server()
+    if streaming_service:
+        streaming_service.stop_server()
     
     # Stop device discovery
-    device_manager.stop_discovery()
+    if device_manager:
+        device_manager.stop_discovery()
     
     # Stop renderer service if it's running
     if renderer_service:

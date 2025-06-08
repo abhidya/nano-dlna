@@ -52,6 +52,7 @@ class DeviceResponse(DeviceBase):
     streaming_port: Optional[int] = Field(None, description="Active streaming port")
     created_at: datetime = Field(..., description="Creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
+    playback_started_at: Optional[datetime] = Field(None, description="When playback started")
     
     model_config = {"from_attributes": True}
 

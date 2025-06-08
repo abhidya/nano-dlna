@@ -471,3 +471,31 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 - Implemented canvas-based drawing with ImageData manipulation
 - Cross-window communication via postMessage API
 - Responsive grid layout with Material-UI integration
+
+### Performance Optimizations
+
+**Issue**: Pixel selection tools were extremely slow and laggy, making the tool unusable
+
+**Root Cause**: React re-rendering on every pixel update during flood fill operations
+
+**Solution Implemented**:
+1. ✅ Added canvas context caching with `willReadFrequently: true`
+2. ✅ Created `canvasWorkRef` for direct canvas manipulation without React state
+3. ✅ Implemented batch update system with `requestAnimationFrame`
+4. ✅ Modified flood fill algorithms to work with cached masks
+5. ✅ Deferred React state updates to prevent UI blocking
+
+**Performance Results**: Tool is now responsive with immediate visual feedback
+
+### Cursor Position Bug Fix
+
+**Issue**: Mouse clicks didn't align with actual canvas position
+
+**Root Cause**: Canvas CSS scaling (`max-width: 100%`) caused display size to differ from internal resolution
+
+**Solution**:
+- Added proper coordinate scaling in `handleCanvasMouseDown` and `handleCanvasMouseMove`
+- Calculated scale factors: `scaleX = canvas.width / rect.width`
+- Applied scaling to mouse coordinates before processing
+
+**Status**: ✅ Fixed - clicks now properly align with visual elements

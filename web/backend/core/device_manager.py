@@ -128,7 +128,7 @@ class DeviceManager:
             
             if not device:
                 # Add debug info to understand why device not found
-                logger.error(f"Device {device_name} not found for streaming issue handling")
+                logger.warning(f"Device {device_name} not found for streaming issue handling - attempting recovery")
                 logger.debug(f"Current devices in manager: {list(self.devices.keys())}")
                 logger.debug(f"Device lock held: {self.device_lock.locked()}")
                 with self.status_lock:
@@ -142,6 +142,7 @@ class DeviceManager:
                         logger.info(f"Attempting to recover device {device_name} from database")
                         db_device = self.device_service.get_device_by_name(device_name)
                         if db_device:
+                            logger.info(f"Found device {device_name} in database, attempting recovery")
                             device_info = {
                                 "device_name": db_device.name,
                                 "type": db_device.type,
@@ -155,18 +156,22 @@ class DeviceManager:
                             if device:
                                 logger.info(f"Successfully recovered device {device_name} from database")
                                 # Update with streaming info if available
-                                if db_device.streaming_url and db_device.streaming_port:
+                                if hasattr(db_device, 'streaming_url') and db_device.streaming_url and db_device.streaming_port:
+                                    logger.info(f"Restoring streaming info: {db_device.streaming_url}:{db_device.streaming_port}")
                                     device.update_streaming_info(db_device.streaming_url, db_device.streaming_port)
+                                # Continue with normal streaming issue handling
                             else:
-                                logger.error(f"Failed to re-register device {device_name}")
+                                logger.error(f"Failed to re-register device {device_name} during recovery")
                                 return
                         else:
-                            logger.error(f"Device {device_name} not found in database either")
+                            logger.warning(f"Device {device_name} not found in database - may have been removed")
                             return
                     except Exception as e:
                         logger.error(f"Error recovering device from database: {e}")
+                        logger.debug(f"Recovery error details: {traceback.format_exc()}")
                         return
                 else:
+                    logger.warning(f"No device_service available for recovery of {device_name}")
                     return
                 
             # Update status with streaming issue
@@ -388,6 +393,7 @@ class DeviceManager:
             
             try:
                 # Check if device already exists to avoid duplicates
+                existing_device = None
                 if device_name in self.devices:
                     existing_device = self.devices[device_name]
                     # Compare key attributes to see if it's really the same device
@@ -397,6 +403,15 @@ class DeviceManager:
                         return existing_device
                     else:
                         logger.info(f"Device {device_name} already registered but with different parameters, updating")
+                        # Preserve streaming information during update
+                        if hasattr(existing_device, 'streaming_url') and existing_device.streaming_url:
+                            logger.info(f"Preserving streaming info during device update: {existing_device.streaming_url}:{existing_device.streaming_port}")
+                            device.update_streaming_info(existing_device.streaming_url, existing_device.streaming_port)
+                        # Preserve playback state
+                        if hasattr(existing_device, 'is_playing') and existing_device.is_playing:
+                            device.update_playing(True)
+                            if hasattr(existing_device, 'current_video'):
+                                device.current_video = existing_device.current_video
                 
                 # Register or update the device
                 self.devices[device_name] = device
@@ -619,8 +634,10 @@ class DeviceManager:
                             logger.error(f"Error parsing location URL: {e}")
                     
                     if is_new_device or is_changed_device:
+                        # Atomic device registration/update - no unregister needed
+                        # register_device() handles updating existing devices safely
                         if is_changed_device:
-                            self.unregister_device(device_name)
+                            logger.info(f"Device {device_name} parameters changed, updating atomically")
                         
                         device = self.register_device(device_info)
                         if device:

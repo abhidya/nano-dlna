@@ -20,6 +20,55 @@ function ProjectionMapping() {
     
     const layerHistoryRef = useRef(new Map());
     const projectionWindowsRef = useRef(new Map());
+    const cachedImageDataRef = useRef(null);
+    const cachedEdgeDataRef = useRef(null);
+    
+    // Cache canvas contexts
+    const contextsRef = useRef({
+        original: null,
+        edge: null,
+        combined: null,
+        current: null
+    });
+    
+    // Canvas work ref for direct manipulation
+    const canvasWorkRef = useRef({
+        isProcessing: false,
+        pendingUpdates: [],
+        maskCache: new Map(), // Cache mask data for direct manipulation
+        updateTimer: null
+    });
+    
+    // Helper function to get cached context
+    const getContext = useCallback((canvasRef, contextKey) => {
+        if (!contextsRef.current[contextKey] && canvasRef.current) {
+            contextsRef.current[contextKey] = canvasRef.current.getContext('2d', { willReadFrequently: true });
+        }
+        return contextsRef.current[contextKey];
+    }, []);
+    
+    // Batch update system
+    const flushPendingUpdates = useCallback(() => {
+        if (canvasWorkRef.current.pendingUpdates.length === 0) return;
+        
+        const updates = [...canvasWorkRef.current.pendingUpdates];
+        canvasWorkRef.current.pendingUpdates = [];
+        
+        // Apply all updates at once
+        setLayers(currentLayers => {
+            const newLayers = [...currentLayers];
+            updates.forEach(update => {
+                const layerIndex = newLayers.findIndex(l => l.id === update.layerId);
+                if (layerIndex >= 0) {
+                    newLayers[layerIndex] = {
+                        ...newLayers[layerIndex],
+                        ...update.changes
+                    };
+                }
+            });
+            return newLayers;
+        });
+    }, []);
     
     useEffect(() => {
         if (status) {
@@ -61,8 +110,18 @@ function ProjectionMapping() {
             }
         });
         
-        const originalCtx = originalCanvasRef.current.getContext('2d');
-        originalCtx.drawImage(img, 0, 0);
+        // Clear context cache when canvas sizes change
+        contextsRef.current = {
+            original: null,
+            edge: null,
+            combined: null,
+            current: null
+        };
+        
+        const originalCtx = getContext(originalCanvasRef, 'original');
+        if (originalCtx) {
+            originalCtx.drawImage(img, 0, 0);
+        }
         
         if (layers.length === 0) {
             createNewLayer();
@@ -72,13 +131,17 @@ function ProjectionMapping() {
     const updateEdgeDetection = useCallback((img = originalImage) => {
         if (!img || !edgeCanvasRef.current) return;
         
-        const originalCtx = originalCanvasRef.current.getContext('2d');
-        const edgeCtx = edgeCanvasRef.current.getContext('2d');
+        const originalCtx = getContext(originalCanvasRef, 'original');
+        const edgeCtx = getContext(edgeCanvasRef, 'edge');
         
-        const imageData = originalCtx.getImageData(0, 0, img.width, img.height);
-        const edgeData = detectEdges(imageData, edgeSensitivity);
-        edgeCtx.putImageData(edgeData, 0, 0);
-    }, [originalImage, edgeSensitivity]);
+        if (originalCtx && edgeCtx) {
+            const imageData = originalCtx.getImageData(0, 0, img.width, img.height);
+            cachedImageDataRef.current = imageData;
+            const edgeData = detectEdges(imageData, edgeSensitivity);
+            cachedEdgeDataRef.current = edgeData;
+            edgeCtx.putImageData(edgeData, 0, 0);
+        }
+    }, [originalImage, edgeSensitivity, getContext]);
     
     const detectEdges = (imageData, threshold) => {
         const width = imageData.width;
@@ -148,6 +211,9 @@ function ProjectionMapping() {
             transform: { x: 0, y: 0, scale: 1, rotation: 0 }
         };
         
+        // Cache the mask for direct manipulation
+        canvasWorkRef.current.maskCache.set(layerId, newLayer.mask);
+        
         setLayers([...layers, newLayer]);
         layerHistoryRef.current.set(layerId, { states: [], currentIndex: -1 });
         setCurrentLayerIndex(layerIndex);
@@ -173,15 +239,11 @@ function ProjectionMapping() {
         }
     };
     
-    const updateLayersList = () => {
-        updateCurrentCanvas();
-        updateCombinedCanvas();
-    };
-    
     const updateCurrentCanvas = useCallback(() => {
         if (!currentCanvasRef.current || currentLayerIndex < 0) return;
         
-        const ctx = currentCanvasRef.current.getContext('2d');
+        const ctx = getContext(currentCanvasRef, 'current');
+        if (!ctx) return;
         ctx.clearRect(0, 0, currentCanvasRef.current.width, currentCanvasRef.current.height);
         
         if (originalCanvasRef.current) {
@@ -217,12 +279,13 @@ function ProjectionMapping() {
             tempCtx.putImageData(coloredMask, 0, 0);
             ctx.drawImage(tempCanvas, 0, 0);
         }
-    }, [currentLayerIndex, layers]);
+    }, [currentLayerIndex, layers, getContext]);
     
     const updateCombinedCanvas = useCallback(() => {
         if (!combinedCanvasRef.current) return;
         
-        const ctx = combinedCanvasRef.current.getContext('2d');
+        const ctx = getContext(combinedCanvasRef, 'combined');
+        if (!ctx) return;
         ctx.clearRect(0, 0, combinedCanvasRef.current.width, combinedCanvasRef.current.height);
         
         if (originalCanvasRef.current) {
@@ -259,7 +322,7 @@ function ProjectionMapping() {
                 ctx.drawImage(tempCanvas, 0, 0);
             }
         });
-    }, [layers]);
+    }, [layers, getContext]);
     
     useEffect(() => {
         updateCurrentCanvas();
@@ -290,6 +353,7 @@ function ProjectionMapping() {
         const newLayers = layers.filter((_, i) => i !== index);
         setLayers(newLayers);
         layerHistoryRef.current.delete(layer.id);
+        canvasWorkRef.current.maskCache.delete(layer.id);
         
         if (currentLayerIndex >= newLayers.length) {
             setCurrentLayerIndex(newLayers.length - 1);
@@ -361,7 +425,7 @@ function ProjectionMapping() {
             projectionWindowsRef.current.get(index).close();
         }
         
-        const projWindow = window.open('/static/projection_window.html', `projection_${index}`, 'width=800,height=600');
+        const projWindow = window.open('/backend-static/projection_window.html', `projection_${index}`, 'width=800,height=600');
         projectionWindowsRef.current.set(index, projWindow);
         
         projWindow.onload = () => {
@@ -378,9 +442,16 @@ function ProjectionMapping() {
     const handleCanvasMouseDown = (e) => {
         if (currentLayerIndex < 0 || !currentCanvasRef.current) return;
         
-        const rect = currentCanvasRef.current.getBoundingClientRect();
-        const x = Math.floor(e.clientX - rect.left);
-        const y = Math.floor(e.clientY - rect.top);
+        const canvas = currentCanvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        
+        // Calculate scale factors between displayed size and internal resolution
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        // Apply scaling to get correct canvas coordinates
+        const x = Math.floor((e.clientX - rect.left) * scaleX);
+        const y = Math.floor((e.clientY - rect.top) * scaleY);
         
         if (currentTool === 'floodFill') {
             smartFloodFill(x, y);
@@ -402,9 +473,16 @@ function ProjectionMapping() {
     const handleCanvasMouseMove = (e) => {
         if (!isDrawing || currentLayerIndex < 0 || !currentCanvasRef.current) return;
         
-        const rect = currentCanvasRef.current.getBoundingClientRect();
-        const x = Math.floor(e.clientX - rect.left);
-        const y = Math.floor(e.clientY - rect.top);
+        const canvas = currentCanvasRef.current;
+        const rect = canvas.getBoundingClientRect();
+        
+        // Calculate scale factors between displayed size and internal resolution
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        
+        // Apply scaling to get correct canvas coordinates
+        const x = Math.floor((e.clientX - rect.left) * scaleX);
+        const y = Math.floor((e.clientY - rect.top) * scaleY);
         
         if (currentTool === 'brush' || currentTool === 'eraser') {
             drawBrush(x, y);
@@ -423,20 +501,37 @@ function ProjectionMapping() {
         const width = originalImage.width;
         const height = originalImage.height;
         
+        // Mark as processing
+        canvasWorkRef.current.isProcessing = true;
+        
         const visited = new Uint8Array(width * height);
         const stack = [{x: startX, y: startY}];
-        const originalCtx = originalCanvasRef.current.getContext('2d');
-        const originalData = originalCtx.getImageData(0, 0, width, height).data;
-        const edgeCtx = edgeCanvasRef.current.getContext('2d');
-        const edgeData = edgeCtx.getImageData(0, 0, width, height).data;
+        // Use cached data if available, otherwise get fresh data
+        const originalData = cachedImageDataRef.current ? cachedImageDataRef.current.data : 
+            getContext(originalCanvasRef, 'original').getImageData(0, 0, width, height).data;
+        const edgeData = cachedEdgeDataRef.current ? cachedEdgeDataRef.current.data :
+            getContext(edgeCanvasRef, 'edge').getImageData(0, 0, width, height).data;
         
-        const newMask = new ImageData(layer.mask.data.slice(), width, height);
-        const maskData = newMask.data;
+        // Work directly on cached mask if available, otherwise clone
+        let maskData;
+        const cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (cachedMask) {
+            maskData = cachedMask.data;
+        } else {
+            const newMask = new ImageData(layer.mask.data.slice(), width, height);
+            maskData = newMask.data;
+            canvasWorkRef.current.maskCache.set(layer.id, newMask);
+        }
         
         const startIdx = (startY * width + startX) * 4;
         const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
         
         let pixelCount = 0;
+        const toleranceValue = tolerance * 3;
+        
+        // Use a more efficient stack-based approach with batch processing
+        const batchSize = 100;
+        let batch = 0;
         
         while (stack.length > 0) {
             const {x, y} = stack.pop();
@@ -455,7 +550,7 @@ function ProjectionMapping() {
                              Math.abs(originalData[pixelIdx + 1] - startColor[1]) +
                              Math.abs(originalData[pixelIdx + 2] - startColor[2]);
             
-            if (colorDiff > tolerance * 3) continue;
+            if (colorDiff > toleranceValue) continue;
             
             maskData[pixelIdx] = 255;
             maskData[pixelIdx + 1] = 255;
@@ -463,17 +558,77 @@ function ProjectionMapping() {
             maskData[pixelIdx + 3] = 255;
             pixelCount++;
             
-            stack.push({x: x + 1, y});
-            stack.push({x: x - 1, y});
-            stack.push({x, y: y + 1});
-            stack.push({x, y: y - 1});
+            // Add neighbors
+            if (x + 1 < width) stack.push({x: x + 1, y});
+            if (x - 1 >= 0) stack.push({x: x - 1, y});
+            if (y + 1 < height) stack.push({x, y: y + 1});
+            if (y - 1 >= 0) stack.push({x, y: y - 1});
+            
+            // Update UI in batches to improve performance
+            batch++;
+            if (batch >= batchSize) {
+                batch = 0;
+                // Allow the UI to update
+                requestAnimationFrame(() => {});
+            }
         }
         
-        const newLayers = [...layers];
-        newLayers[currentLayerIndex].mask = newMask;
-        newLayers[currentLayerIndex].pixelCount += pixelCount;
-        setLayers(newLayers);
-        saveLayerState(layer.id);
+        // Update the canvas immediately for visual feedback
+        const currentCtx = getContext(currentCanvasRef, 'current');
+        if (currentCtx && cachedMask) {
+            // Draw the updated mask directly
+            requestAnimationFrame(() => {
+                currentCtx.clearRect(0, 0, width, height);
+                
+                // Draw faded background
+                if (originalCanvasRef.current) {
+                    currentCtx.globalAlpha = 0.3;
+                    currentCtx.drawImage(originalCanvasRef.current, 0, 0);
+                    currentCtx.globalAlpha = 1;
+                }
+                
+                // Draw the mask with layer color
+                const tempCanvas = document.createElement('canvas');
+                tempCanvas.width = width;
+                tempCanvas.height = height;
+                const tempCtx = tempCanvas.getContext('2d');
+                tempCtx.putImageData(cachedMask, 0, 0);
+                
+                currentCtx.globalCompositeOperation = 'source-over';
+                currentCtx.fillStyle = layer.color;
+                currentCtx.globalAlpha = 0.7;
+                
+                // Create colored version
+                for (let i = 0; i < maskData.length; i += 4) {
+                    if (maskData[i + 3] > 0) {
+                        const pixelIndex = i / 4;
+                        const x = pixelIndex % width;
+                        const y = Math.floor(pixelIndex / width);
+                        currentCtx.fillRect(x, y, 1, 1);
+                    }
+                }
+            });
+        }
+        
+        // Queue the state update
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: cachedMask || new ImageData(maskData, width, height),
+                pixelCount: layer.pixelCount + pixelCount
+            }
+        });
+        
+        // Defer the React state update
+        if (canvasWorkRef.current.updateTimer) {
+            clearTimeout(canvasWorkRef.current.updateTimer);
+        }
+        
+        canvasWorkRef.current.updateTimer = setTimeout(() => {
+            canvasWorkRef.current.isProcessing = false;
+            flushPendingUpdates();
+            saveLayerState(layer.id);
+        }, 16); // ~60fps
     };
     
     const magicWandFloodFill = (startX, startY) => {
@@ -481,13 +636,25 @@ function ProjectionMapping() {
         const width = originalImage.width;
         const height = originalImage.height;
         
+        // Mark as processing
+        canvasWorkRef.current.isProcessing = true;
+        
         const visited = new Uint8Array(width * height);
         const stack = [{x: startX, y: startY}];
-        const originalCtx = originalCanvasRef.current.getContext('2d');
-        const originalData = originalCtx.getImageData(0, 0, width, height).data;
+        // Use cached data if available
+        const originalData = cachedImageDataRef.current ? cachedImageDataRef.current.data :
+            getContext(originalCanvasRef, 'original').getImageData(0, 0, width, height).data;
         
-        const newMask = new ImageData(layer.mask.data.slice(), width, height);
-        const maskData = newMask.data;
+        // Work directly on cached mask
+        let maskData;
+        const cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (cachedMask) {
+            maskData = cachedMask.data;
+        } else {
+            const newMask = new ImageData(layer.mask.data.slice(), width, height);
+            maskData = newMask.data;
+            canvasWorkRef.current.maskCache.set(layer.id, newMask);
+        }
         
         const startIdx = (startY * width + startX) * 4;
         const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
@@ -529,19 +696,46 @@ function ProjectionMapping() {
             }
         }
         
-        const newLayers = [...layers];
-        newLayers[currentLayerIndex].mask = newMask;
-        newLayers[currentLayerIndex].pixelCount += pixelCount;
-        setLayers(newLayers);
-        saveLayerState(layer.id);
+        // Queue the update instead of immediate state change
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: cachedMask || new ImageData(maskData, width, height),
+                pixelCount: layer.pixelCount + pixelCount
+            }
+        });
+        
+        // Update canvas immediately for feedback
+        requestAnimationFrame(() => {
+            updateCurrentCanvas();
+        });
+        
+        // Defer state update
+        if (canvasWorkRef.current.updateTimer) {
+            clearTimeout(canvasWorkRef.current.updateTimer);
+        }
+        
+        canvasWorkRef.current.updateTimer = setTimeout(() => {
+            canvasWorkRef.current.isProcessing = false;
+            flushPendingUpdates();
+            saveLayerState(layer.id);
+        }, 16);
     };
     
     const drawBrush = (x, y) => {
         const layer = layers[currentLayerIndex];
         const width = originalImage.width;
         
-        const newMask = new ImageData(layer.mask.data.slice(), width, originalImage.height);
-        const maskData = newMask.data;
+        // Work directly on cached mask
+        let maskData;
+        const cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (cachedMask) {
+            maskData = cachedMask.data;
+        } else {
+            const newMask = new ImageData(layer.mask.data.slice(), width, originalImage.height);
+            maskData = newMask.data;
+            canvasWorkRef.current.maskCache.set(layer.id, newMask);
+        }
         
         for (let dy = -brushSize; dy <= brushSize; dy++) {
             for (let dx = -brushSize; dx <= brushSize; dx++) {
@@ -570,9 +764,23 @@ function ProjectionMapping() {
             }
         }
         
-        const newLayers = [...layers];
-        newLayers[currentLayerIndex].mask = newMask;
-        setLayers(newLayers);
+        // Update canvas immediately for visual feedback
+        const currentCtx = getContext(currentCanvasRef, 'current');
+        if (currentCtx && cachedMask) {
+            requestAnimationFrame(() => {
+                // Just update the affected area for better performance
+                const updateX = Math.max(0, x - brushSize - 1);
+                const updateY = Math.max(0, y - brushSize - 1);
+                const updateWidth = Math.min(width - updateX, brushSize * 2 + 2);
+                const updateHeight = Math.min(originalImage.height - updateY, brushSize * 2 + 2);
+                
+                // Create partial image data for the updated region
+                const partialData = currentCtx.getImageData(updateX, updateY, updateWidth, updateHeight);
+                currentCtx.putImageData(partialData, updateX, updateY);
+                
+                updateCurrentCanvas();
+            });
+        }
     };
     
     const drawBezier = (points) => {
@@ -620,7 +828,7 @@ function ProjectionMapping() {
         saveLayerState(layer.id);
     };
     
-    const undo = () => {
+    const undo = useCallback(() => {
         if (currentLayerIndex < 0) return;
         
         const layer = layers[currentLayerIndex];
@@ -644,9 +852,9 @@ function ProjectionMapping() {
         
         setLayers(newLayers);
         setStatus('Undo');
-    };
+    }, [currentLayerIndex, layers]);
     
-    const redo = () => {
+    const redo = useCallback(() => {
         if (currentLayerIndex < 0) return;
         
         const layer = layers[currentLayerIndex];
@@ -670,7 +878,7 @@ function ProjectionMapping() {
         
         setLayers(newLayers);
         setStatus('Redo');
-    };
+    }, [currentLayerIndex, layers]);
     
     useEffect(() => {
         const handleKeyDown = (e) => {
@@ -700,7 +908,7 @@ function ProjectionMapping() {
             document.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('message', handleMessage);
         };
-    }, [layers]);
+    }, [layers, undo, redo]);
     
     const renameLayer = (index, newName) => {
         const newLayers = [...layers];

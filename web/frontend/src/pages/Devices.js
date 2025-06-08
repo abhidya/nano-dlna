@@ -64,13 +64,41 @@ function Devices() {
     fetchDevices();
   }, []);
 
-  const fetchDevices = async () => {
+  // Timer to update playback position display
+  useEffect(() => {
+    let interval;
+    
+    // Check if any device is currently playing
+    const hasPlayingDevices = devices.some(device => device.is_playing);
+    
+    if (hasPlayingDevices) {
+      // Update the display every second for smooth timer
+      interval = setInterval(() => {
+        // Force re-render to update calculated positions
+        setDevices(prev => [...prev]);
+      }, 1000); // Update every second
+    }
+    
+    // Cleanup interval on unmount or when deps change
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [devices]);
+
+  const fetchDevices = async (isPolling = false) => {
     try {
-      setLoading(true);
+      // Only show loading spinner on initial load or manual refresh
+      if (!isPolling) {
+        setLoading(true);
+      }
       setError(null); // Clear any previous errors
       const response = await deviceApi.getDevices();
       setDevices(response.data.devices);
-      setLoading(false);
+      if (!isPolling) {
+        setLoading(false);
+      }
     } catch (err) {
       console.error('Error fetching devices:', err);
       
@@ -92,7 +120,9 @@ function Devices() {
         setError(`Failed to load devices: ${err.message}`);
       }
       
-      setLoading(false);
+      if (!isPolling) {
+        setLoading(false);
+      }
     }
   };
 
@@ -299,6 +329,57 @@ function Devices() {
     }));
   };
 
+  // Calculate current playback position based on start time
+  const calculateCurrentPosition = (device) => {
+    if (!device.is_playing || !device.playback_started_at) {
+      return device.playback_position || "00:00:00";
+    }
+
+    // Get the start time and current time
+    const startTime = new Date(device.playback_started_at).getTime();
+    const currentTime = Date.now();
+    const elapsedMs = currentTime - startTime;
+    
+    // Account for any pause duration
+    const pauseDurationMs = (device.total_pause_duration || 0) * 1000;
+    const actualElapsedMs = Math.max(0, elapsedMs - pauseDurationMs);
+    
+    // Convert to seconds
+    const elapsedSeconds = Math.floor(actualElapsedMs / 1000);
+    
+    // Parse duration to get total seconds
+    const durationParts = (device.playback_duration || "00:00:00").split(':');
+    const totalSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+    
+    // Don't exceed duration
+    const currentSeconds = Math.min(elapsedSeconds, totalSeconds);
+    
+    // Format as HH:MM:SS
+    const hours = Math.floor(currentSeconds / 3600);
+    const minutes = Math.floor((currentSeconds % 3600) / 60);
+    const seconds = currentSeconds % 60;
+    
+    return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+  };
+
+  // Calculate progress percentage
+  const calculateProgress = (device) => {
+    if (!device.is_playing || !device.playback_started_at || !device.playback_duration) {
+      return device.playback_progress || 0;
+    }
+
+    const currentPos = calculateCurrentPosition(device);
+    const posParts = currentPos.split(':');
+    const durationParts = device.playback_duration.split(':');
+    
+    const posSeconds = parseInt(posParts[0]) * 3600 + parseInt(posParts[1]) * 60 + parseInt(posParts[2]);
+    const durationSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+    
+    if (durationSeconds === 0) return 0;
+    
+    return Math.min(100, Math.floor((posSeconds / durationSeconds) * 100));
+  };
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -413,11 +494,11 @@ function Devices() {
                     <Typography variant="body2" color="textSecondary" gutterBottom>
                       Current Video: {device.current_video.split('/').pop()}
                     </Typography>
-                    {device.is_playing && device.playback_progress !== null && (
+                    {device.is_playing && (
                       <Box sx={{ mt: 1, mb: 1 }}>
                         <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                           <Typography variant="caption" color="textSecondary">
-                            {device.playback_position || "00:00:00"}
+                            {calculateCurrentPosition(device)}
                           </Typography>
                           <Typography variant="caption" color="textSecondary">
                             {device.playback_duration || "00:00:00"}
@@ -425,7 +506,7 @@ function Devices() {
                         </Box>
                         <LinearProgress 
                           variant="determinate" 
-                          value={device.playback_progress || 0} 
+                          value={calculateProgress(device)} 
                           sx={{ height: 8, borderRadius: 4 }}
                         />
                       </Box>

@@ -249,20 +249,6 @@ class DeviceService:
             # The manual override current_db_device_state.status = "offline" is now removed to observe true behavior.
             
             # Update the device in the device manager
-            # If the name changed, unregister using the original name
-            if current_db_device_state.name != original_device_name_before_update:
-                self.device_manager.unregister_device(original_device_name_before_update)
-            
-            # Unregister also with the new name in case it was somehow registered before this update logic
-            # (e.g. if an old instance with new name existed in manager)
-            # Or, ensure the manager's internal state for this device name is cleared/updated.
-            # A simple get then unregister if exists, or rely on register_device to overwrite.
-            # For simplicity, let's assume register_device handles overwriting if the device (by name) already exists.
-            # If the device name itself was updated, the old entry in device_manager needs cleanup.
-            # The current DeviceManager.register_device logic might handle this if it updates existing.
-            # Let's ensure we unregister the potentially old name if it changed.
-            # And if the device manager has an entry for the new name already, it should be updated by register_device.
-
             device_info = {
                 "device_name": current_db_device_state.name,
                 "type": current_db_device_state.type,
@@ -271,12 +257,18 @@ class DeviceService:
                 "friendly_name": current_db_device_state.friendly_name,
                 "manufacturer": current_db_device_state.manufacturer,
                 "location": current_db_device_state.location,
-                "status": current_db_device_state.status, # This should be "offline"
+                "status": current_db_device_state.status,
             }
             if current_db_device_state.config:
                 device_info["config"] = current_db_device_state.config 
             
-            self.device_manager.register_device(device_info) # Mock will set live status to "connected"
+            # Register device with new info (handles updates atomically)
+            self.device_manager.register_device(device_info)
+            
+            # Clean up old name AFTER registering new one to avoid race condition
+            if current_db_device_state.name != original_device_name_before_update:
+                logger.info(f"Device name changed from {original_device_name_before_update} to {current_db_device_state.name}, cleaning up old entry")
+                self.device_manager.unregister_device(original_device_name_before_update)
             
             return self._device_to_dict(current_db_device_state) # Pass the (now manually corrected) fresh DB state
         except SQLAlchemyError as e:
@@ -433,6 +425,29 @@ class DeviceService:
                 logger.error(f"No video URL available for device {device_id}")
                 return False
             if success:
+                # Get video duration using ffprobe
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', 
+                         '-of', 'default=noprint_wrappers=1:nokey=1', video_path],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if result.returncode == 0 and result.stdout.strip():
+                        duration_seconds = int(float(result.stdout.strip()))
+                        hours = duration_seconds // 3600
+                        minutes = (duration_seconds % 3600) // 60
+                        seconds = duration_seconds % 60
+                        duration_str = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                        
+                        # Update the device with video info
+                        db_device.current_video = video_path
+                        db_device.playback_duration = duration_str
+                        self.db.commit()
+                        logger.info(f"Set video duration: {duration_str}")
+                except Exception as e:
+                    logger.warning(f"Could not get video duration: {e}")
+                
                 self.update_device_status(device.name, "connected", is_playing=True)
                 logger.info(f"Video {video_url} is now playing on device {device_id}")
                 return True
@@ -869,12 +884,25 @@ class DeviceService:
             
             # Update device status
             device.status = status
-            device.is_playing = is_playing
-            device.updated_at = datetime.now(timezone.utc)
             
-            # If device is not playing, clear current video
-            if not is_playing:
+            # Track playback state changes
+            if is_playing and not device.is_playing:
+                # Starting playback - store start time
+                device.playback_position = "00:00:00"
+                device.playback_progress = 0
+                # Store start time in updated_at for now (we'll use this as playback_started_at)
+                device.updated_at = datetime.now(timezone.utc)
+            elif not is_playing and device.is_playing:
+                # Stopping playback
                 device.current_video = None
+                device.playback_position = "00:00:00"
+                device.playback_progress = 0
+            
+            device.is_playing = is_playing
+            
+            # Always update the timestamp if not setting it above
+            if not (is_playing and not device.is_playing):
+                device.updated_at = datetime.now(timezone.utc)
             
             # Update device manager status
             core_device = self.device_manager.get_device(device_name)
@@ -931,6 +959,8 @@ class DeviceService:
             "config": device.config,
             "created_at": device.created_at.isoformat() if device.created_at else None,
             "updated_at": device.updated_at.isoformat() if device.updated_at else None,
+            # Use updated_at as playback_started_at when playing
+            "playback_started_at": device.updated_at.isoformat() if device.is_playing and device.updated_at else None,
         }
 
         # Override with live status from DeviceManager if available

@@ -32,4 +32,15 @@ module.exports = function(app) {
       changeOrigin: true,
     })
   );
+  
+  app.use(
+    '/backend-static',
+    createProxyMiddleware({
+      target: 'http://localhost:8000',
+      changeOrigin: true,
+      pathRewrite: {
+        '^/backend-static': '/static'
+      }
+    })
+  );
 };

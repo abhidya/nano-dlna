@@ -503,6 +503,7 @@ class StreamingService:
             logger.info(f"Successfully recovered streaming session {session.session_id}")
         else:
             # If reconnection failed, notify the device manager to take action
+            logger.info(f"Reconnection failed for session {session.session_id}, attempting device manager recovery")
             try:
                 # Access the global device_manager from main
                 from web.backend import main
