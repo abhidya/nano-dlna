@@ -15,6 +15,8 @@ function ProjectionMapping() {
     const [cursorPosition, setCursorPosition] = useState({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false, activeCanvas: null });
     const [autoLayerCount, setAutoLayerCount] = useState(5);
     const [isProcessingAutoLayers, setIsProcessingAutoLayers] = useState(false);
+    const [processingProgress, setProcessingProgress] = useState(0);
+    const [processingStep, setProcessingStep] = useState('');
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -1191,48 +1193,75 @@ function ProjectionMapping() {
         }
         
         setIsProcessingAutoLayers(true);
-        setStatus('Processing image...');
+        setProcessingProgress(0);
+        setProcessingStep('Starting...');
         
         try {
             const ctx = getContext(originalCanvasRef, 'original');
             const imageData = ctx.getImageData(0, 0, originalImage.width, originalImage.height);
             const data = imageData.data;
             
+            // Give UI time to update
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
             // Sample pixels for k-means (every 4th pixel for speed)
+            setProcessingStep('Sampling pixels...');
+            setProcessingProgress(10);
             const sampledPixels = [];
             for (let i = 0; i < data.length; i += 16) {
                 sampledPixels.push([data[i], data[i + 1], data[i + 2]]);
             }
             
-            setStatus('Finding color clusters...');
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            setProcessingStep('Finding color clusters...');
+            setProcessingProgress(20);
             
             // Run k-means clustering
             const { centroids, assignments } = kMeansClustering(sampledPixels, autoLayerCount);
             
-            // Map all pixels to clusters
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
+            // Map all pixels to clusters in chunks to prevent freezing
+            setProcessingStep('Assigning pixels to clusters...');
             const fullAssignments = new Array(originalImage.width * originalImage.height);
-            for (let i = 0; i < fullAssignments.length; i++) {
-                const pixelIdx = i * 4;
-                let minDist = Infinity;
-                let bestCluster = 0;
+            const chunkSize = 10000;
+            
+            for (let chunk = 0; chunk < fullAssignments.length; chunk += chunkSize) {
+                const endChunk = Math.min(chunk + chunkSize, fullAssignments.length);
                 
-                for (let j = 0; j < centroids.length; j++) {
-                    const dist = Math.sqrt(
-                        Math.pow(data[pixelIdx] - centroids[j][0], 2) +
-                        Math.pow(data[pixelIdx + 1] - centroids[j][1], 2) +
-                        Math.pow(data[pixelIdx + 2] - centroids[j][2], 2)
-                    );
+                for (let i = chunk; i < endChunk; i++) {
+                    const pixelIdx = i * 4;
+                    let minDist = Infinity;
+                    let bestCluster = 0;
                     
-                    if (dist < minDist) {
-                        minDist = dist;
-                        bestCluster = j;
+                    for (let j = 0; j < centroids.length; j++) {
+                        const dist = Math.sqrt(
+                            Math.pow(data[pixelIdx] - centroids[j][0], 2) +
+                            Math.pow(data[pixelIdx + 1] - centroids[j][1], 2) +
+                            Math.pow(data[pixelIdx + 2] - centroids[j][2], 2)
+                        );
+                        
+                        if (dist < minDist) {
+                            minDist = dist;
+                            bestCluster = j;
+                        }
                     }
+                    
+                    fullAssignments[i] = bestCluster;
                 }
                 
-                fullAssignments[i] = bestCluster;
+                // Update progress
+                const progress = 20 + (chunk / fullAssignments.length) * 40;
+                setProcessingProgress(Math.round(progress));
+                
+                // Give UI time to update
+                await new Promise(resolve => setTimeout(resolve, 1));
             }
             
-            setStatus('Finding regions...');
+            setProcessingStep('Finding connected regions...');
+            setProcessingProgress(65);
+            await new Promise(resolve => setTimeout(resolve, 10));
             
             // Find connected components
             const components = findConnectedComponents(
@@ -1245,6 +1274,10 @@ function ProjectionMapping() {
             // Sort components by size
             components.sort((a, b) => b.pixels.length - a.pixels.length);
             
+            setProcessingStep('Creating layers...');
+            setProcessingProgress(70);
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
             // Clear existing layers
             setLayers([]);
             layerHistoryRef.current.clear();
@@ -1254,8 +1287,8 @@ function ProjectionMapping() {
             const newLayers = [];
             const usedColors = new Set();
             
-            components.forEach((component, index) => {
-                if (index >= 10) return; // Max 10 layers
+            for (let index = 0; index < components.length && index < 10; index++) {
+                const component = components[index];
                 
                 const layerId = Date.now() + index;
                 
@@ -1301,18 +1334,29 @@ function ProjectionMapping() {
                 newLayers.push(newLayer);
                 layerHistoryRef.current.set(layerId, { states: [], currentIndex: -1 });
                 canvasWorkRef.current.maskCache.set(layerId, mask);
-            });
+                
+                // Update progress
+                const progress = 70 + (index / Math.min(components.length, 10)) * 25;
+                setProcessingProgress(Math.round(progress));
+                await new Promise(resolve => setTimeout(resolve, 10));
+            }
             
             setLayers(newLayers);
             setCurrentLayerIndex(0);
             
+            setProcessingProgress(100);
+            setProcessingStep('Complete!');
             setStatus(`Created ${newLayers.length} layers automatically`);
             
         } catch (error) {
             console.error('Auto-layer error:', error);
             setStatus('Error creating layers');
         } finally {
-            setIsProcessingAutoLayers(false);
+            setTimeout(() => {
+                setIsProcessingAutoLayers(false);
+                setProcessingProgress(0);
+                setProcessingStep('');
+            }, 1000);
         }
     };
     
@@ -1409,6 +1453,27 @@ function ProjectionMapping() {
                     >
                         {isProcessingAutoLayers ? 'Processing...' : '🎨 Auto Create Layers'}
                     </button>
+                    {isProcessingAutoLayers && (
+                        <div style={{ marginTop: '10px' }}>
+                            <div style={{ 
+                                width: '100%', 
+                                height: '20px', 
+                                backgroundColor: '#2a2a2a', 
+                                borderRadius: '10px',
+                                overflow: 'hidden'
+                            }}>
+                                <div style={{ 
+                                    width: `${processingProgress}%`, 
+                                    height: '100%', 
+                                    backgroundColor: '#4CAF50',
+                                    transition: 'width 0.3s ease'
+                                }} />
+                            </div>
+                            <small style={{ display: 'block', marginTop: '5px', textAlign: 'center' }}>
+                                {processingStep}
+                            </small>
+                        </div>
+                    )}
                 </div>
                 
                 <div className="layers-list">

@@ -429,6 +429,10 @@ class DeviceService:
                 logger.error(f"No video URL available for device {device_id}")
                 return False
             if success:
+                # First ensure device is marked as not playing to trigger timestamp update
+                db_device.is_playing = False
+                self.db.commit()
+                
                 # Get video duration using ffprobe
                 try:
                     import subprocess
@@ -452,6 +456,7 @@ class DeviceService:
                 except Exception as e:
                     logger.warning(f"Could not get video duration: {e}")
                 
+                # Now update to playing - this will set the timestamp
                 self.update_device_status(device.name, "connected", is_playing=True)
                 logger.info(f"Video {video_url} is now playing on device {device_id}")
                 return True
