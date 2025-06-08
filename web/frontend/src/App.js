@@ -16,6 +16,7 @@ import Settings from './pages/Settings';
 import NotFound from './pages/NotFound';
 import Renderer from './pages/Renderer';
 import DepthProcessing from './pages/DepthProcessing';
+import ProjectionMapping from './pages/ProjectionMapping';
 
 // Create a theme instance
 const theme = createTheme({
@@ -51,6 +52,7 @@ function App() {
           <Route path="/settings/load-config" element={<Settings />} />
           <Route path="/renderer" element={<Renderer />} />
           <Route path="/depth" element={<DepthProcessing />} />
+          <Route path="/projection" element={<ProjectionMapping />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </Layout>

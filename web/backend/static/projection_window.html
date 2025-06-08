@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projection Window</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            background: black;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: Arial, sans-serif;
+            transition: opacity 0.3s;
+        }
+        .controls.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .control-row {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+        }
+        label {
+            width: 80px;
+            display: inline-block;
+        }
+        input[type="range"] {
+            width: 200px;
+            margin: 0 10px;
+        }
+        input[type="number"] {
+            width: 60px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .shortcuts {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #aaa;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="projectionCanvas"></canvas>
+    <div class="controls" id="controls">
+        <h3 id="layerName">Layer</h3>
+        <div class="control-row">
+            <label>X Position:</label>
+            <input type="range" id="xPos" min="-500" max="500" value="0">
+            <input type="number" id="xPosNum" min="-500" max="500" value="0">
+        </div>
+        <div class="control-row">
+            <label>Y Position:</label>
+            <input type="range" id="yPos" min="-500" max="500" value="0">
+            <input type="number" id="yPosNum" min="-500" max="500" value="0">
+        </div>
+        <div class="control-row">
+            <label>Scale:</label>
+            <input type="range" id="scale" min="0.1" max="3" step="0.1" value="1">
+            <input type="number" id="scaleNum" min="0.1" max="3" step="0.1" value="1">
+        </div>
+        <div class="control-row">
+            <label>Rotation:</label>
+            <input type="range" id="rotation" min="-180" max="180" value="0">
+            <input type="number" id="rotationNum" min="-180" max="180" value="0">
+        </div>
+        <div class="control-row">
+            <button onclick="resetTransform()">Reset</button>
+            <button onclick="centerTransform()">Center</button>
+            <button onclick="toggleFullscreen()">F11 Fullscreen</button>
+        </div>
+        <div class="shortcuts">
+            <strong>Keyboard Shortcuts:</strong><br>
+            Arrow Keys: Move (Shift = 10x)<br>
+            +/-: Scale<br>
+            [/]: Rotate<br>
+            R: Reset, C: Center<br>
+            H: Hide controls<br>
+            F11: Fullscreen
+        </div>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById('projectionCanvas');
+        const ctx = canvas.getContext('2d');
+        const controls = document.getElementById('controls');
+        
+        let layerData = null;
+        let layerIndex = -1;
+        let transform = {
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0
+        };
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            render();
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        // Listen for messages from parent window
+        window.addEventListener('message', function(event) {
+            if (event.data.type === 'init') {
+                layerData = event.data.layer;
+                layerIndex = event.data.layerIndex;
+                transform = { ...layerData.transform };
+                
+                // Update UI
+                document.getElementById('layerName').textContent = layerData.name;
+                document.getElementById('xPos').value = transform.x;
+                document.getElementById('xPosNum').value = transform.x;
+                document.getElementById('yPos').value = transform.y;
+                document.getElementById('yPosNum').value = transform.y;
+                document.getElementById('scale').value = transform.scale;
+                document.getElementById('scaleNum').value = transform.scale;
+                document.getElementById('rotation').value = transform.rotation;
+                document.getElementById('rotationNum').value = transform.rotation;
+                
+                render();
+            } else if (event.data.type === 'updateMask') {
+                layerData = event.data.layer;
+                render();
+            }
+        });
+        
+        function render() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (!layerData || !layerData.mask) return;
+            
+            // Create white mask on black background
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = layerData.mask.width;
+            tempCanvas.height = layerData.mask.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Convert mask data to white pixels
+            const imageData = new ImageData(layerData.mask.width, layerData.mask.height);
+            const maskData = layerData.mask.data;
+            const data = imageData.data;
+            
+            for (let i = 0; i < maskData.length; i += 4) {
+                if (maskData[i + 3] > 0) {
+                    data[i] = 255;
+                    data[i + 1] = 255;
+                    data[i + 2] = 255;
+                    data[i + 3] = 255;
+                } else {
+                    data[i] = 0;
+                    data[i + 1] = 0;
+                    data[i + 2] = 0;
+                    data[i + 3] = 255;
+                }
+            }
+            
+            tempCtx.putImageData(imageData, 0, 0);
+            
+            // Draw with transforms
+            ctx.save();
+            ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
+            ctx.rotate(transform.rotation * Math.PI / 180);
+            ctx.scale(transform.scale, transform.scale);
+            ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
+            ctx.restore();
+        }
+        
+        function updateTransform() {
+            if (window.opener && !window.opener.closed) {
+                window.opener.postMessage({
+                    type: 'updateTransform',
+                    layerIndex: layerIndex,
+                    transform: transform
+                }, '*');
+            }
+            render();
+        }
+        
+        // Control bindings
+        document.getElementById('xPos').oninput = function() {
+            transform.x = parseFloat(this.value);
+            document.getElementById('xPosNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('xPosNum').oninput = function() {
+            transform.x = parseFloat(this.value);
+            document.getElementById('xPos').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('yPos').oninput = function() {
+            transform.y = parseFloat(this.value);
+            document.getElementById('yPosNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('yPosNum').oninput = function() {
+            transform.y = parseFloat(this.value);
+            document.getElementById('yPos').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('scale').oninput = function() {
+            transform.scale = parseFloat(this.value);
+            document.getElementById('scaleNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('scaleNum').oninput = function() {
+            transform.scale = parseFloat(this.value);
+            document.getElementById('scale').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('rotation').oninput = function() {
+            transform.rotation = parseFloat(this.value);
+            document.getElementById('rotationNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('rotationNum').oninput = function() {
+            transform.rotation = parseFloat(this.value);
+            document.getElementById('rotation').value = this.value;
+            updateTransform();
+        };
+        
+        function resetTransform() {
+            transform = { x: 0, y: 0, scale: 1, rotation: 0 };
+            document.getElementById('xPos').value = 0;
+            document.getElementById('xPosNum').value = 0;
+            document.getElementById('yPos').value = 0;
+            document.getElementById('yPosNum').value = 0;
+            document.getElementById('scale').value = 1;
+            document.getElementById('scaleNum').value = 1;
+            document.getElementById('rotation').value = 0;
+            document.getElementById('rotationNum').value = 0;
+            updateTransform();
+        }
+        
+        function centerTransform() {
+            transform.x = 0;
+            transform.y = 0;
+            document.getElementById('xPos').value = 0;
+            document.getElementById('xPosNum').value = 0;
+            document.getElementById('yPos').value = 0;
+            document.getElementById('yPosNum').value = 0;
+            updateTransform();
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            const step = e.shiftKey ? 10 : 1;
+            
+            switch(e.key) {
+                case 'ArrowLeft':
+                    transform.x -= step;
+                    break;
+                case 'ArrowRight':
+                    transform.x += step;
+                    break;
+                case 'ArrowUp':
+                    transform.y -= step;
+                    break;
+                case 'ArrowDown':
+                    transform.y += step;
+                    break;
+                case '+':
+                case '=':
+                    transform.scale = Math.min(3, transform.scale + 0.1);
+                    break;
+                case '-':
+                case '_':
+                    transform.scale = Math.max(0.1, transform.scale - 0.1);
+                    break;
+                case '[':
+                    transform.rotation -= 5;
+                    break;
+                case ']':
+                    transform.rotation += 5;
+                    break;
+                case 'r':
+                case 'R':
+                    resetTransform();
+                    return;
+                case 'c':
+                case 'C':
+                    centerTransform();
+                    return;
+                case 'h':
+                case 'H':
+                    controls.classList.toggle('hidden');
+                    return;
+                case 'F11':
+                    e.preventDefault();
+                    toggleFullscreen();
+                    return;
+            }
+            
+            // Update UI controls
+            document.getElementById('xPos').value = transform.x;
+            document.getElementById('xPosNum').value = transform.x;
+            document.getElementById('yPos').value = transform.y;
+            document.getElementById('yPosNum').value = transform.y;
+            document.getElementById('scale').value = transform.scale;
+            document.getElementById('scaleNum').value = transform.scale;
+            document.getElementById('rotation').value = transform.rotation;
+            document.getElementById('rotationNum').value = transform.rotation;
+            
+            updateTransform();
+        });
+        
+        // Auto-refresh
+        setInterval(render, 100);
+    </script>
+</body>
+</html>

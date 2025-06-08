@@ -1,0 +1,193 @@
+.projection-mapping-container {
+    display: flex;
+    height: calc(100vh - 64px);
+    background-color: #1a1a1a;
+    color: #fff;
+    overflow: hidden;
+}
+
+.tools-panel {
+    width: 250px;
+    background-color: #222;
+    padding: 20px;
+    overflow-y: auto;
+}
+
+.tools-panel h3 {
+    margin-top: 20px;
+    margin-bottom: 10px;
+    font-size: 16px;
+}
+
+.canvas-area {
+    flex: 1;
+    padding: 20px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: 1fr 1fr;
+    gap: 10px;
+}
+
+.canvas-container {
+    position: relative;
+    background-color: #2a2a2a;
+    border: 1px solid #444;
+    overflow: hidden;
+    min-height: 200px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}
+
+.canvas-container canvas {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    cursor: crosshair;
+    display: block;
+}
+
+.canvas-label {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    background-color: rgba(0,0,0,0.7);
+    padding: 5px 10px;
+    font-size: 12px;
+    z-index: 10;
+}
+
+.tools-panel button {
+    background-color: #4CAF50;
+    color: white;
+    border: none;
+    padding: 10px;
+    margin: 5px 0;
+    width: 100%;
+    cursor: pointer;
+    border-radius: 4px;
+}
+
+.tools-panel button:hover {
+    background-color: #45a049;
+}
+
+.tools-panel button:disabled {
+    background-color: #666;
+    cursor: not-allowed;
+}
+
+.tool-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.tool-button {
+    background-color: #555;
+    margin: 2px;
+    padding: 8px;
+    flex: 1;
+    min-width: 70px;
+}
+
+.tool-button.active {
+    background-color: #2196F3;
+}
+
+input[type="file"] {
+    margin: 10px 0;
+    width: 100%;
+}
+
+input[type="range"] {
+    width: 100%;
+    margin: 10px 0;
+}
+
+input[type="number"] {
+    width: 60px;
+    padding: 5px;
+    margin-left: 10px;
+    background-color: #333;
+    border: 1px solid #555;
+    color: white;
+}
+
+.layer-item {
+    background-color: #333;
+    padding: 10px;
+    margin: 5px 0;
+    border-radius: 4px;
+    position: relative;
+}
+
+.layer-item.active {
+    border: 2px solid #2196F3;
+}
+
+.layer-controls {
+    display: flex;
+    gap: 5px;
+    margin-top: 5px;
+}
+
+.layer-controls button {
+    padding: 5px;
+    font-size: 12px;
+    flex: 1;
+}
+
+.color-square {
+    display: inline-block;
+    width: 20px;
+    height: 20px;
+    margin-right: 10px;
+    border: 1px solid #fff;
+    cursor: pointer;
+}
+
+.status {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background-color: rgba(0,0,0,0.8);
+    padding: 10px 20px;
+    border-radius: 4px;
+    display: none;
+}
+
+.status.show {
+    display: block;
+}
+
+.control-group {
+    margin: 10px 0;
+    padding: 10px;
+    background-color: #2a2a2a;
+    border-radius: 4px;
+}
+
+.control-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-size: 14px;
+}
+
+.shortcut-info {
+    font-size: 12px;
+    color: #888;
+    margin-top: 20px;
+    line-height: 1.5;
+}
+
+.shortcut-info h4 {
+    color: #ccc;
+    margin: 10px 0 5px 0;
+}
+
+.layers-list {
+    max-height: 400px;
+    overflow-y: auto;
+}

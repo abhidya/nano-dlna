@@ -1,0 +1,1421 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projection Mapping Tool</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: Arial, sans-serif;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .tools-panel {
+            width: 250px;
+            background-color: #222;
+            padding: 20px;
+            overflow-y: auto;
+        }
+        
+        .canvas-area {
+            flex: 1;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 10px;
+        }
+        
+        .canvas-container {
+            position: relative;
+            background-color: #2a2a2a;
+            border: 1px solid #444;
+            overflow: hidden;
+            min-height: 200px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .canvas-container canvas {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            cursor: crosshair;
+            max-width: 100%;
+            max-height: 100%;
+            width: auto;
+            height: auto;
+        }
+        
+        .canvas-label {
+            position: absolute;
+            top: 5px;
+            left: 5px;
+            background-color: rgba(0,0,0,0.7);
+            padding: 5px 10px;
+            font-size: 12px;
+            z-index: 10;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px;
+            margin: 5px 0;
+            width: 100%;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        .tool-button {
+            background-color: #555;
+            margin: 2px;
+            padding: 8px;
+        }
+        
+        .tool-button.active {
+            background-color: #2196F3;
+        }
+        
+        input[type="file"] {
+            margin: 10px 0;
+        }
+        
+        input[type="range"] {
+            width: 100%;
+            margin: 10px 0;
+        }
+        
+        input[type="number"] {
+            width: 60px;
+            padding: 5px;
+            margin-left: 10px;
+            background-color: #333;
+            border: 1px solid #555;
+            color: white;
+        }
+        
+        .layer-item {
+            background-color: #333;
+            padding: 10px;
+            margin: 5px 0;
+            border-radius: 4px;
+            position: relative;
+        }
+        
+        .layer-item.active {
+            border: 2px solid #2196F3;
+        }
+        
+        .layer-controls {
+            display: flex;
+            gap: 5px;
+            margin-top: 5px;
+        }
+        
+        .layer-controls button {
+            padding: 5px;
+            font-size: 12px;
+            flex: 1;
+        }
+        
+        .color-square {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            margin-right: 10px;
+            border: 1px solid #fff;
+            cursor: pointer;
+        }
+        
+        .status {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background-color: rgba(0,0,0,0.8);
+            padding: 10px 20px;
+            border-radius: 4px;
+            display: none;
+        }
+        
+        .status.show {
+            display: block;
+        }
+        
+        h3 {
+            margin-top: 20px;
+            margin-bottom: 10px;
+            font-size: 16px;
+        }
+        
+        .control-group {
+            margin: 10px 0;
+            padding: 10px;
+            background-color: #2a2a2a;
+            border-radius: 4px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 14px;
+        }
+        
+        .projection-controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background-color: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            z-index: 1000;
+        }
+        
+        .projection-controls.hidden {
+            display: none;
+        }
+        
+        .shortcut-info {
+            font-size: 12px;
+            color: #888;
+            margin-top: 20px;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="tools-panel">
+            <h3>Image Upload</h3>
+            <input type="file" id="imageUpload" accept="image/*">
+            
+            <h3>Edge Detection</h3>
+            <div class="control-group">
+                <label>Sensitivity: <span id="edgeValue">50</span></label>
+                <input type="range" id="edgeSensitivity" min="5" max="100" value="50">
+            </div>
+            
+            <h3>Tools</h3>
+            <div class="tool-buttons">
+                <button class="tool-button" id="floodFillTool" title="Flood Fill">🪣 Fill</button>
+                <button class="tool-button" id="magicWandTool" title="Magic Wand">✨ Magic</button>
+                <button class="tool-button" id="brushTool" title="Brush">🖌️ Brush</button>
+                <button class="tool-button" id="eraserTool" title="Eraser">🗑️ Eraser</button>
+                <button class="tool-button" id="bezierTool" title="Bezier">📐 Bezier</button>
+            </div>
+            
+            <div class="control-group">
+                <label>Tolerance: <span id="toleranceValue">20</span></label>
+                <input type="range" id="tolerance" min="5" max="100" value="20">
+                
+                <label>Brush Size: <span id="brushSizeValue">10</span></label>
+                <input type="range" id="brushSize" min="1" max="50" value="10">
+            </div>
+            
+            <h3>Layers</h3>
+            <button id="newLayer">+ New Layer</button>
+            <button id="downloadAll">⬇ Download All</button>
+            <div id="layersList"></div>
+            
+            <div class="shortcut-info">
+                <h4>Keyboard Shortcuts:</h4>
+                Ctrl+Z: Undo<br>
+                Ctrl+Y: Redo<br>
+                <br>
+                <h4>Projection Window:</h4>
+                Arrow Keys: Move<br>
+                Shift+Arrow: Move fast<br>
+                +/-: Scale<br>
+                [/]: Rotate<br>
+                R: Reset<br>
+                C: Center<br>
+                H: Hide controls<br>
+                F11: Fullscreen
+            </div>
+        </div>
+        
+        <div class="canvas-area">
+            <div class="canvas-container">
+                <div class="canvas-label">Original</div>
+                <canvas id="originalCanvas"></canvas>
+            </div>
+            <div class="canvas-container">
+                <div class="canvas-label">Edge Detection</div>
+                <canvas id="edgeCanvas"></canvas>
+            </div>
+            <div class="canvas-container">
+                <div class="canvas-label">All Layers Combined</div>
+                <canvas id="combinedCanvas"></canvas>
+            </div>
+            <div class="canvas-container">
+                <div class="canvas-label">Current Layer: <span id="currentLayerName">None</span></div>
+                <canvas id="currentCanvas"></canvas>
+            </div>
+        </div>
+    </div>
+    
+    <div id="status" class="status"></div>
+    
+    <script>
+        // Global variables
+        let originalImage = null;
+        let edgeData = null;
+        let layers = [];
+        let currentLayerIndex = -1;
+        let currentTool = 'floodFill';
+        let layerHistory = new Map();
+        let projectionWindows = new Map();
+        
+        // Canvas references
+        const originalCanvas = document.getElementById('originalCanvas');
+        const edgeCanvas = document.getElementById('edgeCanvas');
+        const combinedCanvas = document.getElementById('combinedCanvas');
+        const currentCanvas = document.getElementById('currentCanvas');
+        
+        // Canvas contexts
+        const originalCtx = originalCanvas.getContext('2d');
+        const edgeCtx = edgeCanvas.getContext('2d');
+        const combinedCtx = combinedCanvas.getContext('2d');
+        const currentCtx = currentCanvas.getContext('2d');
+        
+        // Tool state
+        let isDrawing = false;
+        let bezierPoints = [];
+        
+        // Initialize
+        document.getElementById('imageUpload').addEventListener('change', handleImageUpload);
+        document.getElementById('edgeSensitivity').addEventListener('input', updateEdgeDetection);
+        document.getElementById('tolerance').addEventListener('input', updateToleranceDisplay);
+        document.getElementById('brushSize').addEventListener('input', updateBrushSizeDisplay);
+        document.getElementById('newLayer').addEventListener('click', createNewLayer);
+        document.getElementById('downloadAll').addEventListener('click', downloadAllLayers);
+        
+        // Tool buttons
+        document.getElementById('floodFillTool').addEventListener('click', () => setTool('floodFill'));
+        document.getElementById('magicWandTool').addEventListener('click', () => setTool('magicWand'));
+        document.getElementById('brushTool').addEventListener('click', () => setTool('brush'));
+        document.getElementById('eraserTool').addEventListener('click', () => setTool('eraser'));
+        document.getElementById('bezierTool').addEventListener('click', () => setTool('bezier'));
+        
+        // Canvas events
+        currentCanvas.addEventListener('mousedown', handleMouseDown);
+        currentCanvas.addEventListener('mousemove', handleMouseMove);
+        currentCanvas.addEventListener('mouseup', handleMouseUp);
+        currentCanvas.addEventListener('mouseleave', handleMouseUp);
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', handleKeyboard);
+        
+        function handleImageUpload(e) {
+            const file = e.target.files[0];
+            if (!file) {
+                showStatus('No file selected');
+                return;
+            }
+            
+            // Check if file is an image
+            if (!file.type.startsWith('image/')) {
+                showStatus('Please select an image file');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    originalImage = img;
+                    initializeCanvases();
+                    updateEdgeDetection();
+                    showStatus('Image loaded successfully');
+                };
+                img.onerror = function() {
+                    showStatus('Error loading image');
+                };
+                img.src = event.target.result;
+            };
+            reader.onerror = function() {
+                showStatus('Error reading file');
+            };
+            reader.readAsDataURL(file);
+        }
+        
+        function initializeCanvases() {
+            if (!originalImage) {
+                showStatus('No image loaded');
+                return;
+            }
+            
+            const width = originalImage.width;
+            const height = originalImage.height;
+            
+            console.log('Initializing canvases with dimensions:', width, 'x', height);
+            
+            // Set canvas dimensions
+            [originalCanvas, edgeCanvas, combinedCanvas, currentCanvas].forEach(canvas => {
+                canvas.width = width;
+                canvas.height = height;
+                // Force canvas to be visible
+                canvas.style.display = 'block';
+            });
+            
+            // Draw original image
+            originalCtx.drawImage(originalImage, 0, 0);
+            
+            // Clear other canvases
+            edgeCtx.clearRect(0, 0, width, height);
+            combinedCtx.clearRect(0, 0, width, height);
+            currentCtx.clearRect(0, 0, width, height);
+            
+            if (layers.length === 0) {
+                createNewLayer();
+            }
+            
+            console.log('Canvas initialization complete');
+        }
+        
+        function updateEdgeDetection() {
+            if (!originalImage) return;
+            
+            const sensitivity = parseInt(document.getElementById('edgeSensitivity').value);
+            document.getElementById('edgeValue').textContent = sensitivity;
+            
+            const imageData = originalCtx.getImageData(0, 0, originalCanvas.width, originalCanvas.height);
+            edgeData = detectEdges(imageData, sensitivity);
+            edgeCtx.putImageData(edgeData, 0, 0);
+        }
+        
+        function detectEdges(imageData, threshold) {
+            const width = imageData.width;
+            const height = imageData.height;
+            const data = imageData.data;
+            const output = new ImageData(width, height);
+            const outputData = output.data;
+            
+            // Sobel operators
+            const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
+            const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
+            
+            for (let y = 1; y < height - 1; y++) {
+                for (let x = 1; x < width - 1; x++) {
+                    let pixelX = 0;
+                    let pixelY = 0;
+                    
+                    for (let j = -1; j <= 1; j++) {
+                        for (let i = -1; i <= 1; i++) {
+                            const idx = ((y + j) * width + (x + i)) * 4;
+                            const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+                            const kernelIdx = (j + 1) * 3 + (i + 1);
+                            pixelX += gray * sobelX[kernelIdx];
+                            pixelY += gray * sobelY[kernelIdx];
+                        }
+                    }
+                    
+                    const magnitude = Math.sqrt(pixelX * pixelX + pixelY * pixelY);
+                    const idx = (y * width + x) * 4;
+                    
+                    if (magnitude > threshold) {
+                        outputData[idx] = 255;
+                        outputData[idx + 1] = 255;
+                        outputData[idx + 2] = 255;
+                        outputData[idx + 3] = 255;
+                    } else {
+                        outputData[idx] = 0;
+                        outputData[idx + 1] = 0;
+                        outputData[idx + 2] = 0;
+                        outputData[idx + 3] = 255;
+                    }
+                }
+            }
+            
+            return output;
+        }
+        
+        function createNewLayer() {
+            const layerId = Date.now();
+            const layerIndex = layers.length;
+            const layer = {
+                id: layerId,
+                name: `Layer ${layerIndex + 1}`,
+                color: getRandomColor(),
+                mask: new ImageData(originalCanvas.width, originalCanvas.height),
+                canvas: document.createElement('canvas'),
+                visible: true,
+                pixelCount: 0,
+                transform: { x: 0, y: 0, scale: 1, rotation: 0 }
+            };
+            
+            layer.canvas.width = originalCanvas.width;
+            layer.canvas.height = originalCanvas.height;
+            layer.ctx = layer.canvas.getContext('2d');
+            
+            layers.push(layer);
+            layerHistory.set(layerId, { states: [], currentIndex: -1 });
+            
+            currentLayerIndex = layerIndex;
+            updateLayersList();
+            updateCurrentCanvas();
+            saveLayerState(layerId);
+            showStatus(`Created ${layer.name}`);
+        }
+        
+        function getRandomColor() {
+            const colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#98D8C8', '#FFD93D', '#6BCB77'];
+            return colors[Math.floor(Math.random() * colors.length)];
+        }
+        
+        function updateLayersList() {
+            const list = document.getElementById('layersList');
+            list.innerHTML = '';
+            
+            layers.forEach((layer, index) => {
+                const item = document.createElement('div');
+                item.className = 'layer-item' + (index === currentLayerIndex ? ' active' : '');
+                
+                const coverage = ((layer.pixelCount / (originalCanvas.width * originalCanvas.height)) * 100).toFixed(1);
+                
+                item.innerHTML = `
+                    <div>
+                        <span class="color-square" style="background-color: ${layer.color}" 
+                              onclick="toggleLayerVisibility(${index})"></span>
+                        <span contenteditable="true" onblur="renameLayer(${index}, this.textContent)">${layer.name}</span>
+                        <small style="float: right">${layer.pixelCount} px (${coverage}%)</small>
+                    </div>
+                    <div class="layer-controls">
+                        <button onclick="selectLayer(${index})">Edit</button>
+                        <button onclick="copyLayer(${index})">Copy</button>
+                        <button onclick="deleteLayer(${index})">Delete</button>
+                        <button onclick="downloadLayer(${index})">⬇</button>
+                        <button onclick="openProjectionWindow(${index})">📺</button>
+                    </div>
+                `;
+                
+                list.appendChild(item);
+            });
+        }
+        
+        function selectLayer(index) {
+            currentLayerIndex = index;
+            updateLayersList();
+            updateCurrentCanvas();
+        }
+        
+        function toggleLayerVisibility(index) {
+            layers[index].visible = !layers[index].visible;
+            updateCombinedCanvas();
+            updateLayersList();
+        }
+        
+        function renameLayer(index, newName) {
+            layers[index].name = newName || `Layer ${index + 1}`;
+            updateLayersList();
+        }
+        
+        function copyLayer(index) {
+            const original = layers[index];
+            const copy = {
+                id: Date.now(),
+                name: original.name + ' copy',
+                color: original.color,
+                mask: new ImageData(original.mask.data.slice(), original.mask.width, original.mask.height),
+                canvas: document.createElement('canvas'),
+                visible: true,
+                pixelCount: original.pixelCount,
+                transform: { ...original.transform }
+            };
+            
+            copy.canvas.width = original.canvas.width;
+            copy.canvas.height = original.canvas.height;
+            copy.ctx = copy.canvas.getContext('2d');
+            copy.ctx.drawImage(original.canvas, 0, 0);
+            
+            layers.push(copy);
+            layerHistory.set(copy.id, { states: [], currentIndex: -1 });
+            
+            updateLayersList();
+            updateCombinedCanvas();
+            showStatus(`Copied ${original.name}`);
+        }
+        
+        function deleteLayer(index) {
+            if (layers.length === 1) {
+                showStatus('Cannot delete last layer');
+                return;
+            }
+            
+            const layer = layers[index];
+            layers.splice(index, 1);
+            layerHistory.delete(layer.id);
+            
+            if (currentLayerIndex >= layers.length) {
+                currentLayerIndex = layers.length - 1;
+            }
+            
+            updateLayersList();
+            updateCurrentCanvas();
+            updateCombinedCanvas();
+            showStatus(`Deleted ${layer.name}`);
+        }
+        
+        function downloadLayer(index) {
+            const layer = layers[index];
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = layer.canvas.width;
+            tempCanvas.height = layer.canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Apply transforms
+            tempCtx.save();
+            tempCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
+            tempCtx.rotate(layer.transform.rotation * Math.PI / 180);
+            tempCtx.scale(layer.transform.scale, layer.transform.scale);
+            tempCtx.translate(-tempCanvas.width/2 + layer.transform.x, -tempCanvas.height/2 + layer.transform.y);
+            
+            // Draw white mask on black background
+            tempCtx.fillStyle = 'black';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            const maskData = layer.mask;
+            for (let i = 0; i < maskData.data.length; i += 4) {
+                if (maskData.data[i + 3] > 0) {
+                    maskData.data[i] = 255;
+                    maskData.data[i + 1] = 255;
+                    maskData.data[i + 2] = 255;
+                }
+            }
+            
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = layer.canvas.width;
+            maskCanvas.height = layer.canvas.height;
+            maskCanvas.getContext('2d').putImageData(maskData, 0, 0);
+            
+            tempCtx.drawImage(maskCanvas, 0, 0);
+            tempCtx.restore();
+            
+            // Download
+            const link = document.createElement('a');
+            link.download = layer.name.replace(/[^a-z0-9]/gi, '_') + '.png';
+            link.href = tempCanvas.toDataURL();
+            link.click();
+            
+            showStatus(`Downloaded ${layer.name}`);
+        }
+        
+        function downloadAllLayers() {
+            let downloadIndex = 0;
+            
+            function downloadNext() {
+                if (downloadIndex < layers.length) {
+                    downloadLayer(downloadIndex);
+                    downloadIndex++;
+                    setTimeout(downloadNext, 500);
+                }
+            }
+            
+            downloadNext();
+            showStatus('Downloading all layers...');
+        }
+        
+        function setTool(tool) {
+            currentTool = tool;
+            document.querySelectorAll('.tool-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tool + 'Tool').classList.add('active');
+            
+            // Reset bezier points when switching tools
+            if (tool !== 'bezier') {
+                bezierPoints = [];
+            }
+        }
+        
+        function updateToleranceDisplay() {
+            document.getElementById('toleranceValue').textContent = document.getElementById('tolerance').value;
+        }
+        
+        function updateBrushSizeDisplay() {
+            document.getElementById('brushSizeValue').textContent = document.getElementById('brushSize').value;
+        }
+        
+        function handleMouseDown(e) {
+            if (currentLayerIndex < 0) return;
+            
+            const rect = currentCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+            
+            if (currentTool === 'floodFill') {
+                smartFloodFill(x, y);
+            } else if (currentTool === 'magicWand') {
+                magicWandFloodFill(x, y);
+            } else if (currentTool === 'brush' || currentTool === 'eraser') {
+                isDrawing = true;
+                drawBrush(x, y);
+            } else if (currentTool === 'bezier') {
+                bezierPoints.push({x, y});
+                if (bezierPoints.length === 4) {
+                    drawBezier();
+                    bezierPoints = [];
+                }
+            }
+        }
+        
+        function handleMouseMove(e) {
+            if (!isDrawing || currentLayerIndex < 0) return;
+            
+            const rect = currentCanvas.getBoundingClientRect();
+            const x = Math.floor(e.clientX - rect.left);
+            const y = Math.floor(e.clientY - rect.top);
+            
+            if (currentTool === 'brush' || currentTool === 'eraser') {
+                drawBrush(x, y);
+            }
+        }
+        
+        function handleMouseUp() {
+            if (isDrawing) {
+                isDrawing = false;
+                saveLayerState(layers[currentLayerIndex].id);
+            }
+        }
+        
+        function smartFloodFill(startX, startY) {
+            const layer = layers[currentLayerIndex];
+            const tolerance = parseInt(document.getElementById('tolerance').value);
+            const width = originalCanvas.width;
+            const height = originalCanvas.height;
+            
+            const visited = new Uint8Array(width * height);
+            const stack = [{x: startX, y: startY}];
+            const originalData = originalCtx.getImageData(0, 0, width, height).data;
+            const maskData = layer.mask.data;
+            
+            const startIdx = (startY * width + startX) * 4;
+            const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
+            
+            while (stack.length > 0) {
+                const {x, y} = stack.pop();
+                
+                if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                
+                const idx = y * width + x;
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+                
+                // Check edge boundary
+                if (edgeData) {
+                    const edgeIdx = idx * 4;
+                    if (edgeData.data[edgeIdx] > 128) continue;
+                }
+                
+                // Check color similarity
+                const pixelIdx = idx * 4;
+                const colorDiff = Math.abs(originalData[pixelIdx] - startColor[0]) +
+                                 Math.abs(originalData[pixelIdx + 1] - startColor[1]) +
+                                 Math.abs(originalData[pixelIdx + 2] - startColor[2]);
+                
+                if (colorDiff > tolerance * 3) continue;
+                
+                // Fill pixel
+                maskData[pixelIdx] = 255;
+                maskData[pixelIdx + 1] = 255;
+                maskData[pixelIdx + 2] = 255;
+                maskData[pixelIdx + 3] = 255;
+                layer.pixelCount++;
+                
+                // Add neighbors (4-connected)
+                stack.push({x: x + 1, y});
+                stack.push({x: x - 1, y});
+                stack.push({x, y: y + 1});
+                stack.push({x, y: y - 1});
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+            saveLayerState(layer.id);
+        }
+        
+        function magicWandFloodFill(startX, startY) {
+            const layer = layers[currentLayerIndex];
+            const tolerance = parseInt(document.getElementById('tolerance').value);
+            const width = originalCanvas.width;
+            const height = originalCanvas.height;
+            
+            const visited = new Uint8Array(width * height);
+            const stack = [{x: startX, y: startY}];
+            const originalData = originalCtx.getImageData(0, 0, width, height).data;
+            const maskData = layer.mask.data;
+            
+            const startIdx = (startY * width + startX) * 4;
+            const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
+            const startBrightness = (startColor[0] + startColor[1] + startColor[2]) / 3;
+            
+            while (stack.length > 0) {
+                const {x, y} = stack.pop();
+                
+                if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                
+                const idx = y * width + x;
+                if (visited[idx]) continue;
+                visited[idx] = 1;
+                
+                const pixelIdx = idx * 4;
+                const pixelColor = [originalData[pixelIdx], originalData[pixelIdx + 1], originalData[pixelIdx + 2]];
+                const pixelBrightness = (pixelColor[0] + pixelColor[1] + pixelColor[2]) / 3;
+                
+                // Check color and brightness similarity
+                const colorDiff = Math.abs(pixelColor[0] - startColor[0]) +
+                                 Math.abs(pixelColor[1] - startColor[1]) +
+                                 Math.abs(pixelColor[2] - startColor[2]);
+                const brightnessDiff = Math.abs(pixelBrightness - startBrightness);
+                
+                if (colorDiff + brightnessDiff > tolerance * 4) continue;
+                
+                // Fill pixel
+                maskData[pixelIdx] = 255;
+                maskData[pixelIdx + 1] = 255;
+                maskData[pixelIdx + 2] = 255;
+                maskData[pixelIdx + 3] = 255;
+                layer.pixelCount++;
+                
+                // Add neighbors (8-connected)
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        if (dx === 0 && dy === 0) continue;
+                        stack.push({x: x + dx, y: y + dy});
+                    }
+                }
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+            saveLayerState(layer.id);
+        }
+        
+        function drawBrush(x, y) {
+            const layer = layers[currentLayerIndex];
+            const brushSize = parseInt(document.getElementById('brushSize').value);
+            const maskData = layer.mask.data;
+            const width = originalCanvas.width;
+            
+            for (let dy = -brushSize; dy <= brushSize; dy++) {
+                for (let dx = -brushSize; dx <= brushSize; dx++) {
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist > brushSize) continue;
+                    
+                    const px = x + dx;
+                    const py = y + dy;
+                    
+                    if (px < 0 || px >= width || py < 0 || py >= originalCanvas.height) continue;
+                    
+                    const idx = (py * width + px) * 4;
+                    const alpha = 1 - (dist / brushSize); // Soft edges
+                    
+                    if (currentTool === 'brush') {
+                        maskData[idx] = 255;
+                        maskData[idx + 1] = 255;
+                        maskData[idx + 2] = 255;
+                        maskData[idx + 3] = Math.max(maskData[idx + 3], alpha * 255);
+                        if (maskData[idx + 3] > 128) layer.pixelCount++;
+                    } else { // eraser
+                        if (maskData[idx + 3] > 0) layer.pixelCount--;
+                        maskData[idx] = 0;
+                        maskData[idx + 1] = 0;
+                        maskData[idx + 2] = 0;
+                        maskData[idx + 3] = 0;
+                    }
+                }
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+        }
+        
+        function drawBezier() {
+            const layer = layers[currentLayerIndex];
+            const ctx = layer.ctx;
+            const maskData = layer.mask.data;
+            const width = originalCanvas.width;
+            
+            // Draw bezier curve on temporary canvas
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = width;
+            tempCanvas.height = originalCanvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            tempCtx.strokeStyle = 'white';
+            tempCtx.lineWidth = parseInt(document.getElementById('brushSize').value);
+            tempCtx.lineCap = 'round';
+            
+            tempCtx.beginPath();
+            tempCtx.moveTo(bezierPoints[0].x, bezierPoints[0].y);
+            tempCtx.bezierCurveTo(
+                bezierPoints[1].x, bezierPoints[1].y,
+                bezierPoints[2].x, bezierPoints[2].y,
+                bezierPoints[3].x, bezierPoints[3].y
+            );
+            tempCtx.stroke();
+            
+            // Update mask data
+            const tempData = tempCtx.getImageData(0, 0, width, originalCanvas.height).data;
+            for (let i = 0; i < tempData.length; i += 4) {
+                if (tempData[i + 3] > 0) {
+                    maskData[i] = 255;
+                    maskData[i + 1] = 255;
+                    maskData[i + 2] = 255;
+                    maskData[i + 3] = 255;
+                    layer.pixelCount++;
+                }
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+            saveLayerState(layer.id);
+        }
+        
+        function updateLayerCanvas(index) {
+            const layer = layers[index];
+            const ctx = layer.ctx;
+            
+            ctx.clearRect(0, 0, layer.canvas.width, layer.canvas.height);
+            
+            // Create colored version of mask
+            const coloredMask = new ImageData(layer.mask.width, layer.mask.height);
+            const maskData = layer.mask.data;
+            const coloredData = coloredMask.data;
+            
+            const r = parseInt(layer.color.substr(1, 2), 16);
+            const g = parseInt(layer.color.substr(3, 2), 16);
+            const b = parseInt(layer.color.substr(5, 2), 16);
+            
+            for (let i = 0; i < maskData.length; i += 4) {
+                if (maskData[i + 3] > 0) {
+                    coloredData[i] = r;
+                    coloredData[i + 1] = g;
+                    coloredData[i + 2] = b;
+                    coloredData[i + 3] = maskData[i + 3];
+                }
+            }
+            
+            ctx.putImageData(coloredMask, 0, 0);
+            
+            updateCurrentCanvas();
+            updateCombinedCanvas();
+            updateLayersList();
+        }
+        
+        function updateCurrentCanvas() {
+            currentCtx.clearRect(0, 0, currentCanvas.width, currentCanvas.height);
+            
+            if (currentLayerIndex >= 0) {
+                // Draw faded background
+                currentCtx.globalAlpha = 0.3;
+                currentCtx.drawImage(originalCanvas, 0, 0);
+                
+                // Draw current layer
+                currentCtx.globalAlpha = 1;
+                currentCtx.drawImage(layers[currentLayerIndex].canvas, 0, 0);
+                
+                document.getElementById('currentLayerName').textContent = layers[currentLayerIndex].name;
+            }
+        }
+        
+        function updateCombinedCanvas() {
+            combinedCtx.clearRect(0, 0, combinedCanvas.width, combinedCanvas.height);
+            
+            // Draw original image as background
+            combinedCtx.globalAlpha = 0.5;
+            combinedCtx.drawImage(originalCanvas, 0, 0);
+            
+            // Draw all visible layers
+            combinedCtx.globalAlpha = 0.7;
+            layers.forEach(layer => {
+                if (layer.visible) {
+                    combinedCtx.drawImage(layer.canvas, 0, 0);
+                }
+            });
+        }
+        
+        function saveLayerState(layerId) {
+            const layer = layers.find(l => l.id === layerId);
+            if (!layer) return;
+            
+            const history = layerHistory.get(layerId);
+            if (!history) return;
+            
+            // Remove any states after current index
+            history.states = history.states.slice(0, history.currentIndex + 1);
+            
+            // Add new state
+            const newState = new ImageData(layer.mask.data.slice(), layer.mask.width, layer.mask.height);
+            history.states.push(newState);
+            
+            // Keep only last 20 states
+            if (history.states.length > 20) {
+                history.states.shift();
+            } else {
+                history.currentIndex++;
+            }
+        }
+        
+        function undo() {
+            if (currentLayerIndex < 0) return;
+            
+            const layer = layers[currentLayerIndex];
+            const history = layerHistory.get(layer.id);
+            
+            if (!history || history.currentIndex <= 0) return;
+            
+            history.currentIndex--;
+            layer.mask = new ImageData(
+                history.states[history.currentIndex].data.slice(),
+                history.states[history.currentIndex].width,
+                history.states[history.currentIndex].height
+            );
+            
+            // Recalculate pixel count
+            layer.pixelCount = 0;
+            for (let i = 3; i < layer.mask.data.length; i += 4) {
+                if (layer.mask.data[i] > 128) layer.pixelCount++;
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+            showStatus('Undo');
+        }
+        
+        function redo() {
+            if (currentLayerIndex < 0) return;
+            
+            const layer = layers[currentLayerIndex];
+            const history = layerHistory.get(layer.id);
+            
+            if (!history || history.currentIndex >= history.states.length - 1) return;
+            
+            history.currentIndex++;
+            layer.mask = new ImageData(
+                history.states[history.currentIndex].data.slice(),
+                history.states[history.currentIndex].width,
+                history.states[history.currentIndex].height
+            );
+            
+            // Recalculate pixel count
+            layer.pixelCount = 0;
+            for (let i = 3; i < layer.mask.data.length; i += 4) {
+                if (layer.mask.data[i] > 128) layer.pixelCount++;
+            }
+            
+            updateLayerCanvas(currentLayerIndex);
+            showStatus('Redo');
+        }
+        
+        function handleKeyboard(e) {
+            if (e.ctrlKey && e.key === 'z') {
+                e.preventDefault();
+                undo();
+            } else if (e.ctrlKey && e.key === 'y') {
+                e.preventDefault();
+                redo();
+            }
+        }
+        
+        function showStatus(message) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.classList.add('show');
+            setTimeout(() => status.classList.remove('show'), 3000);
+        }
+        
+        // Projection window functions
+        window.updateLayerTransform = function(layerIndex, transform) {
+            if (layers[layerIndex]) {
+                layers[layerIndex].transform = transform;
+            }
+        };
+        
+        window.getLayerMaskData = function(layerIndex) {
+            if (!layers[layerIndex]) return null;
+            
+            const layer = layers[layerIndex];
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = layer.canvas.width;
+            tempCanvas.height = layer.canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Create white mask on black background
+            tempCtx.fillStyle = 'black';
+            tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+            
+            const maskData = layer.mask;
+            const imageData = new ImageData(maskData.width, maskData.height);
+            
+            for (let i = 0; i < maskData.data.length; i += 4) {
+                if (maskData.data[i + 3] > 0) {
+                    imageData.data[i] = 255;
+                    imageData.data[i + 1] = 255;
+                    imageData.data[i + 2] = 255;
+                    imageData.data[i + 3] = 255;
+                } else {
+                    imageData.data[i] = 0;
+                    imageData.data[i + 1] = 0;
+                    imageData.data[i + 2] = 0;
+                    imageData.data[i + 3] = 255;
+                }
+            }
+            
+            tempCtx.putImageData(imageData, 0, 0);
+            return tempCanvas.toDataURL();
+        };
+        
+        function openProjectionWindow(layerIndex) {
+            const layer = layers[layerIndex];
+            
+            // Close existing window if any
+            if (projectionWindows.has(layerIndex)) {
+                projectionWindows.get(layerIndex).close();
+            }
+            
+            const projWindow = window.open('', `projection_${layerIndex}`, 'width=800,height=600');
+            projectionWindows.set(layerIndex, projWindow);
+            
+            const projectionHTML = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>${layer.name} - Projection</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: black;
+            overflow: hidden;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+        }
+        canvas {
+            background: black;
+        }
+        .controls {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: Arial, sans-serif;
+            transition: opacity 0.3s;
+        }
+        .controls.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        .control-row {
+            margin: 10px 0;
+            display: flex;
+            align-items: center;
+        }
+        label {
+            width: 80px;
+            display: inline-block;
+        }
+        input[type="range"] {
+            width: 200px;
+            margin: 0 10px;
+        }
+        input[type="number"] {
+            width: 60px;
+            background: #333;
+            border: 1px solid #555;
+            color: white;
+            padding: 5px;
+        }
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        .shortcuts {
+            margin-top: 20px;
+            font-size: 12px;
+            color: #aaa;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="projectionCanvas"></canvas>
+    <div class="controls" id="controls">
+        <h3>${layer.name}</h3>
+        <div class="control-row">
+            <label>X Position:</label>
+            <input type="range" id="xPos" min="-500" max="500" value="${layer.transform.x}">
+            <input type="number" id="xPosNum" min="-500" max="500" value="${layer.transform.x}">
+        </div>
+        <div class="control-row">
+            <label>Y Position:</label>
+            <input type="range" id="yPos" min="-500" max="500" value="${layer.transform.y}">
+            <input type="number" id="yPosNum" min="-500" max="500" value="${layer.transform.y}">
+        </div>
+        <div class="control-row">
+            <label>Scale:</label>
+            <input type="range" id="scale" min="0.1" max="3" step="0.1" value="${layer.transform.scale}">
+            <input type="number" id="scaleNum" min="0.1" max="3" step="0.1" value="${layer.transform.scale}">
+        </div>
+        <div class="control-row">
+            <label>Rotation:</label>
+            <input type="range" id="rotation" min="-180" max="180" value="${layer.transform.rotation}">
+            <input type="number" id="rotationNum" min="-180" max="180" value="${layer.transform.rotation}">
+        </div>
+        <div class="control-row">
+            <button onclick="resetTransform()">Reset</button>
+            <button onclick="centerTransform()">Center</button>
+            <button onclick="toggleFullscreen()">F11 Fullscreen</button>
+        </div>
+        <div class="shortcuts">
+            <strong>Keyboard Shortcuts:</strong><br>
+            Arrow Keys: Move (Shift = 10x)<br>
+            +/-: Scale<br>
+            [/]: Rotate<br>
+            R: Reset, C: Center<br>
+            H: Hide controls<br>
+            F11: Fullscreen
+        </div>
+    </div>
+    
+    <script>
+        const canvas = document.getElementById('projectionCanvas');
+        const ctx = canvas.getContext('2d');
+        const controls = document.getElementById('controls');
+        
+        let transform = {
+            x: ${layer.transform.x},
+            y: ${layer.transform.y},
+            scale: ${layer.transform.scale},
+            rotation: ${layer.transform.rotation}
+        };
+        
+        function resizeCanvas() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            render();
+        }
+        
+        window.addEventListener('resize', resizeCanvas);
+        resizeCanvas();
+        
+        function render() {
+            ctx.fillStyle = 'black';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            if (window.opener && !window.opener.closed) {
+                const maskData = window.opener.getLayerMaskData(${layerIndex});
+                if (maskData) {
+                    const img = new Image();
+                    img.onload = function() {
+                        ctx.save();
+                        ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
+                        ctx.rotate(transform.rotation * Math.PI / 180);
+                        ctx.scale(transform.scale, transform.scale);
+                        ctx.drawImage(img, -img.width/2, -img.height/2);
+                        ctx.restore();
+                    };
+                    img.src = maskData;
+                }
+            }
+        }
+        
+        function updateTransform() {
+            if (window.opener && !window.opener.closed) {
+                window.opener.updateLayerTransform(${layerIndex}, transform);
+            }
+            render();
+        }
+        
+        // Control bindings
+        document.getElementById('xPos').oninput = function() {
+            transform.x = parseFloat(this.value);
+            document.getElementById('xPosNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('xPosNum').oninput = function() {
+            transform.x = parseFloat(this.value);
+            document.getElementById('xPos').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('yPos').oninput = function() {
+            transform.y = parseFloat(this.value);
+            document.getElementById('yPosNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('yPosNum').oninput = function() {
+            transform.y = parseFloat(this.value);
+            document.getElementById('yPos').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('scale').oninput = function() {
+            transform.scale = parseFloat(this.value);
+            document.getElementById('scaleNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('scaleNum').oninput = function() {
+            transform.scale = parseFloat(this.value);
+            document.getElementById('scale').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('rotation').oninput = function() {
+            transform.rotation = parseFloat(this.value);
+            document.getElementById('rotationNum').value = this.value;
+            updateTransform();
+        };
+        
+        document.getElementById('rotationNum').oninput = function() {
+            transform.rotation = parseFloat(this.value);
+            document.getElementById('rotation').value = this.value;
+            updateTransform();
+        };
+        
+        function resetTransform() {
+            transform = { x: 0, y: 0, scale: 1, rotation: 0 };
+            document.getElementById('xPos').value = 0;
+            document.getElementById('xPosNum').value = 0;
+            document.getElementById('yPos').value = 0;
+            document.getElementById('yPosNum').value = 0;
+            document.getElementById('scale').value = 1;
+            document.getElementById('scaleNum').value = 1;
+            document.getElementById('rotation').value = 0;
+            document.getElementById('rotationNum').value = 0;
+            updateTransform();
+        }
+        
+        function centerTransform() {
+            transform.x = 0;
+            transform.y = 0;
+            document.getElementById('xPos').value = 0;
+            document.getElementById('xPosNum').value = 0;
+            document.getElementById('yPos').value = 0;
+            document.getElementById('yPosNum').value = 0;
+            updateTransform();
+        }
+        
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', function(e) {
+            const step = e.shiftKey ? 10 : 1;
+            
+            switch(e.key) {
+                case 'ArrowLeft':
+                    transform.x -= step;
+                    break;
+                case 'ArrowRight':
+                    transform.x += step;
+                    break;
+                case 'ArrowUp':
+                    transform.y -= step;
+                    break;
+                case 'ArrowDown':
+                    transform.y += step;
+                    break;
+                case '+':
+                case '=':
+                    transform.scale = Math.min(3, transform.scale + 0.1);
+                    break;
+                case '-':
+                case '_':
+                    transform.scale = Math.max(0.1, transform.scale - 0.1);
+                    break;
+                case '[':
+                    transform.rotation -= 5;
+                    break;
+                case ']':
+                    transform.rotation += 5;
+                    break;
+                case 'r':
+                case 'R':
+                    resetTransform();
+                    return;
+                case 'c':
+                case 'C':
+                    centerTransform();
+                    return;
+                case 'h':
+                case 'H':
+                    controls.classList.toggle('hidden');
+                    return;
+                case 'F11':
+                    e.preventDefault();
+                    toggleFullscreen();
+                    return;
+            }
+            
+            // Update UI controls
+            document.getElementById('xPos').value = transform.x;
+            document.getElementById('xPosNum').value = transform.x;
+            document.getElementById('yPos').value = transform.y;
+            document.getElementById('yPosNum').value = transform.y;
+            document.getElementById('scale').value = transform.scale;
+            document.getElementById('scaleNum').value = transform.scale;
+            document.getElementById('rotation').value = transform.rotation;
+            document.getElementById('rotationNum').value = transform.rotation;
+            
+            updateTransform();
+        });
+        
+        // Auto-refresh
+        setInterval(render, 100);
+    </script>
+</body>
+</html>`;
+            
+            projWindow.document.write(projectionHTML);
+            projWindow.document.close();
+            
+            showStatus(`Opened projection window for ${layer.name}`);
+        }
+        
+        // Make functions globally accessible
+        window.toggleLayerVisibility = toggleLayerVisibility;
+        window.renameLayer = renameLayer;
+        window.selectLayer = selectLayer;
+        window.copyLayer = copyLayer;
+        window.deleteLayer = deleteLayer;
+        window.downloadLayer = downloadLayer;
+        window.openProjectionWindow = openProjectionWindow;
+    </script>
+</body>
+</html>

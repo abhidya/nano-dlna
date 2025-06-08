@@ -439,3 +439,35 @@ Now HTTP requests directly update the device's `_last_activity_time`, preventing
 - Simple needs: Use original nano-dlna
 - Web UI needs: Jellyfin or Gerbera
 - Custom needs: Strip out auto-play, simplify threading
+
+## Session: January 7, 2025
+
+### Projection Mapping Tool Integration
+
+**Request**: Create a professional projection mapping tool for room object animation integrated into the React dashboard.
+
+**Implementation**:
+1. ✅ Created `ProjectionMapping.js` React component with full functionality
+2. ✅ Created `ProjectionMapping.css` for dark theme styling
+3. ✅ Added route `/projection` to `App.js`
+4. ✅ Updated `Layout.js` navigation menu with new tab
+5. ✅ Created `projection_window.html` for popup projection windows
+6. ✅ Implemented message-based communication between main app and projection windows
+
+**Features Implemented**:
+- **Image Processing**: Upload photos, Sobel edge detection with adjustable sensitivity
+- **Selection Tools**: Flood Fill, Magic Wand, Brush, Eraser, Bezier curves
+- **Layer Management**: Unlimited layers, visibility toggle, copy/delete, 20-step undo/redo
+- **Projection Alignment**: Popup windows with real-time position/scale/rotation controls
+- **Keyboard Shortcuts**: Arrow keys for movement, +/- for scale, [/] for rotation
+- **Download System**: Individual or batch PNG export with transforms applied
+
+**Access**: Navigate to http://localhost:3000/projection in the dashboard
+
+**Status**: ✅ Image upload confirmed working by user
+
+**Technical Notes**:
+- Used React hooks (useState, useRef, useEffect, useCallback) for state management
+- Implemented canvas-based drawing with ImageData manipulation
+- Cross-window communication via postMessage API
+- Responsive grid layout with Material-UI integration

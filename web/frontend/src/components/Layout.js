@@ -24,6 +24,7 @@ import {
   Settings as SettingsIcon,
   ViewInAr as RendererIcon,
   Layers as DepthIcon,
+  CameraAlt as ProjectionIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -34,6 +35,7 @@ const menuItems = [
   { text: 'Videos', icon: <VideoLibraryIcon />, path: '/videos' },
   { text: 'Renderer', icon: <RendererIcon />, path: '/renderer' },
   { text: 'Depth Processing', icon: <DepthIcon />, path: '/depth' },
+  { text: 'Projection Mapping', icon: <ProjectionIcon />, path: '/projection' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 

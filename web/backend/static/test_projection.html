@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Projection Tool</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+            font-family: Arial, sans-serif;
+        }
+        canvas {
+            border: 1px solid #444;
+            display: block;
+            margin: 20px auto;
+        }
+        .status {
+            text-align: center;
+            margin: 20px;
+        }
+    </style>
+</head>
+<body>
+    <h1>Test Projection Tool</h1>
+    <input type="file" id="imageUpload" accept="image/*">
+    <div class="status" id="status">Please upload an image</div>
+    <canvas id="canvas"></canvas>
+    
+    <script>
+        const canvas = document.getElementById('canvas');
+        const ctx = canvas.getContext('2d');
+        const status = document.getElementById('status');
+        
+        document.getElementById('imageUpload').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (!file) {
+                status.textContent = 'No file selected';
+                return;
+            }
+            
+            status.textContent = 'Loading image...';
+            
+            const reader = new FileReader();
+            reader.onload = function(event) {
+                const img = new Image();
+                img.onload = function() {
+                    canvas.width = img.width;
+                    canvas.height = img.height;
+                    ctx.drawImage(img, 0, 0);
+                    status.textContent = `Image loaded: ${img.width}x${img.height}`;
+                };
+                img.onerror = function() {
+                    status.textContent = 'Error loading image';
+                };
+                img.src = event.target.result;
+            };
+            reader.onerror = function() {
+                status.textContent = 'Error reading file';
+            };
+            reader.readAsDataURL(file);
+        });
+    </script>
+</body>
+</html>
