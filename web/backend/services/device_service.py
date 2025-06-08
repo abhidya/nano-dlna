@@ -37,7 +37,11 @@ class DeviceService:
             List[Dict[str, Any]]: List of devices as dictionaries
         """
         devices = self.db.query(DeviceModel).offset(skip).limit(limit).all()
-        return [self._device_to_dict(device) for device in devices]
+        result = [self._device_to_dict(device) for device in devices]
+        # Debug: print first device to see what's being returned
+        if result:
+            print(f"DEBUG get_devices returning first device: {result[0].get('name')} with playback_started_at={result[0].get('playback_started_at')}")
+        return result
     
     def get_device_by_id(self, device_id: int) -> Optional[Dict[str, Any]]:
         """
@@ -997,6 +1001,7 @@ class DeviceService:
 
         # Debug logging
         logger.info(f"Device {device.name}: is_playing={device.is_playing}, updated_at={device.updated_at}, playback_started_at={device_dict.get('playback_started_at')}")
+        print(f"DEVICE DICT for {device.name}: {device_dict}")  # Direct print to see in logs
         
         # Override with live status from DeviceManager if available
         logger.info(f"DEBUG: _device_to_dict for device.name='{device.name}'")

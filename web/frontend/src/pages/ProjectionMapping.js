@@ -1133,7 +1133,13 @@ function ProjectionMapping() {
         const visited = new Uint8Array(width * height);
         const components = [];
         
-        for (let cluster = 0; cluster < Math.max(...assignments) + 1; cluster++) {
+        // Find max cluster number without spreading array
+        let maxCluster = 0;
+        for (let i = 0; i < assignments.length; i++) {
+            if (assignments[i] > maxCluster) maxCluster = assignments[i];
+        }
+        
+        for (let cluster = 0; cluster <= maxCluster; cluster++) {
             for (let i = 0; i < assignments.length; i++) {
                 if (assignments[i] === cluster && !visited[i]) {
                     const component = [];
