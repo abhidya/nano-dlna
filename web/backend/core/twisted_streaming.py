@@ -124,14 +124,14 @@ class DLNAMediaResource(Resource):
             # Also update the device's activity timer directly
             if device_name:
                 try:
-                    from web.backend import main
-                    if hasattr(main, 'device_manager'):
-                        device = main.device_manager.get_device(device_name)
-                        if device and hasattr(device, '_last_activity_time') and hasattr(device, '_thread_lock'):
-                            import time
-                            with device._thread_lock:
-                                device._last_activity_time = time.time()
-                            logger.debug(f"Updated device {device_name} activity timer")
+                    from core.device_manager import get_device_manager
+                    device_manager = get_device_manager()
+                    device = device_manager.get_device(device_name)
+                    if device and hasattr(device, '_last_activity_time') and hasattr(device, '_thread_lock'):
+                        import time
+                        with device._thread_lock:
+                            device._last_activity_time = time.time()
+                        logger.debug(f"Updated device {device_name} activity timer")
                 except Exception as e:
                     logger.debug(f"Could not update device activity timer: {e}")
         except Exception as e:

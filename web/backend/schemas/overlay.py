@@ -12,11 +12,12 @@ class WidgetSize(BaseModel):
 
 class Widget(BaseModel):
     id: str
-    type: str  # 'weather', 'time', 'transit'
+    type: str  # 'weather', 'time', 'transit', 'lights'
     position: WidgetPosition
     size: WidgetSize
     config: Dict[str, Any]
     visible: bool = True
+    rotation: float = 0  # Rotation in degrees
 
 class VideoTransform(BaseModel):
     x: float = 0

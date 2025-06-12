@@ -611,3 +611,115 @@ The overlay projection feature is now fully operational with complete backend su
 3. Preserved path structure for URLs when needed (e.g., `uploads/door6.mp4`)
 
 **Lesson Learned**: Always check existing tracking mechanisms before creating new ones. The streaming infrastructure already had everything needed - just needed to use it properly.
+
+## Session: January 9, 2025
+
+### MLT Export Feature for Projection Mapping
+
+**Request**: Add MLT (Media Lovin' Toolkit) export capability to the projection mapping tool for use with Shotcut video editor.
+
+**Problem Statement**:
+Users need to export their projection mapping work as MLT files that can be opened in Shotcut. The MLT format allows for complex video compositing with masked regions, perfect for projection mapping workflows where different video content plays in different physical areas.
+
+**User Stories**:
+
+1. **Basic Color Export**:
+   *As a projection mapping designer,*
+   *I want to export my masked regions with solid colors,*
+   *So that I can test my projection alignment in Shotcut before adding video content.*
+
+2. **Video Playlist Export**:
+   *As a content creator,*
+   *I want to assign folders of videos to different masked regions and export as MLT,*
+   *So that different types of content automatically play in different physical areas (e.g., ambient videos on walls, logos on doors).*
+
+3. **Automated Content Generation**:
+   *As a venue operator,*
+   *I want to drop new videos in categorized folders and regenerate MLT files,*
+   *So that my projection displays stay fresh without manual editing.*
+
+**MLT File Structure Analysis**:
+
+1. **Simple Version (Desktop)**: 
+   - Color producers with masks
+   - ~900 lines for 12 layers
+   - 4-second duration
+
+2. **Complex Version (Movies folder)**:
+   - 139 unique videos across 1,057 chain definitions
+   - Videos repeated to create ~3-hour timeline
+   - Same 12 masks applied to video content
+
+**Key Technical Discovery - Filter-Based Duration**:
+All tracks end at exactly the same time using filter `out` parameters:
+```xml
+<filter id="filter12" out="02:53:51.080">
+```
+This eliminates complex duration calculations - just set filter end times.
+
+**Architecture Requirements**:
+
+1. **Backend Models**:
+```python
+class ProjectionMapping(Base):
+    id = Column(Integer, primary_key=True)
+    name = Column(String)
+    video_id = Column(Integer, ForeignKey('videos.id'))
+    
+class ProjectionLayer(Base):
+    id = Column(Integer, primary_key=True)
+    projection_id = Column(Integer, ForeignKey('projection_mappings.id'))
+    name = Column(String)
+    mask_path = Column(String)  # Saved PNG
+    transform = Column(JSON)
+    order = Column(Integer)
+
+class ProjectionDirectoryMapping(Base):
+    projection_layer_id = Column(Integer, ForeignKey('projection_layers.id'))
+    directory_path = Column(String)  # e.g., "backgrounds/"
+    selection_mode = Column(String)  # "random", "sequential", "all"
+```
+
+2. **MLT Generation Service**:
+```python
+class MLTGenerator:
+    def generate_mlt(self, projection_mapping, options):
+        # Options: content_type ('color'|'video'|'playlist')
+        # Creates producers, playlists, filters, transitions
+        # Sets filter out times for duration control
+```
+
+3. **Directory-Based Video Selection**:
+   - Map folders to projection layers
+   - Auto-select videos based on rules
+   - Support for content categorization
+
+**Implementation Plan**:
+
+1. **Phase 1**: Save/load projection mappings
+   - Add backend models and API endpoints
+   - Save masks as PNG files
+   - Persist layer configurations
+
+2. **Phase 2**: Basic MLT export (colors only)
+   - Generate MLT with color producers
+   - Apply saved masks as filters
+   - Support transform properties
+
+3. **Phase 3**: Video support
+   - Directory mapping configuration
+   - Video selection algorithms
+   - Playlist generation per layer
+
+4. **Phase 4**: Automation
+   - Watch folder support
+   - Auto-regeneration on new content
+   - Preset management
+
+**Current System Limitations**:
+- No video collections/playlists in current system
+- Single video per device/overlay model
+- Would need significant additions for multi-video support
+
+**Recommendation**:
+Start with Phase 1 & 2 (save/load + color export) as these provide immediate value without requiring video collection features. Phase 3 & 4 can be added when video organization features are implemented.

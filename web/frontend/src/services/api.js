@@ -73,6 +73,17 @@ const deviceApi = {
     api.post('/devices/load-config', null, { params: { config_file: configFile } }),
   saveConfig: (configFile) => 
     api.post('/devices/save-config', null, { params: { config_file: configFile } }),
+  // Discovery control
+  pauseDiscovery: () => api.post('/devices/discovery/pause'),
+  resumeDiscovery: () => api.post('/devices/discovery/resume'),
+  getDiscoveryStatus: () => api.get('/devices/discovery/status'),
+  // User control mode
+  enableAutoMode: (deviceId) => api.post(`/devices/${deviceId}/control/auto`),
+  enableManualMode: (deviceId, reason, expiresIn) => 
+    api.post(`/devices/${deviceId}/control/manual`, null, { 
+      params: { reason, expires_in: expiresIn } 
+    }),
+  getControlMode: (deviceId) => api.get(`/devices/${deviceId}/control`),
 };
 
 // Video API
@@ -82,10 +93,12 @@ const videoApi = {
   createVideo: (data) => api.post('/videos', data),
   updateVideo: (id, data) => api.put(`/videos/${id}`, data),
   deleteVideo: (id) => api.delete(`/videos/${id}`),
-  uploadVideo: (formData) => api.post('/videos/upload', formData, {
+  uploadVideo: (formData, config = {}) => api.post('/videos/upload', formData, {
     headers: {
       'Content-Type': 'multipart/form-data',
     },
+    timeout: 300000, // 5 minutes timeout for large uploads
+    ...config
   }),
   streamVideo: (id, serveIp) => 
     api.post(`/videos/${id}/stream`, null, { params: { serve_ip: serveIp } }),

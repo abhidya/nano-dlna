@@ -26,6 +26,9 @@ class DeviceModel(Base):
     config = Column(JSON, nullable=True)
     streaming_url = Column(String, nullable=True)
     streaming_port = Column(Integer, nullable=True)
+    user_control_mode = Column(String, default="auto")  # 'auto', 'manual', 'overlay', 'renderer'
+    user_control_expires_at = Column(DateTime(timezone=True), nullable=True)
+    user_control_reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
     
@@ -54,6 +57,9 @@ class DeviceModel(Base):
             "config": self.config,
             "streaming_url": self.streaming_url,
             "streaming_port": self.streaming_port,
+            "user_control_mode": self.user_control_mode,
+            "user_control_expires_at": self.user_control_expires_at.isoformat() if self.user_control_expires_at else None,
+            "user_control_reason": self.user_control_reason,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

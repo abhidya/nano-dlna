@@ -312,6 +312,43 @@ class DeviceService:
             logger.error(f"Error deleting device: {e}")
             raise
     
+    def set_user_control(self, device_id: int, mode: str, reason: str = None, expires_in_seconds: int = None) -> bool:
+        """
+        Set user control mode for a device
+        
+        Args:
+            device_id: ID of the device
+            mode: Control mode ('auto', 'manual', 'overlay', 'renderer')
+            reason: Optional reason for the mode change
+            expires_in_seconds: Optional expiration time in seconds
+            
+        Returns:
+            bool: True if successful
+        """
+        try:
+            db_device = self.db.query(DeviceModel).filter(DeviceModel.id == device_id).first()
+            if not db_device:
+                logger.error(f"Device with ID {device_id} not found")
+                return False
+            
+            db_device.user_control_mode = mode
+            db_device.user_control_reason = reason
+            
+            if expires_in_seconds:
+                from datetime import datetime, timedelta, timezone
+                db_device.user_control_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in_seconds)
+            else:
+                db_device.user_control_expires_at = None
+            
+            self.db.commit()
+            logger.info(f"Set device {db_device.name} to {mode} mode, reason: {reason}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error setting user control mode: {e}")
+            self.db.rollback()
+            return False
+    
     def play_video(self, device_id: int, video_path: str, loop: bool = False) -> bool:
         """
         Play a video on a device
@@ -456,6 +493,11 @@ class DeviceService:
                 except Exception as e:
                     logger.warning(f"Could not get video duration: {e}")
                 
+                # Set user control mode to manual since user initiated this
+                db_device.user_control_mode = "manual"
+                db_device.user_control_reason = "user_play"
+                self.db.commit()
+                
                 # Now update to playing - this will set the timestamp
                 self.update_device_status(device.name, "connected", is_playing=True)
                 logger.info(f"Video {video_url} is now playing on device {device_id}")
@@ -495,12 +537,32 @@ class DeviceService:
             logger.info(f"Stopping playback on device {db_device.name}")
             success = core_device.stop()
             
-            # Clear streaming info from database
+            # Clear streaming info from database and set user control
             if success:
                 db_device.streaming_url = None
                 db_device.streaming_port = None
                 db_device.current_video = None
+                db_device.user_control_mode = "manual"
+                db_device.user_control_reason = "user_stopped"
                 self.db.commit()
+                
+                # Stop streaming server
+                streaming_service = getattr(self.device_manager, 'streaming_service', None)
+                if streaming_service:
+                    logger.info(f"Stopping streaming servers for device {db_device.name}")
+                    streaming_service.stop_all_servers()
+                
+                # Unregister streaming session
+                streaming_registry = getattr(self.device_manager, 'streaming_registry', None)
+                if streaming_registry:
+                    sessions = streaming_registry.get_sessions_for_device(db_device.name)
+                    for session_id in sessions:
+                        logger.info(f"Unregistering streaming session {session_id} for device {db_device.name}")
+                        streaming_registry.unregister_session(session_id)
+                
+                # Clean up all device state in device manager
+                logger.info(f"Cleaning up device state for {db_device.name}")
+                self.device_manager.cleanup_device_state(db_device.name)
             
             # Update the device status in the database
             if success:

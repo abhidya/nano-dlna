@@ -277,6 +277,16 @@ class DeviceManager:
                     if consecutive_failures >= max_consecutive_failures:
                         logger.warning(f"Device {device_name} playback consistently failing, attempting recovery")
                         
+                        # Check if device was manually stopped
+                        if self.device_service:
+                            try:
+                                db_device = self.device_service.get_device_by_name(device_name)
+                                if db_device and db_device.user_control_mode == "manual" and db_device.user_control_reason == "user_stopped":
+                                    logger.info(f"Device {device_name} was manually stopped, skipping auto-recovery")
+                                    break
+                            except Exception as e:
+                                logger.warning(f"Could not check user control mode for {device_name}: {e}")
+                        
                         # Check current video assignment
                         with self.assigned_videos_lock:
                             current_video = self.assigned_videos.get(device_name)
@@ -430,6 +440,34 @@ class DeviceManager:
         except Exception as e:
             logger.error(f"Error registering device: {e}")
             return None
+    
+    def cleanup_device_state(self, device_name: str):
+        """
+        Clean up all state for a device
+        
+        Args:
+            device_name: Name of the device to clean up
+        """
+        logger.info(f"Cleaning up state for device {device_name}")
+        
+        # Stop health check
+        self._stop_playback_health_check(device_name)
+        
+        # Clear assignments
+        with self.assigned_videos_lock:
+            if device_name in self.assigned_videos:
+                logger.info(f"Clearing assigned video for device {device_name}")
+                self.assigned_videos.pop(device_name, None)
+        
+        # Clear priority
+        if device_name in self.video_assignment_priority:
+            logger.info(f"Clearing video assignment priority for device {device_name}")
+            self.video_assignment_priority.pop(device_name, None)
+        
+        # Clear from device queue
+        if device_name in self.device_assignment_queue:
+            logger.info(f"Clearing device from assignment queue: {device_name}")
+            self.device_assignment_queue.pop(device_name, None)
     
     def unregister_device(self, device_name: str) -> bool:
         """
@@ -690,6 +728,16 @@ class DeviceManager:
         if not device:
             logger.warning(f"Device {device_name} not found, cannot process video assignment")
             return
+        
+        # Check if device is under user control
+        if self.device_service:
+            try:
+                db_device = self.device_service.get_device_by_name(device_name)
+                if db_device and db_device.user_control_mode != 'auto':
+                    logger.info(f"Skipping {device_name} - under user control mode: {db_device.user_control_mode} (reason: {db_device.user_control_reason})")
+                    return
+            except Exception as e:
+                logger.warning(f"Could not check user control mode for {device_name}: {e}")
         
         # Check for scheduled assignments that are due
         scheduled_video = self._check_scheduled_assignments(device_name)
@@ -1193,6 +1241,25 @@ class DeviceManager:
         if self.discovery_thread:
             self.discovery_thread.join(timeout=1.0)
             logger.info("Stopped DLNA device discovery")
+    
+    def pause_discovery(self) -> None:
+        """Pause discovery loop"""
+        self.discovery_running = False
+        logger.info("Paused DLNA device discovery")
+    
+    def resume_discovery(self) -> None:
+        """Resume discovery loop"""
+        self.start_discovery()
+        logger.info("Resumed DLNA device discovery")
+    
+    def get_discovery_status(self) -> dict:
+        """Get current discovery status"""
+        return {
+            "running": self.discovery_running,
+            "interval": self.discovery_interval,
+            "devices_discovered": len(self.devices),
+            "devices_playing": sum(1 for d in self.devices.values() if d.is_playing)
+        }
     
     def update_device_status(self, device_name: str, status: str, is_playing: bool = None, 
                            current_video: str = None, error: str = None) -> None:

@@ -21,6 +21,7 @@ import {
   Divider,
   Alert,
   Snackbar,
+  LinearProgress,
   List,
   ListItem,
   ListItemText,
@@ -34,7 +35,8 @@ import {
   Refresh as RefreshIcon,
   VideoLibrary as VideoIcon,
   PlayArrow as PlayIcon,
-  Folder as FolderIcon
+  Folder as FolderIcon,
+  Upload as UploadIcon
 } from '@mui/icons-material';
 import { videoApi } from '../services/api';
 import { useNavigate } from 'react-router-dom';
@@ -60,6 +62,8 @@ function Videos() {
   });
   const [scanning, setScanning] = useState(false);
   const [uploadFile, setUploadFile] = useState(null);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     fetchVideos();
@@ -150,26 +154,59 @@ function Videos() {
   const handleUploadVideo = async () => {
     if (!uploadFile) return;
 
+    // Validate file size (500MB limit)
+    const maxSize = 500 * 1024 * 1024; // 500MB in bytes
+    if (uploadFile.size > maxSize) {
+      setSnackbar({
+        open: true,
+        message: `File size exceeds 500MB limit. Your file is ${(uploadFile.size / 1024 / 1024).toFixed(2)}MB`,
+        severity: 'error'
+      });
+      return;
+    }
+
     const formData = new FormData();
     formData.append('file', uploadFile);
     formData.append('name', uploadFile.name.split('.')[0]);
 
+    setIsUploading(true);
+    setUploadProgress(0);
+
     try {
-      const response = await videoApi.uploadVideo(formData);
+      const response = await videoApi.uploadVideo(formData, {
+        onUploadProgress: (progressEvent) => {
+          const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setUploadProgress(percentCompleted);
+        }
+      });
+      
       setSnackbar({
         open: true,
         message: 'Video uploaded successfully',
         severity: 'success'
       });
       setUploadFile(null);
+      setUploadProgress(0);
       fetchVideos();
     } catch (err) {
       console.error('Error uploading video:', err);
+      
+      // Extract error message from response
+      let errorMessage = 'Failed to upload video';
+      if (err.response?.data?.detail) {
+        errorMessage = err.response.data.detail;
+      } else if (err.message) {
+        errorMessage = err.message;
+      }
+      
       setSnackbar({
         open: true,
-        message: 'Failed to upload video',
+        message: errorMessage,
         severity: 'error'
       });
+    } finally {
+      setIsUploading(false);
+      setUploadProgress(0);
     }
   };
 
@@ -274,16 +311,31 @@ function Videos() {
               fullWidth
               variant="outlined"
               sx={{ mr: 2 }}
+              disabled={isUploading}
             />
             <Button
               variant="contained"
               color="primary"
               onClick={handleUploadVideo}
-              disabled={!uploadFile}
+              disabled={!uploadFile || isUploading}
+              startIcon={isUploading ? <CircularProgress size={20} color="inherit" /> : <UploadIcon />}
             >
-              Upload
+              {isUploading ? `Uploading ${uploadProgress}%` : 'Upload'}
             </Button>
           </Box>
+          {uploadFile && (
+            <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
+              Selected: {uploadFile.name} ({(uploadFile.size / 1024 / 1024).toFixed(2)} MB)
+            </Typography>
+          )}
+          {isUploading && (
+            <Box sx={{ mt: 2 }}>
+              <LinearProgress variant="determinate" value={uploadProgress} />
+              <Typography variant="body2" color="textSecondary" align="center" sx={{ mt: 1 }}>
+                {uploadProgress}% uploaded
+              </Typography>
+            </Box>
+          )}
         </Paper>
       </Grid>
 

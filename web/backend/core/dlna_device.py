@@ -38,6 +38,7 @@ class DLNADevice(Device):
         self._thread_lock = threading.Lock()
         self._loop_enabled = False
         self._loop_thread = None  # Explicitly initialize loop_thread
+        self._stop_event = threading.Event()  # Event for clean thread shutdown
         self._last_activity_time = None
         self._inactivity_timeout = 90  # Default seconds of inactivity before considering playback stalled
         self._dynamic_inactivity_timeout = True  # Enable dynamic timeout based on video duration
@@ -116,6 +117,10 @@ class DLNADevice(Device):
             # Update device status
             self.update_status("playing")
             self.update_playing(True)
+            
+            # Reset stop event for new playback
+            with self._thread_lock:
+                self._stop_event.clear()
             
             # Set up loop monitoring if needed
             if loop:
@@ -404,6 +409,10 @@ class DLNADevice(Device):
             loop_thread_to_join = None
             with self._thread_lock:
                 self._loop_enabled = False # Signal the loop thread to stop
+                self._stop_event.set()  # Signal stop event
+                
+                # Reset activity timer
+                self._last_activity_time = None
                 
                 # Safely get thread reference
                 if hasattr(self, '_loop_thread') and self._loop_thread is not None:

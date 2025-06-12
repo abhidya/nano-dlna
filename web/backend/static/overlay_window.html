@@ -46,6 +46,85 @@
             backdrop-filter: blur(10px);
             border: 1px solid rgba(255, 255, 255, 0.1);
             transition: box-shadow 0.3s ease;
+            overflow: visible;
+        }
+        
+        /* Blackout overlay */
+        #blackout-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: black;
+            z-index: 9999;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: none;
+        }
+        
+        #blackout-overlay.active {
+            display: flex;
+        }
+        
+        .light-switch {
+            width: 60px;
+            height: 60px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.3s ease;
+            opacity: 0.6;
+        }
+        
+        .light-switch:hover {
+            background: rgba(255, 255, 255, 0.1);
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
+        
+        .light-switch svg {
+            width: 24px;
+            height: 24px;
+            fill: rgba(255, 255, 255, 0.4);
+        }
+        
+        .lights-widget {
+            background: rgba(30, 30, 30, 0.85);
+            min-width: 120px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            border: 1px solid rgba(255, 255, 255, 0.08);
+        }
+        
+        .lights-widget:hover {
+            background: rgba(40, 40, 40, 0.9);
+        }
+        
+        .lights-widget .icon {
+            width: 24px;
+            height: 24px;
+            fill: rgba(255, 255, 255, 0.5);
+            margin-bottom: 4px;
+        }
+        
+        .lights-widget .label {
+            font-size: 12px;
+            color: rgba(255, 255, 255, 0.5);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        
+        .lights-widget .widget-handle {
+            display: none;
         }
         
         .widget:hover {
@@ -60,17 +139,39 @@
         
         .widget-handle {
             position: absolute;
-            width: 10px;
-            height: 10px;
+            width: 14px;
+            height: 14px;
             background: #4CAF50;
             border: 2px solid white;
             border-radius: 50%;
             opacity: 0;
             transition: opacity 0.3s;
+            cursor: grab;
+            z-index: 10;
         }
         
         .widget:hover .widget-handle {
             opacity: 1;
+        }
+        
+        .widget-handle.rotate-handle {
+            top: -30px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: #2196F3;
+            cursor: crosshair;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+        
+        .widget-handle.rotate-handle::after {
+            content: '↻';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 10px;
+            color: white;
+            font-weight: bold;
         }
         
         .widget-handle.resize-se {
@@ -292,6 +393,14 @@
     
     <div id="widgets-container"></div>
     
+    <div id="blackout-overlay">
+        <div class="light-switch" onclick="toggleLights()">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                <path d="M12 18c1.657 0 3 1.343 3 3s-1.343 3-3 3-3-1.343-3-3 1.343-3 3-3zm0-15c-3.312 0-6 2.688-6 6 0 1.408.486 2.701 1.297 3.719l4.703 5.881 4.703-5.881C17.514 11.701 18 10.408 18 9c0-3.312-2.688-6-6-6z"/>
+            </svg>
+        </div>
+    </div>
+    
     <div class="controls" id="controls">
         <h2 style="margin-bottom: 20px; font-weight: 300;">Overlay Controls</h2>
         
@@ -316,9 +425,16 @@
         </div>
         
         <div class="control-group">
-            <button onclick="saveConfig()">💾 Save Configuration</button>
+            <button onclick="saveConfig(this)">💾 Save Configuration</button>
             <button onclick="resetTransforms()">🔄 Reset All</button>
             <button onclick="toggleControls()">👁️ Hide Controls</button>
+        </div>
+        
+        <div class="control-group">
+            <h3>Config Import/Export</h3>
+            <button onclick="exportConfig()">📤 Export to File</button>
+            <button onclick="document.getElementById('import-file').click()">📥 Import from File</button>
+            <input type="file" id="import-file" accept=".json" style="display: none;" onchange="importConfig(event)">
         </div>
         
         <div class="shortcuts">
@@ -338,9 +454,11 @@
         let widgets = [];
         let isDragging = false;
         let isResizing = false;
+        let isRotating = false;
         let currentWidget = null;
         let dragOffset = { x: 0, y: 0 };
         let resizeStart = { width: 0, height: 0, x: 0, y: 0 };
+        let rotateStart = { angle: 0, mouseAngle: 0 };
         let selectedWidget = null;
         let dataUpdateIntervals = {};
         
@@ -348,7 +466,7 @@
         window.addEventListener('message', function(event) {
             if (event.data.type === 'init') {
                 config = event.data.config;
-                videoTransform = config.video_transform;
+                videoTransform = config.video_transform || { x: 0, y: 0, scale: 1, rotation: 0 };
                 widgets = config.widgets;
                 
                 // Hide loading
@@ -359,6 +477,16 @@
                 
                 // Apply transforms
                 updateVideoTransform();
+                
+                // Update control values to match loaded config
+                document.getElementById('video-x').value = videoTransform.x;
+                document.getElementById('video-x-value').textContent = videoTransform.x;
+                document.getElementById('video-y').value = videoTransform.y;
+                document.getElementById('video-y-value').textContent = videoTransform.y;
+                document.getElementById('video-scale').value = videoTransform.scale;
+                document.getElementById('video-scale-value').textContent = videoTransform.scale;
+                document.getElementById('video-rotation').value = videoTransform.rotation;
+                document.getElementById('video-rotation-value').textContent = videoTransform.rotation;
                 
                 // Create widgets
                 createWidgets();
@@ -421,6 +549,7 @@
                 widgetEl.style.top = widget.position.y + 'px';
                 widgetEl.style.width = widget.size.width + 'px';
                 widgetEl.style.height = widget.size.height + 'px';
+                widgetEl.style.transform = `rotate(${widget.rotation || 0}deg)`;
                 
                 // Add content based on type
                 if (widget.type === 'weather') {
@@ -445,12 +574,37 @@
                         <h2>Transit - ${widget.config.stopName || 'Nearby Stop'}</h2>
                         <div class="transit-content">Loading predictions...</div>
                     `;
+                } else if (widget.type === 'lights') {
+                    widgetEl.innerHTML = `
+                        <div style="text-align: center; display: flex; flex-direction: column; align-items: center;">
+                            <svg class="icon" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">
+                                <path d="M6 2l.01 6L10 12l-4 2.01L6.01 20C8.77 21.31 11.31 22 14 22c6.63 0 12-5.37 12-12S20.63-2 14-2C11.31-2 8.77-1.31 6 0v2z"/>
+                            </svg>
+                            <div class="label">Lights</div>
+                        </div>
+                    `;
+                    widgetEl.classList.add('lights-widget');
+                    widgetEl.onclick = (e) => {
+                        e.stopPropagation();
+                        toggleLights();
+                    };
                 }
                 
                 // Add resize handle
                 const resizeHandle = document.createElement('div');
                 resizeHandle.className = 'widget-handle resize-se';
                 widgetEl.appendChild(resizeHandle);
+                
+                // Add rotation handle (except for lights widget)
+                if (widget.type !== 'lights') {
+                    const rotateHandle = document.createElement('div');
+                    rotateHandle.className = 'widget-handle rotate-handle';
+                    rotateHandle.title = 'Drag to rotate';
+                    widgetEl.appendChild(rotateHandle);
+                    
+                    // Add event handler directly here
+                    rotateHandle.addEventListener('mousedown', startRotate);
+                }
                 
                 // Add event handlers
                 widgetEl.addEventListener('mousedown', startDrag);
@@ -469,10 +623,15 @@
                 const control = document.createElement('label');
                 control.style.display = 'block';
                 control.style.marginBottom = '5px';
+                
+                // Custom label for lights widget
+                const widgetLabel = widget.type === 'lights' ? 'Lights Control' : 
+                                   widget.type.charAt(0).toUpperCase() + widget.type.slice(1);
+                
                 control.innerHTML = `
                     <input type="checkbox" ${widget.visible ? 'checked' : ''} 
                            onchange="toggleWidgetVisibility('${widget.id}', this.checked)">
-                    ${widget.type.charAt(0).toUpperCase() + widget.type.slice(1)}
+                    ${widgetLabel}
                 `;
                 container.appendChild(control);
             });
@@ -494,6 +653,12 @@
             document.querySelectorAll('.widget').forEach(w => {
                 w.style.border = w.id === widgetId ? '2px solid #4CAF50' : '1px solid rgba(255, 255, 255, 0.1)';
             });
+            
+            // Update rotation display if we have one
+            const widget = widgets.find(w => w.id === widgetId);
+            if (widget && window.updateSelectedWidgetInfo) {
+                window.updateSelectedWidgetInfo(widget);
+            }
         }
         
         function startDrag(e) {
@@ -522,6 +687,30 @@
                 height: rect.height,
                 x: e.clientX,
                 y: e.clientY
+            };
+            
+            e.preventDefault();
+        }
+        
+        function startRotate(e) {
+            e.stopPropagation();
+            isRotating = true;
+            currentWidget = e.target.parentElement;
+            
+            const rect = currentWidget.getBoundingClientRect();
+            const centerX = rect.left + rect.width / 2;
+            const centerY = rect.top + rect.height / 2;
+            
+            // Get current rotation
+            const widget = widgets.find(w => w.id === currentWidget.id);
+            const currentRotation = widget.rotation || 0;
+            
+            // Calculate initial mouse angle
+            const mouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI;
+            
+            rotateStart = {
+                angle: currentRotation,
+                mouseAngle: mouseAngle
             };
             
             e.preventDefault();
@@ -557,6 +746,29 @@
                     widget.size.width = newWidth;
                     widget.size.height = newHeight;
                 }
+            } else if (isRotating && currentWidget) {
+                const rect = currentWidget.getBoundingClientRect();
+                const centerX = rect.left + rect.width / 2;
+                const centerY = rect.top + rect.height / 2;
+                
+                // Calculate current mouse angle
+                const currentMouseAngle = Math.atan2(e.clientY - centerY, e.clientX - centerX) * 180 / Math.PI;
+                
+                // Calculate rotation delta
+                const angleDelta = currentMouseAngle - rotateStart.mouseAngle;
+                let newRotation = rotateStart.angle + angleDelta;
+                
+                // Normalize angle to 0-360
+                newRotation = ((newRotation % 360) + 360) % 360;
+                
+                // Apply rotation
+                currentWidget.style.transform = `rotate(${newRotation}deg)`;
+                
+                // Update widget data
+                const widget = widgets.find(w => w.id === currentWidget.id);
+                if (widget) {
+                    widget.rotation = newRotation;
+                }
             }
         });
         
@@ -566,7 +778,36 @@
             }
             isDragging = false;
             isResizing = false;
+            isRotating = false;
             currentWidget = null;
+        });
+        
+        // Keyboard controls for fine rotation
+        document.addEventListener('keydown', (e) => {
+            if (selectedWidget && !e.target.matches('input')) {
+                const widget = widgets.find(w => w.id === selectedWidget);
+                if (!widget) return;
+                
+                let rotationDelta = 0;
+                
+                // Shift + Left/Right for rotation
+                if (e.shiftKey) {
+                    if (e.key === 'ArrowLeft') {
+                        rotationDelta = -5;
+                    } else if (e.key === 'ArrowRight') {
+                        rotationDelta = 5;
+                    }
+                    
+                    if (rotationDelta !== 0) {
+                        e.preventDefault();
+                        widget.rotation = ((widget.rotation || 0) + rotationDelta + 360) % 360;
+                        const widgetEl = document.getElementById(widget.id);
+                        if (widgetEl) {
+                            widgetEl.style.transform = `rotate(${widget.rotation}deg)`;
+                        }
+                    }
+                }
+            }
         });
         
         // Video transform controls
@@ -594,8 +835,35 @@
             updateVideoTransform();
         });
         
+        // Removed addLightsWidget function - lights widget is now added through React frontend
+        
+        // Lights toggle function
+        function toggleLights() {
+            const blackout = document.getElementById('blackout-overlay');
+            const controls = document.getElementById('controls');
+            const lightSwitch = blackout.querySelector('.light-switch');
+            
+            if (blackout.classList.contains('active')) {
+                // Turn lights on
+                blackout.classList.remove('active');
+                controls.style.display = 'block';
+            } else {
+                // Turn lights off
+                blackout.classList.add('active');
+                controls.style.display = 'none';
+                
+                // Position the light switch based on the lights widget position
+                const lightsWidget = widgets.find(w => w.type === 'lights' && w.visible);
+                if (lightsWidget) {
+                    lightSwitch.style.position = 'absolute';
+                    lightSwitch.style.left = lightsWidget.position.x + 'px';
+                    lightSwitch.style.top = lightsWidget.position.y + 'px';
+                }
+            }
+        }
+        
         // Control functions
-        function saveConfig() {
+        function saveConfig(button) {
             if (!config) return;
             
             config.video_transform = videoTransform;
@@ -608,11 +876,12 @@
                 }, '*');
                 
                 // Visual feedback
-                const button = event.target;
-                button.textContent = '✅ Saved!';
-                setTimeout(() => {
-                    button.textContent = '💾 Save Configuration';
-                }, 2000);
+                if (button) {
+                    button.textContent = '✅ Saved!';
+                    setTimeout(() => {
+                        button.textContent = '💾 Save Configuration';
+                    }, 2000);
+                }
             }
         }
         
@@ -643,7 +912,7 @@
             if (e.key === 'h' || e.key === 'H') {
                 toggleControls();
             } else if (e.key === 's' || e.key === 'S') {
-                saveConfig();
+                saveConfig(null);
             } else if (e.key === 'r' || e.key === 'R') {
                 resetTransforms();
             } else if (e.key === 'F11') {
@@ -835,6 +1104,94 @@
                     widget.querySelector('.transit-content').innerHTML = 'Transit data unavailable';
                 });
             }
+        }
+        
+        // Export/Import functions
+        function exportConfig() {
+            if (!config) {
+                alert('No configuration loaded to export');
+                return;
+            }
+            
+            // Prepare export data
+            const exportData = {
+                name: config.name || 'overlay_config',
+                video_transform: videoTransform,
+                widgets: widgets,
+                api_configs: config.api_configs || {},
+                exported_at: new Date().toISOString()
+            };
+            
+            // Create blob and download
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `overlay_config_${config.name || 'export'}_${Date.now()}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+        
+        function importConfig(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedData = JSON.parse(e.target.result);
+                    
+                    // Validate imported data
+                    if (!importedData.video_transform || !importedData.widgets) {
+                        alert('Invalid configuration file format');
+                        return;
+                    }
+                    
+                    // Apply imported settings
+                    videoTransform = importedData.video_transform || { x: 0, y: 0, scale: 1, rotation: 0 };
+                    widgets = importedData.widgets || [];
+                    
+                    // Update API configs if present
+                    if (importedData.api_configs && config) {
+                        config.api_configs = { ...config.api_configs, ...importedData.api_configs };
+                    }
+                    
+                    // Update UI
+                    updateVideoTransform();
+                    
+                    // Update control values
+                    document.getElementById('video-x').value = videoTransform.x;
+                    document.getElementById('video-x-value').textContent = videoTransform.x;
+                    document.getElementById('video-y').value = videoTransform.y;
+                    document.getElementById('video-y-value').textContent = videoTransform.y;
+                    document.getElementById('video-scale').value = videoTransform.scale;
+                    document.getElementById('video-scale-value').textContent = videoTransform.scale;
+                    document.getElementById('video-rotation').value = videoTransform.rotation;
+                    document.getElementById('video-rotation-value').textContent = videoTransform.rotation;
+                    
+                    // Recreate widgets
+                    createWidgets();
+                    createVisibilityControls();
+                    
+                    // Restart data updates with new configs
+                    startDataUpdates();
+                    
+                    alert('Configuration imported successfully!');
+                    
+                    // Optionally save to backend
+                    if (confirm('Do you want to save this imported configuration?')) {
+                        saveConfig(null);
+                    }
+                } catch (error) {
+                    alert('Error importing configuration: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+            
+            // Clear the input so the same file can be selected again
+            event.target.value = '';
         }
         
         // Initial setup

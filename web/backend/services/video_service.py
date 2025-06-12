@@ -85,10 +85,17 @@ class VideoService:
         Returns:
             VideoModel: The created video
         """
+        from sqlalchemy.exc import IntegrityError
+        
         try:
             # Check if the video file exists
             if not os.path.exists(video.path):
                 raise ValueError(f"Video file not found: {video.path}")
+            
+            # Check for duplicate path
+            existing = self.get_video_by_path(video.path)
+            if existing:
+                raise ValueError("This video has already been added to the library")
             
             # Get video file information
             file_name = video.file_name if video.file_name else os.path.basename(video.path)
@@ -122,6 +129,12 @@ class VideoService:
             self.db.refresh(db_video)
             
             return db_video
+        except IntegrityError as e:
+            self.db.rollback()
+            if 'UNIQUE constraint failed' in str(e) or 'duplicate key' in str(e).lower():
+                raise ValueError("This video has already been added to the library")
+            logger.error(f"Database integrity error: {e}")
+            raise
         except SQLAlchemyError as e:
             self.db.rollback()
             logger.error(f"Error creating video: {e}")
@@ -221,6 +234,12 @@ class VideoService:
             Optional[VideoModel]: The uploaded video if successful, None otherwise
         """
         try:
+            # Make upload_dir absolute if it's relative
+            if not os.path.isabs(upload_dir):
+                # Get the backend directory as base
+                backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                upload_dir = os.path.join(backend_dir, upload_dir)
+            
             # Create the upload directory if it doesn't exist
             os.makedirs(upload_dir, exist_ok=True)
             
@@ -322,3 +341,131 @@ class VideoService:
             import traceback
             logger.error(traceback.format_exc())
             return None
+    
+    def _get_video_metadata(self, path: str) -> tuple:
+        """
+        Get video metadata using ffprobe
+        
+        Args:
+            path: Path to the video file
+            
+        Returns:
+            tuple: (duration, format_name, resolution)
+        """
+        try:
+            cmd = [
+                'ffprobe',
+                '-v', 'error',
+                '-show_entries', 'format=duration,format_name:stream=width,height',
+                '-of', 'json',
+                path
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                logger.error(f"ffprobe error: {result.stderr}")
+                return None, None, None
+            
+            data = json.loads(result.stdout)
+            
+            # Extract duration and format
+            format_info = data.get('format', {})
+            duration = format_info.get('duration')
+            if duration:
+                duration = float(duration)
+            format_name = format_info.get('format_name', '').split(',')[0]
+            
+            # Extract resolution
+            resolution = None
+            streams = data.get('streams', [])
+            for stream in streams:
+                width = stream.get('width')
+                height = stream.get('height')
+                if width and height:
+                    resolution = f"{width}x{height}"
+                    break
+            
+            return duration, format_name, resolution
+            
+        except Exception as e:
+            logger.error(f"Error getting video metadata: {e}")
+            return None, None, None
+    
+    def _find_subtitle_file(self, video_path: str) -> Optional[str]:
+        """
+        Find subtitle file for a video
+        
+        Args:
+            video_path: Path to the video file
+            
+        Returns:
+            Optional[str]: Path to the subtitle file if found
+        """
+        try:
+            video_dir = os.path.dirname(video_path)
+            video_name = os.path.splitext(os.path.basename(video_path))[0]
+            
+            # Common subtitle extensions
+            subtitle_extensions = ['.srt', '.vtt', '.sub', '.ass', '.ssa']
+            
+            for ext in subtitle_extensions:
+                subtitle_path = os.path.join(video_dir, video_name + ext)
+                if os.path.exists(subtitle_path):
+                    return subtitle_path
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding subtitle file: {e}")
+            return None
+    
+    def scan_directory(self, directory: str) -> List[VideoModel]:
+        """
+        Scan a directory for video files and add them to the database
+        
+        Args:
+            directory: Directory path to scan for videos
+            
+        Returns:
+            List[VideoModel]: List of videos found and added
+        """
+        if not os.path.exists(directory):
+            raise ValueError(f"Directory not found: {directory}")
+        
+        if not os.path.isdir(directory):
+            raise ValueError(f"Path is not a directory: {directory}")
+        
+        video_extensions = {'.mp4', '.mkv', '.avi', '.mov', '.mpg', '.mpeg', '.wmv', '.ts', '.m4v', '.webm'}
+        videos_added = []
+        
+        try:
+            # Walk through directory and subdirectories
+            for root, dirs, files in os.walk(directory):
+                for file in files:
+                    # Check if file has video extension
+                    file_ext = os.path.splitext(file)[1].lower()
+                    if file_ext in video_extensions:
+                        file_path = os.path.abspath(os.path.join(root, file))
+                        
+                        # Check if video already exists in database
+                        existing = self.get_video_by_path(file_path)
+                        if existing:
+                            logger.info(f"Video already exists in database: {file_path}")
+                            continue
+                        
+                        # Create video entry
+                        try:
+                            video_name = os.path.splitext(file)[0]
+                            video = VideoCreate(name=video_name, path=file_path)
+                            db_video = self.create_video(video)
+                            videos_added.append(db_video)
+                            logger.info(f"Added video: {file_path}")
+                        except Exception as e:
+                            logger.error(f"Error adding video {file_path}: {e}")
+                            continue
+            
+            return videos_added
+            
+        except Exception as e:
+            logger.error(f"Error scanning directory {directory}: {e}")
+            raise

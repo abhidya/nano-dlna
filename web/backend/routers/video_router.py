@@ -138,10 +138,10 @@ async def upload_video(
     """
     # Check if the file is a video
     content_type = file.content_type
-    if not content_type.startswith("video/"):
+    if not content_type or not content_type.startswith("video/"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File is not a video",
+            detail=f"File is not a video. Content type: {content_type}",
         )
 
     # Get the file extension
@@ -153,17 +153,33 @@ async def upload_video(
         )
 
     # Upload the video
-    video = video_service.upload_video(
-        file.file,
-        filename,
-        upload_dir,
-        name,
-    )
-
-    if not video:
+    try:
+        video = video_service.upload_video(
+            file.file,
+            filename,
+            upload_dir,
+            name,
+        )
+        
+        if not video:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to upload video - check server logs for details",
+            )
+    except Exception as e:
+        logger.error(f"Error uploading video: {str(e)}")
+        # Check for specific error types
+        error_detail = str(e)
+        if "UNIQUE constraint failed" in error_detail:
+            error_detail = f"A video with this path already exists: {os.path.join(upload_dir, filename)}"
+        elif "Permission denied" in error_detail:
+            error_detail = f"Permission denied writing to upload directory: {upload_dir}"
+        elif "No space left" in error_detail:
+            error_detail = "No space left on device"
+        
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Failed to upload video",
+            detail=error_detail,
         )
 
     return {

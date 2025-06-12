@@ -59,9 +59,11 @@ function Devices() {
     severity: 'success'
   });
   const [discovering, setDiscovering] = useState(false);
+  const [discoveryStatus, setDiscoveryStatus] = useState(null);
 
   useEffect(() => {
     fetchDevices();
+    fetchDiscoveryStatus();
   }, []);
 
   // Timer to update display every second
@@ -124,6 +126,62 @@ function Devices() {
       if (!isPolling) {
         setLoading(false);
       }
+    }
+  };
+
+  const fetchDiscoveryStatus = async () => {
+    try {
+      const response = await deviceApi.getDiscoveryStatus();
+      setDiscoveryStatus(response.data);
+    } catch (err) {
+      console.error('Error fetching discovery status:', err);
+    }
+  };
+
+  const handleToggleDiscovery = async () => {
+    try {
+      if (discoveryStatus?.running) {
+        await deviceApi.pauseDiscovery();
+        setSnackbar({
+          open: true,
+          message: 'Discovery loop paused',
+          severity: 'success'
+        });
+      } else {
+        await deviceApi.resumeDiscovery();
+        setSnackbar({
+          open: true,
+          message: 'Discovery loop resumed',
+          severity: 'success'
+        });
+      }
+      fetchDiscoveryStatus();
+    } catch (err) {
+      console.error('Error toggling discovery:', err);
+      setSnackbar({
+        open: true,
+        message: 'Failed to toggle discovery',
+        severity: 'error'
+      });
+    }
+  };
+
+  const handleEnableAutoMode = async (deviceId) => {
+    try {
+      await deviceApi.enableAutoMode(deviceId);
+      setSnackbar({
+        open: true,
+        message: 'Auto mode enabled',
+        severity: 'success'
+      });
+      fetchDevices();
+    } catch (err) {
+      console.error('Error enabling auto mode:', err);
+      setSnackbar({
+        open: true,
+        message: 'Failed to enable auto mode',
+        severity: 'error'
+      });
     }
   };
 
@@ -334,10 +392,14 @@ function Devices() {
   const calculateCurrentPosition = (device) => {
     // If we have a start time, calculate position
     if (device.is_playing && device.playback_started_at) {
+      // Backend sends ISO format timestamp from updated_at
+      // Ensure it's parsed as UTC
       const startTime = new Date(device.playback_started_at).getTime();
       const currentTime = Date.now();
       const elapsedMs = currentTime - startTime;
-      const elapsedSeconds = Math.floor(elapsedMs / 1000);
+      
+      // Prevent negative values (in case of timezone issues)
+      const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
       
       // Parse duration to check if we exceeded it
       if (device.playback_duration) {
@@ -347,10 +409,10 @@ function Devices() {
         // Don't exceed duration
         const currentSeconds = Math.min(elapsedSeconds, totalSeconds);
         
-        // Format as HH:MM:SS
-        const hours = Math.floor(currentSeconds / 3600);
-        const minutes = Math.floor((currentSeconds % 3600) / 60);
-        const seconds = currentSeconds % 60;
+        // Prevent negative hours/minutes/seconds
+        const hours = Math.max(0, Math.floor(currentSeconds / 3600));
+        const minutes = Math.max(0, Math.floor((currentSeconds % 3600) / 60));
+        const seconds = Math.max(0, currentSeconds % 60);
         
         return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       }
@@ -436,24 +498,40 @@ function Devices() {
         <Divider sx={{ mb: 2 }} />
       </Grid>
 
-      {/* Discover Devices */}
+      {/* Discovery Control */}
       <Grid item xs={12}>
         <Paper sx={{ p: 2, mb: 3 }}>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <Typography variant="h6">Discover DLNA Devices</Typography>
-            <Button
-              variant="contained"
-              color="primary"
-              startIcon={discovering ? <CircularProgress size={20} color="inherit" /> : <RefreshIcon />}
-              onClick={handleDiscoverDevices}
-              disabled={discovering}
-            >
-              {discovering ? 'Discovering...' : 'Discover Devices'}
-            </Button>
+            <Box>
+              <Typography variant="h6">Discovery Control</Typography>
+              <Typography variant="body2" color="textSecondary">
+                Discovery Loop: {discoveryStatus?.running ? 
+                  <Chip label="Running" color="success" size="small" sx={{ ml: 1 }} /> : 
+                  <Chip label="Paused" color="default" size="small" sx={{ ml: 1 }} />
+                }
+                {discoveryStatus && ` • ${discoveryStatus.devices_discovered} devices • ${discoveryStatus.devices_playing} playing`}
+              </Typography>
+            </Box>
+            <Box>
+              <Button
+                variant="outlined"
+                color="primary"
+                onClick={handleToggleDiscovery}
+                sx={{ mr: 1 }}
+              >
+                {discoveryStatus?.running ? 'Pause Discovery' : 'Resume Discovery'}
+              </Button>
+              <Button
+                variant="contained"
+                color="primary"
+                startIcon={discovering ? <CircularProgress size={20} color="inherit" /> : <RefreshIcon />}
+                onClick={handleDiscoverDevices}
+                disabled={discovering}
+              >
+                {discovering ? 'Scanning...' : 'Scan Now'}
+              </Button>
+            </Box>
           </Box>
-          <Typography variant="body2" color="textSecondary" sx={{ mt: 1 }}>
-            Scan your network for DLNA devices. This may take a few moments.
-          </Typography>
         </Paper>
       </Grid>
 
@@ -496,6 +574,15 @@ function Devices() {
                     color={device.is_playing ? 'success' : 'default'} 
                     size="small" 
                   />
+                  {device.user_control_mode && device.user_control_mode !== 'auto' && (
+                    <Chip 
+                      label={`${device.user_control_mode} mode`} 
+                      color="warning" 
+                      size="small" 
+                      sx={{ ml: 1 }}
+                      title={device.user_control_reason || 'User controlled'}
+                    />
+                  )}
                 </Typography>
                 {device.current_video && (
                   <>
@@ -567,6 +654,15 @@ function Devices() {
                 >
                   Play Video
                 </Button>
+                {device.user_control_mode && device.user_control_mode !== 'auto' && (
+                  <Button 
+                    size="small" 
+                    color="warning"
+                    onClick={() => handleEnableAutoMode(device.id)}
+                  >
+                    Enable Auto
+                  </Button>
+                )}
               </CardActions>
             </Card>
           </Grid>

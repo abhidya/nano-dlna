@@ -22,7 +22,7 @@
         "type": "dlna",
         "hostname": "10.0.0.154",
         "action_url": "http://10.0.0.154:49595/upnp/control/rendertransport1",
-        "video_file": "/Users/mannybhidya/PycharmProjects/nano-dlna/door6.mp4",
+        "video_file": "/Users/mannybhidya/Desktop/junedoor.mp4",
         "friendly_name": "Hccast-3ADE76_dlna",
         "mime_type": "video/mp4"
     },

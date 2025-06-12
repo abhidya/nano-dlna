@@ -52,6 +52,30 @@ def discover_devices(
         "total": len(devices),
     }
 
+# Discovery control endpoints - MUST be before /{device_id} routes
+@router.post("/discovery/pause", response_model=DeviceActionResponse)
+def pause_discovery():
+    """Pause the discovery loop"""
+    device_manager.pause_discovery()
+    return {
+        "success": True,
+        "message": "Discovery loop paused",
+    }
+
+@router.post("/discovery/resume", response_model=DeviceActionResponse)
+def resume_discovery():
+    """Resume the discovery loop"""
+    device_manager.resume_discovery()
+    return {
+        "success": True,
+        "message": "Discovery loop resumed",
+    }
+
+@router.get("/discovery/status")
+def get_discovery_status():
+    """Get discovery loop status"""
+    return device_manager.get_discovery_status()
+
 @router.get("/", response_model=DeviceList)
 def get_devices(
     skip: int = 0,
@@ -340,4 +364,63 @@ def save_devices_to_config(
     return {
         "success": True,
         "message": f"Devices saved to config file {config_file}",
+    }
+
+
+# User control mode endpoints
+@router.post("/{device_id}/control/auto", response_model=DeviceActionResponse)
+def enable_auto_mode(
+    device_id: int,
+    device_service: DeviceService = Depends(get_device_service),
+):
+    """Enable automatic control mode for a device"""
+    success = device_service.set_user_control(device_id, "auto", "user_enabled_auto")
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enable auto mode for device {device_id}",
+        )
+    
+    return {
+        "success": True,
+        "message": "Auto mode enabled",
+    }
+
+@router.post("/{device_id}/control/manual", response_model=DeviceActionResponse)
+def enable_manual_mode(
+    device_id: int,
+    reason: str = Query("user_manual", description="Reason for manual mode"),
+    expires_in: int = Query(None, description="Optional expiration in seconds"),
+    device_service: DeviceService = Depends(get_device_service),
+):
+    """Enable manual control mode for a device"""
+    success = device_service.set_user_control(device_id, "manual", reason, expires_in)
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to enable manual mode for device {device_id}",
+        )
+    
+    return {
+        "success": True,
+        "message": "Manual mode enabled",
+    }
+
+@router.get("/{device_id}/control")
+def get_device_control_mode(
+    device_id: int,
+    device_service: DeviceService = Depends(get_device_service),
+):
+    """Get current control mode for a device"""
+    device = device_service.get_device_by_id(device_id)
+    if not device:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Device with ID {device_id} not found",
+        )
+    
+    return {
+        "mode": device.user_control_mode,
+        "reason": device.user_control_reason,
+        "expires_at": device.user_control_expires_at,
     }

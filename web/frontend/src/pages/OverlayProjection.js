@@ -29,12 +29,8 @@ import {
     Tooltip
 } from '@mui/material';
 import {
-    PlayArrow as PlayIcon,
-    Stop as StopIcon,
     Add as AddIcon,
-    Edit as EditIcon,
     Delete as DeleteIcon,
-    Save as SaveIcon,
     Videocam as VideoIcon,
     Launch as LaunchIcon,
     Settings as SettingsIcon,
@@ -42,7 +38,8 @@ import {
     Schedule as TimeIcon,
     DirectionsBus as TransitIcon,
     Visibility as VisibilityIcon,
-    VisibilityOff as VisibilityOffIcon
+    VisibilityOff as VisibilityOffIcon,
+    NightsStay as NightsStayIcon
 } from '@mui/icons-material';
 import { api } from '../services/api';
 
@@ -128,6 +125,15 @@ function OverlayProjection() {
                         routeFilter: 'N Judah'
                     },
                     visible: true
+                },
+                {
+                    id: 'lights-1',
+                    type: 'lights',
+                    position: { x: 50, y: 950 },
+                    size: { width: 120, height: 60 },
+                    config: {},
+                    visible: true,
+                    rotation: 0
                 }
             ],
             api_configs: {
@@ -196,8 +202,10 @@ function OverlayProjection() {
             
             setProjectionWindow(projWindow);
             
-            // Send config to window once loaded
-            projWindow.onload = async () => {
+            // Function to send configuration
+            const sendConfiguration = async () => {
+                if (projWindow.closed) return; // Don't send if window was closed
+                
                 try {
                     // Get streaming URL from backend
                     const streamResponse = await api.post('/overlay/stream', {
@@ -227,6 +235,11 @@ function OverlayProjection() {
                 }
             };
             
+            // Send config immediately and then retry to ensure delivery
+            setTimeout(sendConfiguration, 100);
+            setTimeout(sendConfiguration, 500);
+            setTimeout(sendConfiguration, 1000);
+            
             setLoading(false);
         } catch (error) {
             console.error('Error launching projection:', error);
@@ -245,7 +258,7 @@ function OverlayProjection() {
         
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, [selectedConfig]);
+    }, [selectedConfig, updateConfig]);
     
     const toggleWidgetVisibility = (widgetId) => {
         if (!selectedConfig) return;
@@ -280,6 +293,7 @@ function OverlayProjection() {
             case 'weather': return <WeatherIcon />;
             case 'time': return <TimeIcon />;
             case 'transit': return <TransitIcon />;
+            case 'lights': return <NightsStayIcon />;
             default: return <SettingsIcon />;
         }
     };

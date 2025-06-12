@@ -152,6 +152,14 @@ async def list_overlay_templates():
                     "size": {"width": 300, "height": 100},
                     "config": {"format": "24h", "showSeconds": True},
                     "visible": True
+                },
+                {
+                    "id": "lights-1",
+                    "type": "lights",
+                    "position": {"x": 50, "y": 950},
+                    "size": {"width": 120, "height": 60},
+                    "config": {},
+                    "visible": True
                 }
             ],
             "api_configs": {
