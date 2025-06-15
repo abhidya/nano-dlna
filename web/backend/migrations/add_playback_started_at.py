@@ -12,13 +12,13 @@ backend_dir = os.path.dirname(current_dir)
 sys.path.insert(0, backend_dir)
 
 from sqlalchemy import create_engine, text
-from database.database import SQLALCHEMY_DATABASE_URL
+from database.database import DATABASE_URL
 
 logger = logging.getLogger(__name__)
 
 def upgrade():
     """Add playback_started_at field to devices table"""
-    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+    engine = create_engine(DATABASE_URL)
     
     with engine.connect() as conn:
         try:
@@ -37,7 +37,7 @@ def upgrade():
 
 def downgrade():
     """Remove playback_started_at field from devices table"""
-    engine = create_engine(SQLALCHEMY_DATABASE_URL)
+    engine = create_engine(DATABASE_URL)
     
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE devices DROP COLUMN playback_started_at"))

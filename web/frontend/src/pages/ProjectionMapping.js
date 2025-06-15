@@ -17,6 +17,8 @@ function ProjectionMapping() {
     const [isProcessingAutoLayers, setIsProcessingAutoLayers] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStep, setProcessingStep] = useState('');
+    const [baseTransform, setBaseTransform] = useState({ x: 0, y: 0, scale: 1, rotation: 0 });
+    const [edgeProcessing, setEdgeProcessing] = useState(false);
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -27,6 +29,8 @@ function ProjectionMapping() {
     const projectionWindowsRef = useRef(new Map());
     const cachedImageDataRef = useRef(null);
     const cachedEdgeDataRef = useRef(null);
+    const precomputedEdgesRef = useRef(null); // Store all edge magnitudes
+    const edgeUpdateTimerRef = useRef(null);
     
     // Cache canvas contexts
     const contextsRef = useRef({
@@ -145,65 +149,98 @@ function ProjectionMapping() {
             originalCtx.drawImage(img, 0, 0);
         }
         
+        // Precompute edges for the new image
+        const imageData = originalCtx.getImageData(0, 0, img.width, img.height);
+        cachedImageDataRef.current = imageData;
+        
+        setEdgeProcessing(true);
+        // Use setTimeout to avoid blocking the UI
+        setTimeout(() => {
+            precomputedEdgesRef.current = precomputeEdges(imageData);
+            updateEdgeDetection(img);
+            setEdgeProcessing(false);
+        }, 10);
+        
         if (layers.length === 0) {
             createNewLayer();
         }
     };
     
     const updateEdgeDetection = useCallback((img = originalImage) => {
-        if (!img || !edgeCanvasRef.current) return;
+        if (!img || !edgeCanvasRef.current || !precomputedEdgesRef.current) return;
         
-        const originalCtx = getContext(originalCanvasRef, 'original');
         const edgeCtx = getContext(edgeCanvasRef, 'edge');
         
-        if (originalCtx && edgeCtx) {
-            const imageData = originalCtx.getImageData(0, 0, img.width, img.height);
-            cachedImageDataRef.current = imageData;
-            const edgeData = detectEdges(imageData, edgeSensitivity);
+        if (edgeCtx) {
+            // Use precomputed edges for instant update
+            const edgeData = applyEdgeThreshold(precomputedEdgesRef.current, edgeSensitivity);
             cachedEdgeDataRef.current = edgeData;
             edgeCtx.putImageData(edgeData, 0, 0);
         }
     }, [originalImage, edgeSensitivity, getContext]);
     
-    const detectEdges = (imageData, threshold) => {
+    // Precompute edge magnitudes once when image loads
+    const precomputeEdges = (imageData) => {
         const width = imageData.width;
         const height = imageData.height;
         const data = imageData.data;
-        const output = new ImageData(width, height);
-        const outputData = output.data;
+        const magnitudes = new Float32Array(width * height);
         
         const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
         const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
         
+        // Convert to grayscale first (optimization)
+        const grayData = new Uint8Array(width * height);
+        for (let i = 0; i < width * height; i++) {
+            const idx = i * 4;
+            grayData[i] = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
+        }
+        
+        // Compute edge magnitudes
         for (let y = 1; y < height - 1; y++) {
             for (let x = 1; x < width - 1; x++) {
                 let pixelX = 0;
                 let pixelY = 0;
                 
-                for (let j = -1; j <= 1; j++) {
-                    for (let i = -1; i <= 1; i++) {
-                        const idx = ((y + j) * width + (x + i)) * 4;
-                        const gray = (data[idx] + data[idx + 1] + data[idx + 2]) / 3;
-                        const kernelIdx = (j + 1) * 3 + (i + 1);
-                        pixelX += gray * sobelX[kernelIdx];
-                        pixelY += gray * sobelY[kernelIdx];
-                    }
-                }
+                // Unrolled loop for better performance
+                const row0 = (y - 1) * width;
+                const row1 = y * width;
+                const row2 = (y + 1) * width;
                 
-                const magnitude = Math.sqrt(pixelX * pixelX + pixelY * pixelY);
-                const idx = (y * width + x) * 4;
+                // Apply Sobel operators
+                pixelX = -grayData[row0 + x - 1] + grayData[row0 + x + 1]
+                       - 2 * grayData[row1 + x - 1] + 2 * grayData[row1 + x + 1]
+                       - grayData[row2 + x - 1] + grayData[row2 + x + 1];
+                       
+                pixelY = -grayData[row0 + x - 1] - 2 * grayData[row0 + x] - grayData[row0 + x + 1]
+                       + grayData[row2 + x - 1] + 2 * grayData[row2 + x] + grayData[row2 + x + 1];
                 
-                if (magnitude > threshold) {
-                    outputData[idx] = 255;
-                    outputData[idx + 1] = 255;
-                    outputData[idx + 2] = 255;
-                    outputData[idx + 3] = 255;
-                } else {
-                    outputData[idx] = 0;
-                    outputData[idx + 1] = 0;
-                    outputData[idx + 2] = 0;
-                    outputData[idx + 3] = 255;
-                }
+                magnitudes[y * width + x] = Math.sqrt(pixelX * pixelX + pixelY * pixelY);
+            }
+        }
+        
+        return { magnitudes, width, height };
+    };
+    
+    // Fast threshold application using precomputed magnitudes
+    const applyEdgeThreshold = (precomputed, threshold) => {
+        const { magnitudes, width, height } = precomputed;
+        const output = new ImageData(width, height);
+        const outputData = output.data;
+        
+        // Apply threshold in a single pass
+        for (let i = 0; i < magnitudes.length; i++) {
+            const idx = i * 4;
+            if (magnitudes[i] > threshold) {
+                outputData[idx] = 255;
+                outputData[idx + 1] = 255;
+                outputData[idx + 2] = 255;
+                outputData[idx + 3] = 255;
+            } else {
+                outputData[idx] = 0;
+                outputData[idx + 1] = 0;
+                outputData[idx + 2] = 0;
+                outputData[idx + 3] = 255;
             }
         }
         
@@ -310,9 +347,26 @@ function ProjectionMapping() {
             }
             
             tempCtx.putImageData(coloredMask, 0, 0);
-            ctx.drawImage(tempCanvas, 0, 0);
+            
+            // Apply base transform first, then layer transform
+            ctx.save();
+            ctx.translate(currentCanvasRef.current.width/2, currentCanvasRef.current.height/2);
+            
+            // Apply base transform
+            ctx.translate(baseTransform.x, baseTransform.y);
+            ctx.rotate(baseTransform.rotation * Math.PI / 180);
+            ctx.scale(baseTransform.scale, baseTransform.scale);
+            
+            // Apply layer transform (relative to base)
+            ctx.translate(currentLayer.transform.x, currentLayer.transform.y);
+            ctx.rotate(currentLayer.transform.rotation * Math.PI / 180);
+            ctx.scale(currentLayer.transform.scale, currentLayer.transform.scale);
+            
+            // Draw centered
+            ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
+            ctx.restore();
         }
-    }, [currentLayerIndex, layers, getContext]);
+    }, [currentLayerIndex, layers, getContext, baseTransform]);
     
     const updateCombinedCanvas = useCallback(() => {
         if (!combinedCanvasRef.current) return;
@@ -352,10 +406,27 @@ function ProjectionMapping() {
                 }
                 
                 tempCtx.putImageData(coloredMask, 0, 0);
-                ctx.drawImage(tempCanvas, 0, 0);
+                
+                // Apply transforms with base transform
+                ctx.save();
+                ctx.translate(combinedCanvasRef.current.width/2, combinedCanvasRef.current.height/2);
+                
+                // Apply base transform
+                ctx.translate(baseTransform.x, baseTransform.y);
+                ctx.rotate(baseTransform.rotation * Math.PI / 180);
+                ctx.scale(baseTransform.scale, baseTransform.scale);
+                
+                // Apply layer transform
+                ctx.translate(layer.transform.x, layer.transform.y);
+                ctx.rotate(layer.transform.rotation * Math.PI / 180);
+                ctx.scale(layer.transform.scale, layer.transform.scale);
+                
+                // Draw centered
+                ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
+                ctx.restore();
             }
         });
-    }, [layers, getContext]);
+    }, [layers, getContext, baseTransform]);
     
     useEffect(() => {
         updateCurrentCanvas();
@@ -367,7 +438,20 @@ function ProjectionMapping() {
     }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, bezierPoints]);
     
     useEffect(() => {
-        updateEdgeDetection();
+        // Debounce edge updates for smoother slider experience
+        if (edgeUpdateTimerRef.current) {
+            clearTimeout(edgeUpdateTimerRef.current);
+        }
+        
+        edgeUpdateTimerRef.current = setTimeout(() => {
+            updateEdgeDetection();
+        }, 16); // ~60fps
+        
+        return () => {
+            if (edgeUpdateTimerRef.current) {
+                clearTimeout(edgeUpdateTimerRef.current);
+            }
+        };
     }, [edgeSensitivity, updateEdgeDetection]);
     
     const toggleLayerVisibility = (index) => {
@@ -404,13 +488,14 @@ function ProjectionMapping() {
         setStatus(`Deleted ${layer.name}`);
     };
     
-    const downloadLayer = (index, includeTransform = true) => {
+    const downloadLayer = (index, transformMode = 'combined') => {
+        // transformMode: 'none', 'layer', 'base', 'combined'
         const layer = layers[index];
         const tempCanvas = document.createElement('canvas');
         
-        if (includeTransform) {
-            // Calculate bounds with transform
-            const bounds = getTransformedBounds(layer);
+        if (transformMode !== 'none') {
+            // Calculate bounds based on transform mode
+            const bounds = getTransformedBounds(layer, transformMode);
             tempCanvas.width = bounds.width;
             tempCanvas.height = bounds.height;
             const tempCtx = tempCanvas.getContext('2d');
@@ -422,8 +507,20 @@ function ProjectionMapping() {
             // Apply transforms from center
             tempCtx.save();
             tempCtx.translate(tempCanvas.width/2, tempCanvas.height/2);
-            tempCtx.rotate(layer.transform.rotation * Math.PI / 180);
-            tempCtx.scale(layer.transform.scale, layer.transform.scale);
+            
+            // Apply base transform if needed
+            if (transformMode === 'base' || transformMode === 'combined') {
+                tempCtx.translate(baseTransform.x, baseTransform.y);
+                tempCtx.rotate(baseTransform.rotation * Math.PI / 180);
+                tempCtx.scale(baseTransform.scale, baseTransform.scale);
+            }
+            
+            // Apply layer transform if needed
+            if (transformMode === 'layer' || transformMode === 'combined') {
+                tempCtx.translate(layer.transform.x, layer.transform.y);
+                tempCtx.rotate(layer.transform.rotation * Math.PI / 180);
+                tempCtx.scale(layer.transform.scale, layer.transform.scale);
+            }
             
             // Create white mask
             const maskCanvas = document.createElement('canvas');
@@ -467,17 +564,34 @@ function ProjectionMapping() {
         }
         
         const link = document.createElement('a');
-        link.download = layer.name.replace(/[^a-z0-9]/gi, '_') + (includeTransform ? '_transformed' : '') + '.png';
+        const suffix = transformMode === 'none' ? '' : '_' + transformMode;
+        link.download = layer.name.replace(/[^a-z0-9]/gi, '_') + suffix + '.png';
         link.href = tempCanvas.toDataURL();
         link.click();
         
         setStatus(`Downloaded ${layer.name}`);
     };
     
-    const getTransformedBounds = (layer) => {
-        const w = layer.mask.width * layer.transform.scale;
-        const h = layer.mask.height * layer.transform.scale;
-        const angle = layer.transform.rotation * Math.PI / 180;
+    const getTransformedBounds = (layer, transformMode = 'combined') => {
+        let w = layer.mask.width;
+        let h = layer.mask.height;
+        let totalRotation = 0;
+        
+        // Apply base transform if needed
+        if (transformMode === 'base' || transformMode === 'combined') {
+            w *= baseTransform.scale;
+            h *= baseTransform.scale;
+            totalRotation += baseTransform.rotation;
+        }
+        
+        // Apply layer transform if needed
+        if (transformMode === 'layer' || transformMode === 'combined') {
+            w *= layer.transform.scale;
+            h *= layer.transform.scale;
+            totalRotation += layer.transform.rotation;
+        }
+        
+        const angle = totalRotation * Math.PI / 180;
         
         // Calculate rotated bounds
         const cos = Math.abs(Math.cos(angle));
@@ -493,7 +607,7 @@ function ProjectionMapping() {
         
         function downloadNext() {
             if (downloadIndex < layers.length) {
-                downloadLayer(downloadIndex);
+                downloadLayer(downloadIndex, 'combined');
                 downloadIndex++;
                 setTimeout(downloadNext, 500);
             }
@@ -501,6 +615,49 @@ function ProjectionMapping() {
         
         downloadNext();
         setStatus('Downloading all layers...');
+    };
+    
+    const openBaseTransformWindow = () => {
+        if (!originalImage) {
+            setStatus('Please upload an image first');
+            return;
+        }
+        
+        const projWindow = window.open('/backend-static/projection_window.html', 'base_transform', 'width=800,height=600');
+        
+        projWindow.onload = () => {
+            // Get the original image data
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = originalImage.width;
+            tempCanvas.height = originalImage.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(originalImage, 0, 0);
+            const imageData = tempCtx.getImageData(0, 0, originalImage.width, originalImage.height);
+            
+            // Create a layer that contains the actual image data
+            const imageLayer = {
+                id: 'base',
+                name: 'Base Transform (Original Image)',
+                mask: imageData, // This contains the actual image data, not a mask
+                transform: { x: 0, y: 0, scale: 1, rotation: 0 } // Base gets identity layer transform
+            };
+            
+            projWindow.postMessage({
+                type: 'init',
+                layer: imageLayer,
+                layerIndex: -1, // Special index for base transform
+                baseTransform: baseTransform,
+                isBaseTransformMode: true,
+                showAsImage: true // Tell projection window to show as image, not mask
+            }, '*');
+        };
+        
+        setStatus('Opened base transform window');
+    };
+    
+    const resetBaseTransform = () => {
+        setBaseTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+        setStatus('Reset base transform');
     };
     
     const openProjectionWindow = (index) => {
@@ -517,7 +674,8 @@ function ProjectionMapping() {
             projWindow.postMessage({
                 type: 'init',
                 layer: layer,
-                layerIndex: index
+                layerIndex: index,
+                baseTransform: baseTransform
             }, '*');
         };
         
@@ -620,8 +778,17 @@ function ProjectionMapping() {
         // Use cached data if available, otherwise get fresh data
         const originalData = cachedImageDataRef.current ? cachedImageDataRef.current.data : 
             getContext(originalCanvasRef, 'original').getImageData(0, 0, width, height).data;
-        const edgeData = cachedEdgeDataRef.current ? cachedEdgeDataRef.current.data :
-            getContext(edgeCanvasRef, 'edge').getImageData(0, 0, width, height).data;
+        
+        // For edge detection, use precomputed magnitudes if available
+        let isEdge;
+        if (precomputedEdgesRef.current && fromEdgeCanvas) {
+            const { magnitudes } = precomputedEdgesRef.current;
+            isEdge = (idx) => magnitudes[idx] > edgeSensitivity;
+        } else {
+            const edgeData = cachedEdgeDataRef.current ? cachedEdgeDataRef.current.data :
+                getContext(edgeCanvasRef, 'edge').getImageData(0, 0, width, height).data;
+            isEdge = (idx) => edgeData[idx * 4] > 128;
+        }
         
         // Work directly on cached mask if available, otherwise clone
         let maskData;
@@ -653,8 +820,7 @@ function ProjectionMapping() {
             if (visited[idx]) continue;
             visited[idx] = 1;
             
-            const edgeIdx = idx * 4;
-            if (edgeData[edgeIdx] > 128) continue;
+            if (isEdge(idx)) continue;
             
             const pixelIdx = idx * 4;
             const colorDiff = Math.abs(originalData[pixelIdx] - startColor[0]) +
@@ -1101,6 +1267,8 @@ function ProjectionMapping() {
                     newLayers[event.data.layerIndex].transform = event.data.transform;
                     setLayers(newLayers);
                 }
+            } else if (event.data.type === 'updateBaseTransform') {
+                setBaseTransform(event.data.transform);
             }
         };
         
@@ -1490,6 +1658,51 @@ function ProjectionMapping() {
                 <h3>Image Upload</h3>
                 <input type="file" id="imageUpload" accept="image/*" onChange={handleImageUpload} />
                 
+                <h3>Base Transform (All Layers)</h3>
+                <div className="control-group" style={{ backgroundColor: '#2a2a2a', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
+                    <label>Position X: <span>{baseTransform.x}</span></label>
+                    <input 
+                        type="range" 
+                        min="-200" 
+                        max="200" 
+                        value={baseTransform.x}
+                        onChange={(e) => setBaseTransform({...baseTransform, x: parseInt(e.target.value)})}
+                    />
+                    
+                    <label>Position Y: <span>{baseTransform.y}</span></label>
+                    <input 
+                        type="range" 
+                        min="-200" 
+                        max="200" 
+                        value={baseTransform.y}
+                        onChange={(e) => setBaseTransform({...baseTransform, y: parseInt(e.target.value)})}
+                    />
+                    
+                    <label>Scale: <span>{baseTransform.scale.toFixed(1)}</span></label>
+                    <input 
+                        type="range" 
+                        min="0.1" 
+                        max="3" 
+                        step="0.1"
+                        value={baseTransform.scale}
+                        onChange={(e) => setBaseTransform({...baseTransform, scale: parseFloat(e.target.value)})}
+                    />
+                    
+                    <label>Rotation: <span>{baseTransform.rotation}°</span></label>
+                    <input 
+                        type="range" 
+                        min="-180" 
+                        max="180" 
+                        value={baseTransform.rotation}
+                        onChange={(e) => setBaseTransform({...baseTransform, rotation: parseInt(e.target.value)})}
+                    />
+                    
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                        <button onClick={openBaseTransformWindow} style={{ flex: 1 }}>📺 Preview</button>
+                        <button onClick={resetBaseTransform} style={{ flex: 1 }}>Reset</button>
+                    </div>
+                </div>
+                
                 <h3>Edge Detection</h3>
                 <div className="control-group">
                     <label>Sensitivity: <span>{edgeSensitivity}</span></label>
@@ -1499,7 +1712,9 @@ function ProjectionMapping() {
                         max="100" 
                         value={edgeSensitivity}
                         onChange={(e) => setEdgeSensitivity(parseInt(e.target.value))}
+                        disabled={edgeProcessing}
                     />
+                    {edgeProcessing && <small style={{display: 'block', marginTop: '5px'}}>Processing edges...</small>}
                 </div>
                 
                 <h3>Tools</h3>
@@ -1631,8 +1846,9 @@ function ProjectionMapping() {
                                     <button onClick={() => selectLayer(index)}>Edit</button>
                                     <button onClick={() => copyLayer(index)}>Copy</button>
                                     <button onClick={() => deleteLayer(index)}>Delete</button>
-                                    <button onClick={() => downloadLayer(index, false)} title="Download original">⬇</button>
-                                    <button onClick={() => downloadLayer(index, true)} title="Download with transform">⬇📐</button>
+                                    <button onClick={() => downloadLayer(index, 'none')} title="Download original">⬇</button>
+                                    <button onClick={() => downloadLayer(index, 'layer')} title="Download with layer transform only">⬇L</button>
+                                    <button onClick={() => downloadLayer(index, 'combined')} title="Download with all transforms">⬇📐</button>
                                     <button onClick={() => openProjectionWindow(index)}>📺</button>
                                 </div>
                             </div>

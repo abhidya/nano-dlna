@@ -125,6 +125,9 @@
     </div>
     <div class="controls" id="controls">
         <h3 id="layerName">Layer</h3>
+        <div id="modeIndicator" style="display: none; margin-bottom: 10px; padding: 5px; background: rgba(76, 175, 80, 0.2); border: 1px solid #4CAF50; border-radius: 4px; text-align: center;">
+            <strong>Base Transform Mode</strong>
+        </div>
         <div class="control-row">
             <label>X Position:</label>
             <input type="range" id="xPos" min="-500" max="500" value="0">
@@ -174,6 +177,14 @@
             scale: 1,
             rotation: 0
         };
+        let baseTransform = {
+            x: 0,
+            y: 0,
+            scale: 1,
+            rotation: 0
+        };
+        let isBaseTransformMode = false;
+        let showAsImage = false;
         
         // Dragging state
         let isDragging = false;
@@ -196,7 +207,18 @@
             if (event.data.type === 'init') {
                 layerData = event.data.layer;
                 layerIndex = event.data.layerIndex;
-                transform = { ...layerData.transform };
+                baseTransform = { ...event.data.baseTransform };
+                isBaseTransformMode = event.data.isBaseTransformMode || false;
+                showAsImage = event.data.showAsImage || false;
+                
+                if (isBaseTransformMode) {
+                    // In base transform mode, we edit the base transform
+                    transform = { ...baseTransform };
+                } else {
+                    // In layer mode, we edit the layer transform
+                    transform = { ...layerData.transform };
+                }
+                
                 maskBounds = {
                     width: layerData.mask.width,
                     height: layerData.mask.height
@@ -212,6 +234,12 @@
                 document.getElementById('scaleNum').value = transform.scale;
                 document.getElementById('rotation').value = transform.rotation;
                 document.getElementById('rotationNum').value = transform.rotation;
+                
+                // Update UI to show mode
+                if (isBaseTransformMode) {
+                    document.getElementById('controls').style.borderColor = '#4CAF50';
+                    document.getElementById('modeIndicator').style.display = 'block';
+                }
                 
                 render();
             } else if (event.data.type === 'updateMask') {
@@ -232,32 +260,65 @@
             tempCanvas.height = layerData.mask.height;
             const tempCtx = tempCanvas.getContext('2d');
             
-            // Convert mask data to white pixels
-            const imageData = new ImageData(layerData.mask.width, layerData.mask.height);
-            const maskData = layerData.mask.data;
-            const data = imageData.data;
-            
-            for (let i = 0; i < maskData.length; i += 4) {
-                if (maskData[i + 3] > 0) {
-                    data[i] = 255;
-                    data[i + 1] = 255;
-                    data[i + 2] = 255;
-                    data[i + 3] = 255;
-                } else {
-                    data[i] = 0;
-                    data[i + 1] = 0;
-                    data[i + 2] = 0;
-                    data[i + 3] = 255;
+            if (showAsImage) {
+                // Show the actual image data
+                console.log('Drawing as image, data:', layerData.mask);
+                console.log('First few pixels:', layerData.mask.data.slice(0, 16));
+                
+                // Create new ImageData from the mask data
+                const imgData = new ImageData(
+                    new Uint8ClampedArray(layerData.mask.data),
+                    layerData.mask.width,
+                    layerData.mask.height
+                );
+                
+                // Draw the image data
+                tempCtx.putImageData(imgData, 0, 0);
+            } else {
+                // Convert mask data to white pixels
+                const imageData = new ImageData(layerData.mask.width, layerData.mask.height);
+                const maskData = layerData.mask.data;
+                const data = imageData.data;
+                
+                for (let i = 0; i < maskData.length; i += 4) {
+                    if (maskData[i + 3] > 0) {
+                        data[i] = 255;
+                        data[i + 1] = 255;
+                        data[i + 2] = 255;
+                        data[i + 3] = 255;
+                    } else {
+                        data[i] = 0;
+                        data[i + 1] = 0;
+                        data[i + 2] = 0;
+                        data[i + 3] = 255;
+                    }
                 }
+                
+                tempCtx.putImageData(imageData, 0, 0);
             }
-            
-            tempCtx.putImageData(imageData, 0, 0);
             
             // Draw with transforms
             ctx.save();
-            ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
-            ctx.rotate(transform.rotation * Math.PI / 180);
-            ctx.scale(transform.scale, transform.scale);
+            ctx.translate(canvas.width/2, canvas.height/2);
+            
+            if (isBaseTransformMode) {
+                // In base mode, show only the base transform
+                ctx.translate(transform.x, transform.y);
+                ctx.rotate(transform.rotation * Math.PI / 180);
+                ctx.scale(transform.scale, transform.scale);
+            } else {
+                // In layer mode, show combined transforms
+                // Apply base transform first
+                ctx.translate(baseTransform.x, baseTransform.y);
+                ctx.rotate(baseTransform.rotation * Math.PI / 180);
+                ctx.scale(baseTransform.scale, baseTransform.scale);
+                
+                // Then apply layer transform
+                ctx.translate(transform.x, transform.y);
+                ctx.rotate(transform.rotation * Math.PI / 180);
+                ctx.scale(transform.scale, transform.scale);
+            }
+            
             ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
             ctx.restore();
             
@@ -279,14 +340,42 @@
             const height = layerData.mask.height;
             
             // Calculate transformed corners
-            const centerX = canvas.width / 2 + transform.x;
-            const centerY = canvas.height / 2 + transform.y;
-            const halfWidth = (width * transform.scale) / 2;
-            const halfHeight = (height * transform.scale) / 2;
+            let centerX = canvas.width / 2;
+            let centerY = canvas.height / 2;
+            let totalScale = 1;
+            let totalRotation = 0;
+            
+            if (isBaseTransformMode) {
+                // In base mode, only show base transform
+                centerX += transform.x;
+                centerY += transform.y;
+                totalScale = transform.scale;
+                totalRotation = transform.rotation;
+            } else {
+                // In layer mode, show combined transforms
+                // Apply base transform to center
+                centerX += baseTransform.x;
+                centerY += baseTransform.y;
+                
+                // Calculate combined position (base rotation affects layer position)
+                const baseCos = Math.cos(baseTransform.rotation * Math.PI / 180);
+                const baseSin = Math.sin(baseTransform.rotation * Math.PI / 180);
+                const rotatedX = transform.x * baseCos - transform.y * baseSin;
+                const rotatedY = transform.x * baseSin + transform.y * baseCos;
+                
+                centerX += rotatedX * baseTransform.scale;
+                centerY += rotatedY * baseTransform.scale;
+                
+                totalScale = baseTransform.scale * transform.scale;
+                totalRotation = baseTransform.rotation + transform.rotation;
+            }
+            
+            const halfWidth = (width * totalScale) / 2;
+            const halfHeight = (height * totalScale) / 2;
             
             // Calculate rotated corners
-            const cos = Math.cos(transform.rotation * Math.PI / 180);
-            const sin = Math.sin(transform.rotation * Math.PI / 180);
+            const cos = Math.cos(totalRotation * Math.PI / 180);
+            const sin = Math.sin(totalRotation * Math.PI / 180);
             
             function rotatePoint(x, y) {
                 return {
@@ -326,17 +415,24 @@
             outline.style.top = (centerY - halfHeight) + 'px';
             outline.style.width = (halfWidth * 2) + 'px';
             outline.style.height = (halfHeight * 2) + 'px';
-            outline.style.transform = `rotate(${transform.rotation}deg)`;
+            outline.style.transform = `rotate(${totalRotation}deg)`;
             outline.style.transformOrigin = 'center';
         }
         
         function updateTransform() {
             if (window.opener && !window.opener.closed) {
-                window.opener.postMessage({
-                    type: 'updateTransform',
-                    layerIndex: layerIndex,
-                    transform: transform
-                }, '*');
+                if (isBaseTransformMode) {
+                    window.opener.postMessage({
+                        type: 'updateBaseTransform',
+                        transform: transform
+                    }, '*');
+                } else {
+                    window.opener.postMessage({
+                        type: 'updateTransform',
+                        layerIndex: layerIndex,
+                        transform: transform
+                    }, '*');
+                }
             }
             render();
         }

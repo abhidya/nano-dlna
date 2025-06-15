@@ -31,6 +31,7 @@ class DeviceModel(Base):
     user_control_reason = Column(String, nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
+    playback_started_at = Column(DateTime(timezone=True), nullable=True)
     
     def to_dict(self):
         """
@@ -62,4 +63,5 @@ class DeviceModel(Base):
             "user_control_reason": self.user_control_reason,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+            "playback_started_at": self.playback_started_at.isoformat() if self.playback_started_at else None,
         }
