@@ -35,6 +35,7 @@ function PlayVideo() {
   const [videos, setVideos] = useState([]);
   const [selectedVideo, setSelectedVideo] = useState('');
   const [loop, setLoop] = useState(true);
+  const [syncOverlays, setSyncOverlays] = useState(false);
   const [loading, setLoading] = useState(true);
   const [playing, setPlaying] = useState(false);
   const [error, setError] = useState(null);
@@ -76,7 +77,7 @@ function PlayVideo() {
   const handlePlayVideo = async () => {
     try {
       setPlaying(true);
-      await deviceApi.playVideo(id, selectedVideo, loop);
+      await deviceApi.playVideo(id, selectedVideo, loop, syncOverlays);
       
       setSnackbar({
         open: true,
@@ -192,6 +193,18 @@ function PlayVideo() {
               />
             }
             label="Loop video"
+            sx={{ mb: 2 }}
+          />
+          
+          <FormControlLabel
+            control={
+              <Checkbox
+                checked={syncOverlays}
+                onChange={(e) => setSyncOverlays(e.target.checked)}
+                disabled={playing}
+              />
+            }
+            label="Sync overlay windows"
             sx={{ mb: 3 }}
           />
           

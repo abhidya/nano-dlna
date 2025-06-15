@@ -15,6 +15,7 @@ from routers import device_router, video_router, streaming_router, renderer_rout
 from core.device_manager import DeviceManager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
+from core.streaming_service import get_streaming_service
 
 # Configure logging
 import logging.handlers
@@ -121,6 +122,10 @@ async def startup_event():
     streaming_service = get_twisted_streaming()
     streaming_service.stop_server()  # Explicitly stop any existing servers
     streaming_registry = StreamingSessionRegistry.get_instance()
+    
+    # Inject device_manager into the StreamingService singleton
+    overlay_streaming_service = get_streaming_service()
+    overlay_streaming_service.set_device_manager(device_manager)
 
     # Get or create the renderer service
     try:

@@ -11,12 +11,12 @@ from schemas.overlay import (
     OverlayConfigResponse,
     OverlayStreamResponse
 )
-from core.streaming_service import StreamingService
+from core.streaming_service import get_streaming_service
 
 class OverlayService:
     def __init__(self, db: Session):
         self.db = db
-        self.streaming_service = StreamingService()
+        self.streaming_service = get_streaming_service()
 
     def create_config(self, config_data: OverlayConfigCreate) -> OverlayConfigResponse:
         """Create a new overlay configuration"""

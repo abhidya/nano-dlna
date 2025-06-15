@@ -2,7 +2,7 @@ import axios from 'axios';
 
 // Create an axios instance with default config
 const api = axios.create({
-  baseURL: '/api',  // Use relative URL to work with the proxy in package.json
+  baseURL: `${window.location.protocol}//${window.location.host}/api`,
   headers: {
     'Content-Type': 'application/json',
   },
@@ -63,8 +63,10 @@ const deviceApi = {
   updateDevice: (id, data) => api.put(`/devices/${id}`, data),
   deleteDevice: (id) => api.delete(`/devices/${id}`),
   discoverDevices: () => api.get('/devices/discover'),
-  playVideo: (deviceId, videoId, loop = false) => 
-    api.post(`/devices/${deviceId}/play`, { video_id: videoId, loop }),
+  playVideo: (deviceId, videoId, loop = false, syncOverlays = false) => 
+    api.post(`/devices/${deviceId}/play`, { video_id: videoId, loop }, {
+      params: { sync_overlays: syncOverlays }
+    }),
   stopVideo: (deviceId) => api.post(`/devices/${deviceId}/stop`),
   pauseVideo: (deviceId) => api.post(`/devices/${deviceId}/pause`),
   seekVideo: (deviceId, position) => 

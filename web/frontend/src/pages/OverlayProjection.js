@@ -26,7 +26,9 @@ import {
     DialogActions,
     Chip,
     CircularProgress,
-    Tooltip
+    Tooltip,
+    Slider,
+    Stack
 } from '@mui/material';
 import {
     Add as AddIcon,
@@ -39,7 +41,11 @@ import {
     DirectionsBus as TransitIcon,
     Visibility as VisibilityIcon,
     VisibilityOff as VisibilityOffIcon,
-    NightsStay as NightsStayIcon
+    NightsStay as NightsStayIcon,
+    Brightness4 as BrightnessIcon,
+    LightMode as LightModeIcon,
+    DarkMode as DarkModeIcon,
+    Sync as SyncIcon
 } from '@mui/icons-material';
 import { api } from '../services/api';
 
@@ -54,9 +60,12 @@ function OverlayProjection() {
     const [apiConfigDialog, setApiConfigDialog] = useState(false);
     const [configNameDialog, setConfigNameDialog] = useState(false);
     const [newConfigName, setNewConfigName] = useState('');
+    const [brightness, setBrightness] = useState(100);
+    const [brightnessLoading, setBrightnessLoading] = useState(false);
     
     useEffect(() => {
         fetchVideos();
+        fetchBrightness();
     }, []);
     
     useEffect(() => {
@@ -84,6 +93,28 @@ function OverlayProjection() {
             console.error('Error fetching overlay configs:', error);
             // If endpoint doesn't exist yet, just set empty array
             setOverlayConfigs([]);
+        }
+    };
+    
+    const fetchBrightness = async () => {
+        try {
+            const response = await api.get('/overlay/brightness');
+            setBrightness(response.data.brightness);
+        } catch (error) {
+            console.error('Error fetching brightness:', error);
+        }
+    };
+    
+    const updateBrightness = async (value) => {
+        setBrightness(value);
+        setBrightnessLoading(true);
+        try {
+            await api.post(`/overlay/brightness?brightness=${value}`);
+        } catch (error) {
+            console.error('Error updating brightness:', error);
+            setError('Failed to update brightness');
+        } finally {
+            setBrightnessLoading(false);
         }
     };
     
@@ -157,7 +188,15 @@ function OverlayProjection() {
     
     const updateConfig = async (config) => {
         try {
-            const response = await api.put(`/overlay/configs/${config.id}`, config);
+            // Extract only the fields that the backend expects
+            const updateData = {
+                name: config.name,
+                video_transform: config.video_transform,
+                widgets: config.widgets,
+                api_configs: config.api_configs
+            };
+            
+            const response = await api.put(`/overlay/configs/${config.id}`, updateData);
             const updatedConfigs = overlayConfigs.map(c => 
                 c.id === config.id ? response.data : c
             );
@@ -258,7 +297,7 @@ function OverlayProjection() {
         
         window.addEventListener('message', handleMessage);
         return () => window.removeEventListener('message', handleMessage);
-    }, [selectedConfig, updateConfig]);
+    }, [selectedConfig]);
     
     const toggleWidgetVisibility = (widgetId) => {
         if (!selectedConfig) return;
@@ -459,6 +498,107 @@ function OverlayProjection() {
             {/* Launch Controls */}
             <Grid item xs={12}>
                 <Paper sx={{ p: 3 }}>
+                    {/* Brightness Control */}
+                    <Box sx={{ mb: 4 }}>
+                        <Typography variant="h6" gutterBottom sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                            <BrightnessIcon />
+                            Brightness Control
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                            Adjust brightness for all overlay projections
+                        </Typography>
+                        
+                        <Box sx={{ px: 2 }}>
+                            <Stack spacing={2} direction="row" sx={{ mb: 2 }} alignItems="center">
+                                <DarkModeIcon />
+                                <Slider
+                                    value={brightness}
+                                    onChange={(e, value) => updateBrightness(value)}
+                                    aria-labelledby="brightness-slider"
+                                    valueLabelDisplay="auto"
+                                    step={5}
+                                    marks={[
+                                        { value: 0, label: '0%' },
+                                        { value: 25, label: '25%' },
+                                        { value: 50, label: '50%' },
+                                        { value: 75, label: '75%' },
+                                        { value: 100, label: '100%' }
+                                    ]}
+                                    min={0}
+                                    max={100}
+                                    disabled={brightnessLoading}
+                                    sx={{
+                                        '& .MuiSlider-valueLabel': {
+                                            backgroundColor: 'primary.main',
+                                        }
+                                    }}
+                                />
+                                <LightModeIcon />
+                            </Stack>
+                            
+                            <Stack direction="row" spacing={1} justifyContent="center">
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => updateBrightness(0)}
+                                    disabled={brightnessLoading}
+                                >
+                                    Lights Off
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => updateBrightness(25)}
+                                    disabled={brightnessLoading}
+                                >
+                                    Dim
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => updateBrightness(75)}
+                                    disabled={brightnessLoading}
+                                >
+                                    Normal
+                                </Button>
+                                <Button
+                                    variant="outlined"
+                                    size="small"
+                                    onClick={() => updateBrightness(100)}
+                                    disabled={brightnessLoading}
+                                >
+                                    Full
+                                </Button>
+                            </Stack>
+                        </Box>
+                    </Box>
+                    
+                    {/* Sync Button */}
+                    <Box sx={{ mb: 2, display: 'flex', justifyContent: 'center' }}>
+                        <Button
+                            variant="outlined"
+                            startIcon={<SyncIcon />}
+                            onClick={async () => {
+                                try {
+                                    await api.post('/overlay/sync', null, {
+                                        params: {
+                                            triggered_by: 'manual',
+                                            video_name: selectedVideo?.name
+                                        }
+                                    });
+                                    // Visual feedback
+                                    setError('');
+                                } catch (error) {
+                                    console.error('Sync error:', error);
+                                    setError('Failed to sync overlays');
+                                }
+                            }}
+                        >
+                            Sync All Overlays
+                        </Button>
+                    </Box>
+                    
+                    {/* Launch Button */}
                     <Box sx={{ display: 'flex', gap: 2, justifyContent: 'center', alignItems: 'center' }}>
                         <Button
                             variant="contained"

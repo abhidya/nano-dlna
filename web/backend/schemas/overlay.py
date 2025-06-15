@@ -1,14 +1,14 @@
 from pydantic import BaseModel
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime
 
 class WidgetPosition(BaseModel):
-    x: int
-    y: int
+    x: Union[int, float]
+    y: Union[int, float]
 
 class WidgetSize(BaseModel):
-    width: int
-    height: int
+    width: Union[int, float]
+    height: Union[int, float]
 
 class Widget(BaseModel):
     id: str

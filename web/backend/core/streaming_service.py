@@ -39,11 +39,11 @@ class StreamingRequestHandler(SimpleHTTPRequestHandler):
                 
             return super().handle_one_request()
         except BrokenPipeError:
-            logger.warning("Broken pipe error - client disconnected")
+            logger.info("Broken pipe error - client disconnected")
             if self.streaming_session_id:
                 self.registry.record_connection_event(self.streaming_session_id, False)
         except ConnectionResetError:
-            logger.warning("Connection reset by peer")
+            logger.info("Connection reset by peer")
             if self.streaming_session_id:
                 self.registry.record_connection_event(self.streaming_session_id, False)
         except Exception as e:
@@ -222,7 +222,7 @@ class StreamingRequestHandler(SimpleHTTPRequestHandler):
                         bytes_transferred = 0
                         
                 except (BrokenPipeError, ConnectionResetError):
-                    logger.warning("Client disconnected during file transfer")
+                    logger.info("Client disconnected during file transfer")
                     if self.streaming_session_id:
                         self.registry.record_connection_event(self.streaming_session_id, False)
                     break
@@ -248,11 +248,12 @@ class StreamingService:
     """
     Service for streaming media files over HTTP
     """
-    def __init__(self):
+    def __init__(self, device_manager=None):
         self.servers = {}
         self.temp_dirs = {}
         self.file_to_session_map = {}  # Map file paths to session IDs
         self.registry = StreamingSessionRegistry.get_instance()
+        self.device_manager = device_manager  # Store reference to device manager
         
         # Register health check handler
         self.registry.register_health_check_handler(self._handle_stalled_session)
@@ -516,6 +517,14 @@ class StreamingService:
         """
         logger.warning(f"Handling stalled session {session.session_id} for device {session.device_name}")
         
+        # Special handling for overlay sessions - they don't have a device in device_manager
+        if session.device_name == "overlay":
+            logger.info(f"Overlay session {session.session_id} is stalled, marking for cleanup")
+            # Mark session as error state to prevent repeated health checks
+            session.status = "error"
+            session.active = False
+            return
+        
         # Try to recover the streaming connection
         if self._attempt_streaming_reconnection(session):
             logger.info(f"Successfully recovered streaming session {session.session_id}")
@@ -523,20 +532,23 @@ class StreamingService:
             # If reconnection failed, notify the device manager to take action
             logger.info(f"Reconnection failed for session {session.session_id}, attempting device manager recovery")
             try:
-                # Access the global device_manager from main
-                from web.backend import main
-                if hasattr(main, 'device_manager'):
-                    device = main.device_manager.get_device(session.device_name)
+                # Use the stored device_manager reference
+                if self.device_manager:
+                    device = self.device_manager.get_device(session.device_name)
                     if device:
                         # Let the device handle the streaming health check
                         if hasattr(device, '_handle_streaming_health_check'):
-                            device._handle_streaming_health_check(session)
+                            device._handle_streaming_health_check(session.session_id, "streaming_stalled")
                         else:
                             logger.warning(f"Device {session.device_name} does not support streaming health checks")
+                    else:
+                        logger.warning(f"Device {session.device_name} not found in device manager")
                 else:
-                    logger.warning("Device manager not available in main module")
+                    logger.warning("Device manager not available")
             except Exception as e:
                 logger.error(f"Error notifying device manager about stalled session: {e}")
+                # Mark session as error to prevent repeated attempts
+                session.status = "error"
                 
     def get_or_create_stream(self, video_path: str, device_name: str = "overlay") -> dict:
         """
@@ -630,6 +642,11 @@ class StreamingService:
                 }
             raise
     
+    def set_device_manager(self, device_manager):
+        """Set the device manager reference after initialization"""
+        self.device_manager = device_manager
+        logger.info("Device manager reference updated in StreamingService")
+    
     def _cleanup_stale_streams(self):
         """Clean up streams that have no active sessions"""
         logger.info("Cleaning up stale streaming servers")
@@ -692,3 +709,14 @@ class StreamingService:
         except Exception as e:
             logger.error(f"Error during streaming reconnection attempt: {e}")
             return False
+
+
+# Global singleton instance
+_streaming_service_instance = None
+
+def get_streaming_service():
+    """Get the global StreamingService instance"""
+    global _streaming_service_instance
+    if _streaming_service_instance is None:
+        _streaming_service_instance = StreamingService()
+    return _streaming_service_instance

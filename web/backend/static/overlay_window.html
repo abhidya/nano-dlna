@@ -241,13 +241,18 @@
         }
         
         .transit-widget {
-            background: linear-gradient(135deg, rgba(0, 91, 149, 0.9), rgba(0, 123, 193, 0.9));
+            background: #0a0a0a;
+            border: 3px solid #333;
+            box-shadow: inset 0 0 20px rgba(0,0,0,0.8);
         }
         
         .transit-widget h2 {
             font-size: 24px;
             margin-bottom: 15px;
             font-weight: 300;
+            color: #ffcc00;
+            text-align: center;
+            text-transform: uppercase;
         }
         
         .transit-content {
@@ -255,23 +260,103 @@
             line-height: 1.6;
         }
         
-        .prediction {
-            margin: 10px 0;
+        /* Split-flap display styles */
+        .split-flap-display {
             padding: 10px;
-            background: rgba(255, 255, 255, 0.1);
-            border-radius: 5px;
+        }
+        
+        .split-flap-row {
             display: flex;
-            justify-content: space-between;
+            margin: 10px 0;
             align-items: center;
+            gap: 20px;
         }
         
-        .prediction-route {
-            font-weight: 500;
+        .flap-section {
+            display: flex;
+            gap: 2px;
         }
         
-        .prediction-time {
-            color: #4CAF50;
-            font-weight: 600;
+        .flap-char {
+            display: inline-block;
+            width: 30px;
+            height: 45px;
+            position: relative;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #ffcc00;
+            font-size: 28px;
+            font-weight: bold;
+            text-align: center;
+            line-height: 45px;
+            font-family: 'Courier New', monospace;
+            overflow: hidden;
+            text-transform: uppercase;
+        }
+        
+        /* Route section - larger and green */
+        .route-section .flap-char {
+            color: #00ff00;
+            font-size: 32px;
+            width: 35px;
+            height: 50px;
+            line-height: 50px;
+            text-shadow: 0 0 5px currentColor;
+        }
+        
+        /* Time section - red for urgency */
+        .time-section .flap-char {
+            color: #ff3333;
+            text-shadow: 0 0 5px currentColor;
+        }
+        
+        /* Destination section */
+        .destination-section .flap-char {
+            width: 25px;
+            height: 40px;
+            font-size: 24px;
+            line-height: 40px;
+        }
+        
+        /* Active flipping state */
+        .flap-char.flipping-active {
+            box-shadow: 0 0 10px rgba(255, 204, 0, 0.5);
+        }
+        
+        /* Single flip animation */
+        .flap-char.flip {
+            animation: splitFlap 0.1s ease-out;
+        }
+        
+        @keyframes splitFlap {
+            0% {
+                transform: rotateX(0deg);
+                background: #1a1a1a;
+            }
+            50% {
+                transform: rotateX(-90deg);
+                background: #000;
+                color: transparent;
+            }
+            100% {
+                transform: rotateX(0deg);
+                background: #1a1a1a;
+            }
+        }
+        
+        /* Blur during rapid flipping */
+        .flap-char.flipping-active:not(.flip) {
+            filter: blur(0.8px);
+        }
+        
+        /* Section labels */
+        .section-label {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-right: 10px;
+            width: 60px;
+            text-align: right;
         }
         
         /* Control panel */
@@ -401,6 +486,19 @@
         </div>
     </div>
     
+    <div id="brightness-overlay" style="
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100vw;
+        height: 100vh;
+        background: black;
+        pointer-events: none;
+        z-index: 9998;
+        opacity: 0;
+        transition: opacity 0.3s ease;
+    "></div>
+    
     <div class="controls" id="controls">
         <h2 style="margin-bottom: 20px; font-weight: 300;">Overlay Controls</h2>
         
@@ -422,6 +520,20 @@
         <div class="control-group">
             <h3>Widget Visibility</h3>
             <div id="widget-visibility-controls"></div>
+        </div>
+        
+        <div class="control-group" id="transit-settings" style="display: none;">
+            <h3>Transit Display Settings</h3>
+            <label style="display: flex; align-items: center; margin-bottom: 10px;">
+                <input type="checkbox" id="transit-splitflap" onchange="toggleTransitDisplay(this.checked)" style="margin-right: 8px;">
+                Split-Flap Display (Classic Board Style)
+            </label>
+            <label>Animation Speed</label>
+            <select id="transit-flip-speed" onchange="updateFlipSpeed(this.value)" style="width: 100%; padding: 5px; background: #333; border: 1px solid #555; color: white; border-radius: 4px;">
+                <option value="slow">Slow</option>
+                <option value="normal" selected>Normal</option>
+                <option value="fast">Fast</option>
+            </select>
         </div>
         
         <div class="control-group">
@@ -496,6 +608,9 @@
                 
                 // Start data updates
                 startDataUpdates();
+                
+                // Start combined status polling for brightness and sync
+                startOverlayStatusPolling();
             }
         });
         
@@ -570,10 +685,20 @@
                         <div class="date-content">Loading...</div>
                     `;
                 } else if (widget.type === 'transit') {
-                    widgetEl.innerHTML = `
-                        <h2>Transit - ${widget.config.stopName || 'Nearby Stop'}</h2>
-                        <div class="transit-content">Loading predictions...</div>
-                    `;
+                    const displayStyle = widget.config.displayStyle || 'simple';
+                    
+                    if (displayStyle === 'splitFlap') {
+                        widgetEl.innerHTML = `
+                            <div class="transit-content split-flap-display" data-stop-name="${widget.config.stopName || 'Nearby Stop'}">
+                                <div class="initializing">Initializing display...</div>
+                            </div>
+                        `;
+                    } else {
+                        widgetEl.innerHTML = `
+                            <h2>Transit - ${widget.config.stopName || 'Nearby Stop'}</h2>
+                            <div class="transit-content">Loading predictions...</div>
+                        `;
+                    }
                 } else if (widget.type === 'lights') {
                     widgetEl.innerHTML = `
                         <div style="text-align: center; display: flex; flex-direction: column; align-items: center;">
@@ -619,6 +744,8 @@
             const container = document.getElementById('widget-visibility-controls');
             container.innerHTML = '';
             
+            let hasTransitWidget = false;
+            
             widgets.forEach(widget => {
                 const control = document.createElement('label');
                 control.style.display = 'block';
@@ -634,7 +761,26 @@
                     ${widgetLabel}
                 `;
                 container.appendChild(control);
+                
+                if (widget.type === 'transit') {
+                    hasTransitWidget = true;
+                }
             });
+            
+            // Show/hide transit settings based on widget presence
+            const transitSettings = document.getElementById('transit-settings');
+            if (transitSettings) {
+                transitSettings.style.display = hasTransitWidget ? 'block' : 'none';
+                
+                // Set checkbox state if we have transit widgets
+                if (hasTransitWidget) {
+                    const transitWidget = widgets.find(w => w.type === 'transit');
+                    const splitFlapCheckbox = document.getElementById('transit-splitflap');
+                    if (splitFlapCheckbox && transitWidget) {
+                        splitFlapCheckbox.checked = transitWidget.config.displayStyle === 'splitFlap';
+                    }
+                }
+            }
         }
         
         function toggleWidgetVisibility(widgetId, visible) {
@@ -837,27 +983,147 @@
         
         // Removed addLightsWidget function - lights widget is now added through React frontend
         
-        // Lights toggle function
-        function toggleLights() {
-            const blackout = document.getElementById('blackout-overlay');
-            const controls = document.getElementById('controls');
-            const lightSwitch = blackout.querySelector('.light-switch');
+        // Combined status polling for brightness and sync
+        function startOverlayStatusPolling() {
+            let lastSyncEventId = null;
+            let eventSource = null;
+            let reconnectTimeout = null;
             
-            if (blackout.classList.contains('active')) {
-                // Turn lights on
-                blackout.classList.remove('active');
-                controls.style.display = 'block';
-            } else {
-                // Turn lights off
-                blackout.classList.add('active');
-                controls.style.display = 'none';
+            function connectEventSource() {
+                if (eventSource) {
+                    eventSource.close();
+                }
                 
-                // Position the light switch based on the lights widget position
-                const lightsWidget = widgets.find(w => w.type === 'lights' && w.visible);
-                if (lightsWidget) {
-                    lightSwitch.style.position = 'absolute';
-                    lightSwitch.style.left = lightsWidget.position.x + 'px';
-                    lightSwitch.style.top = lightsWidget.position.y + 'px';
+                console.log('Connecting to overlay events stream...');
+                eventSource = new EventSource('/api/overlay/events');
+                
+                eventSource.onopen = () => {
+                    console.log('Connected to overlay events stream');
+                    if (reconnectTimeout) {
+                        clearTimeout(reconnectTimeout);
+                        reconnectTimeout = null;
+                    }
+                };
+                
+                eventSource.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        
+                        // Handle initialization or brightness updates
+                        if (data.type === 'init' || data.type === 'brightness') {
+                            const brightness = data.type === 'init' ? data.data.brightness : data.data.brightness;
+                            const opacity = (100 - brightness) / 100;
+                            document.getElementById('brightness-overlay').style.opacity = opacity;
+                            
+                            // Initialize sync state from init event
+                            if (data.type === 'init' && data.data.sync && data.data.sync.event_id) {
+                                lastSyncEventId = data.data.sync.event_id;
+                            }
+                        }
+                        
+                        // Handle sync events
+                        if (data.type === 'sync' && data.data.event_id !== lastSyncEventId) {
+                            lastSyncEventId = data.data.event_id;
+                            console.log(`Sync event detected: ${data.data.triggered_by} at ${data.data.timestamp}`);
+                            
+                            // Sync video playback
+                            const video = document.getElementById('bg-video');
+                            const syncStartTime = performance.now();
+                            
+                            video.currentTime = 0;
+                            video.play().then(() => {
+                                const syncTime = performance.now() - syncStartTime;
+                                console.log(`Video synced in ${syncTime}ms`);
+                            }).catch(err => {
+                                console.error('Failed to sync video:', err);
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Error processing event:', error);
+                    }
+                };
+                
+                eventSource.onerror = (error) => {
+                    console.error('EventSource error:', error);
+                    eventSource.close();
+                    
+                    // Reconnect after delay
+                    if (!reconnectTimeout) {
+                        reconnectTimeout = setTimeout(() => {
+                            console.log('Attempting to reconnect...');
+                            connectEventSource();
+                        }, 5000);
+                    }
+                };
+            }
+            
+            // Start connection
+            connectEventSource();
+            
+            // Fallback polling (only if EventSource is not supported)
+            if (!window.EventSource) {
+                console.warn('EventSource not supported, falling back to polling');
+                // Original polling code here as fallback
+                async function updateOverlayStatus() {
+                    try {
+                        const response = await fetch('/api/overlay/status');
+                        const status = await response.json();
+                        
+                        const opacity = (100 - status.brightness) / 100;
+                        document.getElementById('brightness-overlay').style.opacity = opacity;
+                        
+                        if (status.sync && status.sync.event_id && status.sync.event_id !== lastSyncEventId) {
+                            lastSyncEventId = status.sync.event_id;
+                            console.log(`Sync event detected: ${status.sync.triggered_by} at ${status.sync.timestamp}`);
+                            
+                            const video = document.getElementById('bg-video');
+                            video.currentTime = 0;
+                            video.play().catch(err => {
+                                console.error('Failed to sync video:', err);
+                            });
+                        }
+                    } catch (error) {
+                        console.error('Status update error:', error);
+                    }
+                }
+                
+                setInterval(updateOverlayStatus, 5000); // Reduced frequency for fallback
+            }
+        }
+        
+        // Lights toggle function - updated to use brightness API
+        async function toggleLights() {
+            try {
+                // Get current brightness
+                const response = await fetch('/api/overlay/brightness');
+                const data = await response.json();
+                
+                // Toggle between 0 and 100
+                const newBrightness = data.brightness > 50 ? 0 : 100;
+                
+                await fetch('/api/overlay/brightness?brightness=' + newBrightness, {
+                    method: 'POST'
+                });
+                
+                // Update controls visibility based on brightness
+                const controls = document.getElementById('controls');
+                if (newBrightness === 0) {
+                    controls.style.display = 'none';
+                } else {
+                    controls.style.display = 'block';
+                }
+            } catch (error) {
+                console.error('Toggle lights error:', error);
+                // Fallback to original behavior
+                const blackout = document.getElementById('blackout-overlay');
+                const controls = document.getElementById('controls');
+                
+                if (blackout.classList.contains('active')) {
+                    blackout.classList.remove('active');
+                    controls.style.display = 'block';
+                } else {
+                    blackout.classList.add('active');
+                    controls.style.display = 'none';
                 }
             }
         }
@@ -1079,24 +1345,31 @@
                     }
                     
                     const content = widget.querySelector('.transit-content');
+                    const widgetEl = document.getElementById(widget.id);
                     
                     if (predictions.length === 0) {
                         content.innerHTML = 'No predictions available';
                         return;
                     }
                     
-                    // Show up to 3 predictions
-                    const html = predictions.slice(0, 3).map(prediction => {
-                        const minutes = prediction.values[0]?.minutes || 'N/A';
-                        return `
-                            <div class="prediction">
-                                <span class="prediction-route">${prediction.route.title}</span>
-                                <span class="prediction-time">${minutes} min</span>
-                            </div>
-                        `;
-                    }).join('');
-                    
-                    content.innerHTML = html;
+                    // Check if this is a split-flap display
+                    if (widgetConfig?.displayStyle === 'splitFlap' || content.classList.contains('split-flap-display')) {
+                        // Update split-flap display with animations
+                        updateSplitFlapDisplay(content, predictions);
+                    } else {
+                        // Show simple display up to 3 predictions
+                        const html = predictions.slice(0, 3).map(prediction => {
+                            const minutes = prediction.values[0]?.minutes || 'N/A';
+                            return `
+                                <div class="prediction">
+                                    <span class="prediction-route">${prediction.route.title}</span>
+                                    <span class="prediction-time">${minutes} min</span>
+                                </div>
+                            `;
+                        }).join('');
+                        
+                        content.innerHTML = html;
+                    }
                 });
             } catch (error) {
                 console.error('Transit update error:', error);
@@ -1104,6 +1377,180 @@
                     widget.querySelector('.transit-content').innerHTML = 'Transit data unavailable';
                 });
             }
+        }
+        
+        // Split-flap display functions
+        const FLAP_CHARS = ' ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.-:';
+        let flipSpeed = 'normal';
+        
+        function toggleTransitDisplay(useSplitFlap) {
+            widgets.forEach(widget => {
+                if (widget.type === 'transit') {
+                    widget.config.displayStyle = useSplitFlap ? 'splitFlap' : 'simple';
+                }
+            });
+            createWidgets();
+            startDataUpdates();
+        }
+        
+        function updateFlipSpeed(speed) {
+            flipSpeed = speed;
+            widgets.forEach(widget => {
+                if (widget.type === 'transit' && widget.config.displayStyle === 'splitFlap') {
+                    widget.config.flipSpeed = speed;
+                }
+            });
+        }
+        
+        function createSplitFlapDisplay(predictions, stopName) {
+            // Create header row with animated title
+            const headerText = `TRANSIT - ${stopName.toUpperCase()}`.padEnd(24, ' ');
+            let html = `
+                <div class="split-flap-row header-row">
+                    <div class="flap-section header-section">
+                        ${headerText.split('').map((char, i) => 
+                            `<div class="flap-char" data-current="${char}" data-position="header-${i}">${char}</div>`
+                        ).join('')}
+                    </div>
+                </div>
+            `;
+            
+            // Add prediction rows
+            html += predictions.slice(0, 3).map((prediction, index) => {
+                const routeChars = prediction.route.title.toUpperCase().substring(0, 4).padEnd(4, ' ');
+                const minutesStr = String(prediction.values[0]?.minutes || 0).padStart(2, '0');
+                
+                return `
+                    <div class="split-flap-row" data-index="${index}">
+                        <div class="flap-section route-section">
+                            ${routeChars.split('').map((char, i) => 
+                                `<div class="flap-char" data-current="${char}" data-position="route-${i}">${char}</div>`
+                            ).join('')}
+                        </div>
+                        <div class="flap-section destination-section">
+                            ${prediction.route.title.toUpperCase().substring(0, 12).padEnd(12, ' ').split('').map((char, i) => 
+                                `<div class="flap-char" data-current="${char}" data-position="dest-${i}">${char}</div>`
+                            ).join('')}
+                        </div>
+                        <div class="flap-section time-section">
+                            ${minutesStr.split('').map((char, i) => 
+                                `<div class="flap-char" data-current="${char}" data-position="time-${i}">${char}</div>`
+                            ).join('')}
+                            <div class="flap-char" data-current=" " data-position="space"> </div>
+                            <div class="flap-char" data-current="M" data-position="m">M</div>
+                            <div class="flap-char" data-current="I" data-position="i">I</div>
+                            <div class="flap-char" data-current="N" data-position="n">N</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            
+            return html;
+        }
+        
+        async function updateSplitFlapDisplay(container, predictions) {
+            const currentHTML = container.innerHTML;
+            const stopName = container.dataset.stopName || 'Nearby Stop';
+            
+            // If empty, create initial display
+            if (!container.querySelector('.split-flap-row')) {
+                container.innerHTML = createSplitFlapDisplay(predictions, stopName);
+                return;
+            }
+            
+            // Update existing display with animations
+            const rows = container.querySelectorAll('.split-flap-row');
+            
+            // Animate header row
+            const headerRow = container.querySelector('.header-row');
+            if (headerRow) {
+                const headerText = `TRANSIT - ${stopName.toUpperCase()}`.padEnd(24, ' ');
+                const headerFlaps = headerRow.querySelectorAll('.flap-char');
+                animateFlaps(headerFlaps, headerText, true);
+            }
+            
+            // Animate prediction rows
+            const predictionRows = container.querySelectorAll('.split-flap-row:not(.header-row)');
+            for (let i = 0; i < Math.min(predictions.length, 3); i++) {
+                const prediction = predictions[i];
+                const row = predictionRows[i];
+                if (!row) continue;
+                
+                // Update route - force animate all characters
+                const routeChars = prediction.route.title.toUpperCase().substring(0, 4).padEnd(4, ' ');
+                const routeFlaps = row.querySelectorAll('.route-section .flap-char');
+                animateFlaps(routeFlaps, routeChars, true);
+                
+                // Update destination - force animate all characters
+                const destChars = prediction.route.title.toUpperCase().substring(0, 12).padEnd(12, ' ');
+                const destFlaps = row.querySelectorAll('.destination-section .flap-char');
+                animateFlaps(destFlaps, destChars, true);
+                
+                // Update time - animate all characters including " MIN"
+                const minutesStr = String(prediction.values[0]?.minutes || 0).padStart(2, '0');
+                const timeStr = minutesStr + ' MIN';
+                const timeFlaps = row.querySelectorAll('.time-section .flap-char');
+                animateFlaps(timeFlaps, timeStr, true);
+            }
+        }
+        
+        async function animateFlaps(flaps, targetString, forceAnimate = false) {
+            const promises = [];
+            for (let i = 0; i < flaps.length && i < targetString.length; i++) {
+                const flap = flaps[i];
+                const targetChar = targetString[i].toUpperCase();
+                promises.push(flipToChar(flap, targetChar, forceAnimate));
+            }
+            await Promise.all(promises);
+        }
+        
+        async function flipToChar(element, targetChar, forceAnimate = false) {
+            const currentChar = element.dataset.current || ' ';
+            if (!forceAnimate && currentChar === targetChar) return;
+            
+            const sequence = getFlipSequence(currentChar, targetChar);
+            element.classList.add('flipping-active');
+            
+            const baseDelay = flipSpeed === 'slow' ? 100 : flipSpeed === 'fast' ? 30 : 50;
+            
+            for (let i = 0; i < sequence.length; i++) {
+                const char = sequence[i];
+                const isLast = i === sequence.length - 1;
+                
+                element.classList.add('flip');
+                
+                await sleep(baseDelay / 2);
+                element.textContent = char;
+                element.dataset.current = char;
+                element.classList.remove('flip');
+                
+                const delay = isLast ? baseDelay * 2 : baseDelay + Math.min(i * 10, baseDelay);
+                await sleep(delay);
+            }
+            
+            element.classList.remove('flipping-active');
+        }
+        
+        function getFlipSequence(from, to) {
+            const fromIdx = FLAP_CHARS.indexOf(from);
+            const toIdx = FLAP_CHARS.indexOf(to);
+            
+            if (fromIdx === -1 || toIdx === -1) return [to];
+            
+            const sequence = [];
+            let current = fromIdx;
+            
+            // Always go forward with wrap
+            while (current !== toIdx) {
+                current = (current + 1) % FLAP_CHARS.length;
+                sequence.push(FLAP_CHARS[current]);
+            }
+            
+            return sequence;
+        }
+        
+        function sleep(ms) {
+            return new Promise(resolve => setTimeout(resolve, ms));
         }
         
         // Export/Import functions

@@ -163,6 +163,7 @@ def delete_device(
 def play_video(
     device_id: int,
     play_request: DevicePlayRequest,
+    sync_overlays: bool = Query(False, description="Sync overlay windows"),
     device_service: DeviceService = Depends(get_device_service),
     video_service = Depends(get_video_service),
 ):
@@ -202,6 +203,24 @@ def play_video(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to play video on device with ID {device_id}",
         )
+    
+    # Trigger overlay sync if requested
+    if sync_overlays:
+        try:
+            import requests
+            response = requests.post(
+                "http://localhost:8000/api/overlay/sync",
+                params={
+                    "triggered_by": "dlna_play",
+                    "video_name": video.name
+                },
+                timeout=2  # Short timeout to not block play response
+            )
+            if response.status_code == 200:
+                logger.info(f"Triggered overlay sync for video: {video.name}")
+        except Exception as e:
+            logger.error(f"Failed to sync overlays: {e}")
+            # Don't fail the play operation if sync fails
     
     return {
         "success": True,

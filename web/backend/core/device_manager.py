@@ -76,6 +76,7 @@ class DeviceManager:
         self.playback_history_lock = threading.Lock()
         self.scheduled_assignments = {}  # name -> scheduled assignment info
         self.scheduled_assignments_lock = threading.Lock()
+        self.device_assignment_queue = {}  # name -> assignment info (FIX: was missing)
         
         # Get config service and streaming registry
         self.config_service = ConfigService.get_instance()
@@ -88,16 +89,8 @@ class DeviceManager:
         self.discovery_interval = 10  # Seconds between discovery cycles
         
         # Additional attributes
-        self.assigned_videos = {}  # Dictionary mapping device names to assigned videos
-        self.assigned_videos_lock = threading.Lock()
-        self.video_assignment_lock = threading.Lock()
         self.device_service = None
-        self.scheduled_assignments = {}  # Dictionary mapping device names to scheduled assignments
-        self.scheduled_assignments_lock = threading.Lock()
-        self.playback_health_threads = {}  # Dictionary mapping device names to health check threads
         self.playback_health_threads_lock = threading.Lock()
-        self.video_assignment_retries = {}  # Dictionary mapping device names to retry counts
-        self.video_assignment_priority = {}  # Dictionary mapping device names to priority
         self.playback_stats = {}  # Dictionary for tracking playback stats
         self.playback_stats_lock = threading.Lock()
         self.connectivity_timeout = 30  # Seconds to wait before considering a device offline
@@ -181,15 +174,14 @@ class DeviceManager:
                     logger.warning(f"No device_service available for recovery of {device_name}")
                     return
                 
-            # Update status with streaming issue
-            self.update_device_status(
-                device_name=device_name,
-                status="streaming_issue",
-                error=f"Streaming issue detected: {session.status}"
-            )
-            
             # Check if session is stalled
             if session.status == "stalled" and session.is_stalled(inactivity_threshold=30.0):
+                # Only update status to streaming_issue if there's an actual problem
+                self.update_device_status(
+                    device_name=device_name,
+                    status="streaming_issue",
+                    error=f"Streaming session stalled"
+                )
                 logger.warning(f"Streaming session for {device_name} is stalled, attempting recovery")
                 
                 # Try to restart playback

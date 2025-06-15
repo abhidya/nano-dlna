@@ -118,9 +118,15 @@ class DLNADevice(Device):
             self.update_status("playing")
             self.update_playing(True)
             
-            # Reset stop event for new playback
+            # Reset stop event and loop flag for new playback
             with self._thread_lock:
                 self._stop_event.clear()
+                # If we're starting a new playback with loop, ensure loop is enabled
+                # This prevents race conditions with stop() method
+                if loop:
+                    self._loop_enabled = True
+                else:
+                    self._loop_enabled = False
             
             # Set up loop monitoring if needed
             if loop:
@@ -647,6 +653,23 @@ class DLNADevice(Device):
                 logger.info(f"[{self.name}] Restarting video in loop mode")
                 self.play(self.current_video, loop=True) # loop=True will trigger _setup_loop_monitoring_v2
                 
+                # Trigger overlay sync on loop restart
+                try:
+                    import requests
+                    response = requests.post(
+                        "http://localhost:8000/api/overlay/sync",
+                        params={
+                            "triggered_by": "dlna_loop",
+                            "video_name": os.path.basename(self.current_video_path) if self.current_video_path else None
+                        },
+                        timeout=2  # Short timeout to not block loop monitoring
+                    )
+                    if response.status_code == 200:
+                        logger.info(f"[{self.name}] Triggered overlay sync on loop restart")
+                except Exception as e:
+                    logger.warning(f"[{self.name}] Failed to sync overlays on loop: {e}")
+                    # Don't fail loop monitoring if sync fails
+                
     # This is the refactored version for loop monitoring (Task 1)
     def _setup_loop_monitoring_v2(self, video_url: str) -> None:
         """
@@ -1048,6 +1071,75 @@ class DLNADevice(Device):
         # Insert the URL
         metadata = didl_template.format(url=xmlescape(url)) # Escape URL
         return metadata
+    
+    def _create_image_didl_metadata(self, url: str) -> str:
+        """
+        Create DIDL-Lite metadata for an image
+        
+        Args:
+            url: URL of the image
+            
+        Returns:
+            str: DIDL-Lite metadata for image
+        """
+        # DIDL template for images
+        didl_template = """<DIDL-Lite xmlns="urn:schemas-upnp-org:metadata-1-0/DIDL-Lite/" 
+                         xmlns:dc="http://purl.org/dc/elements/1.1/" 
+                         xmlns:upnp="urn:schemas-upnp-org:metadata-1-0/upnp/">
+        <item id="0" parentID="-1" restricted="1">
+            <dc:title>Black Screen</dc:title>
+            <upnp:class>object.item.imageItem.photo</upnp:class>
+            <res protocolInfo="http-get:*:image/jpeg:DLNA.ORG_PN=JPEG_LRG;DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=00D00000000000000000000000000000">{url}</res>
+        </item>
+        </DIDL-Lite>"""
+        
+        # Insert the URL
+        metadata = didl_template.format(url=xmlescape(url))
+        return metadata
+    
+    def display_image(self, image_url: str) -> bool:
+        """
+        Display an image on the DLNA device
+        
+        Args:
+            image_url: URL of the image to display
+            
+        Returns:
+            bool: True if successful, False otherwise
+        """
+        try:
+            logger.info(f"Displaying image {image_url} on DLNA device {self.name}")
+            
+            # Store the current URL
+            self.current_video = image_url
+            
+            # Create metadata for the image
+            metadata = self._create_image_didl_metadata(image_url)
+            
+            # Set up AV transport with image
+            data = {
+                "CurrentURI": image_url,
+                "CurrentURIMetaData": metadata
+            }
+            if not self._send_dlna_action(data, "SetAVTransportURI"):
+                logger.error(f"Failed to set AV transport URI for image on {self.name}")
+                return False
+                
+            # Start playback (even for images, this is needed)
+            if not self._send_dlna_action(None, "Play"):
+                logger.error(f"Failed to start display on {self.name}")
+                return False
+                
+            # Update device status
+            self.update_status("displaying")
+            self.update_playing(True)
+            
+            # No loop monitoring needed for images
+            
+            return True
+        except Exception as e:
+            logger.error(f"Error displaying image on {self.name}: {e}")
+            return False
 
     def _try_restart_video(self, video_url: str) -> bool:
         """
