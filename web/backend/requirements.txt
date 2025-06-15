@@ -27,6 +27,9 @@ mypy>=1.6.0
 # If you need depth processing, uncomment and install these manually:
 # numpy>=1.20.0
 # opencv-python>=4.5.0
-# pillow>=9.0.0
 # scikit-learn>=1.0.0
+
+# Image processing dependencies (required for projection animation)
+pillow>=9.0.0
+
 streamlit>=1.10.0

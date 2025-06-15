@@ -1540,6 +1540,15 @@
             const sequence = [];
             let current = fromIdx;
             
+            // If same character, do a full rotation
+            if (fromIdx === toIdx) {
+                for (let i = 1; i <= FLAP_CHARS.length; i++) {
+                    current = (fromIdx + i) % FLAP_CHARS.length;
+                    sequence.push(FLAP_CHARS[current]);
+                }
+                return sequence;
+            }
+            
             // Always go forward with wrap
             while (current !== toIdx) {
                 current = (current + 1) % FLAP_CHARS.length;

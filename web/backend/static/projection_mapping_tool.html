@@ -163,6 +163,44 @@
             display: block;
         }
         
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.7);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+        
+        .loading-overlay.active {
+            display: flex;
+        }
+        
+        .loading-spinner {
+            width: 50px;
+            height: 50px;
+            border: 5px solid #333;
+            border-top: 5px solid #4CAF50;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            color: white;
+            margin-top: 20px;
+            font-size: 16px;
+            text-align: center;
+        }
+        
         h3 {
             margin-top: 20px;
             margin-bottom: 10px;
@@ -251,6 +289,7 @@
                 R: Reset<br>
                 C: Center<br>
                 H: Hide controls<br>
+                V: Toggle handles<br>
                 F11: Fullscreen
             </div>
         </div>
@@ -276,6 +315,13 @@
     </div>
     
     <div id="status" class="status"></div>
+    
+    <div id="loadingOverlay" class="loading-overlay">
+        <div>
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">Processing...</div>
+        </div>
+    </div>
     
     <script>
         // Global variables
@@ -697,7 +743,17 @@
             }
         }
         
-        function smartFloodFill(startX, startY) {
+        async function smartFloodFill(startX, startY) {
+            // Show loading
+            document.getElementById('loadingOverlay').classList.add('active');
+            document.getElementById('loadingText').textContent = 'Flood filling...';
+            
+            // Disable tools
+            document.querySelectorAll('.tool-button').forEach(btn => btn.disabled = true);
+            
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
             const layer = layers[currentLayerIndex];
             const tolerance = parseInt(document.getElementById('tolerance').value);
             const width = originalCanvas.width;
@@ -711,48 +767,85 @@
             const startIdx = (startY * width + startX) * 4;
             const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
             
-            while (stack.length > 0) {
-                const {x, y} = stack.pop();
+            let processed = 0;
+            const totalPixels = width * height;
+            
+            // Process in chunks
+            const processChunk = () => {
+                const chunkSize = 5000;
+                let count = 0;
                 
-                if (x < 0 || x >= width || y < 0 || y >= height) continue;
-                
-                const idx = y * width + x;
-                if (visited[idx]) continue;
-                visited[idx] = 1;
-                
-                // Check edge boundary
-                if (edgeData) {
-                    const edgeIdx = idx * 4;
-                    if (edgeData.data[edgeIdx] > 128) continue;
+                while (stack.length > 0 && count < chunkSize) {
+                    const {x, y} = stack.pop();
+                    
+                    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                    
+                    const idx = y * width + x;
+                    if (visited[idx]) continue;
+                    visited[idx] = 1;
+                    processed++;
+                    
+                    // Check edge boundary
+                    if (edgeData) {
+                        const edgeIdx = idx * 4;
+                        if (edgeData.data[edgeIdx] > 128) continue;
+                    }
+                    
+                    // Check color similarity
+                    const pixelIdx = idx * 4;
+                    const colorDiff = Math.abs(originalData[pixelIdx] - startColor[0]) +
+                                     Math.abs(originalData[pixelIdx + 1] - startColor[1]) +
+                                     Math.abs(originalData[pixelIdx + 2] - startColor[2]);
+                    
+                    if (colorDiff > tolerance * 3) continue;
+                    
+                    // Fill pixel
+                    maskData[pixelIdx] = 255;
+                    maskData[pixelIdx + 1] = 255;
+                    maskData[pixelIdx + 2] = 255;
+                    maskData[pixelIdx + 3] = 255;
+                    layer.pixelCount++;
+                    
+                    // Add neighbors
+                    stack.push({x: x + 1, y});
+                    stack.push({x: x - 1, y});
+                    stack.push({x, y: y + 1});
+                    stack.push({x, y: y - 1});
+                    
+                    count++;
                 }
                 
-                // Check color similarity
-                const pixelIdx = idx * 4;
-                const colorDiff = Math.abs(originalData[pixelIdx] - startColor[0]) +
-                                 Math.abs(originalData[pixelIdx + 1] - startColor[1]) +
-                                 Math.abs(originalData[pixelIdx + 2] - startColor[2]);
+                // Update progress
+                const progress = Math.min((processed / totalPixels) * 100, 100);
+                document.getElementById('loadingText').textContent = `Flood filling... ${progress.toFixed(0)}%`;
                 
-                if (colorDiff > tolerance * 3) continue;
-                
-                // Fill pixel
-                maskData[pixelIdx] = 255;
-                maskData[pixelIdx + 1] = 255;
-                maskData[pixelIdx + 2] = 255;
-                maskData[pixelIdx + 3] = 255;
-                layer.pixelCount++;
-                
-                // Add neighbors (4-connected)
-                stack.push({x: x + 1, y});
-                stack.push({x: x - 1, y});
-                stack.push({x, y: y + 1});
-                stack.push({x, y: y - 1});
-            }
+                if (stack.length > 0) {
+                    requestAnimationFrame(processChunk);
+                } else {
+                    // Finished
+                    updateLayerCanvas(currentLayerIndex);
+                    saveLayerState(layer.id);
+                    
+                    // Hide loading
+                    document.getElementById('loadingOverlay').classList.remove('active');
+                    document.querySelectorAll('.tool-button').forEach(btn => btn.disabled = false);
+                }
+            };
             
-            updateLayerCanvas(currentLayerIndex);
-            saveLayerState(layer.id);
+            requestAnimationFrame(processChunk);
         }
         
-        function magicWandFloodFill(startX, startY) {
+        async function magicWandFloodFill(startX, startY) {
+            // Show loading
+            document.getElementById('loadingOverlay').classList.add('active');
+            document.getElementById('loadingText').textContent = 'Magic wand selection...';
+            
+            // Disable tools
+            document.querySelectorAll('.tool-button').forEach(btn => btn.disabled = true);
+            
+            // Allow UI to update
+            await new Promise(resolve => setTimeout(resolve, 10));
+            
             const layer = layers[currentLayerIndex];
             const tolerance = parseInt(document.getElementById('tolerance').value);
             const width = originalCanvas.width;
@@ -767,45 +860,72 @@
             const startColor = [originalData[startIdx], originalData[startIdx + 1], originalData[startIdx + 2]];
             const startBrightness = (startColor[0] + startColor[1] + startColor[2]) / 3;
             
-            while (stack.length > 0) {
-                const {x, y} = stack.pop();
-                
-                if (x < 0 || x >= width || y < 0 || y >= height) continue;
-                
-                const idx = y * width + x;
-                if (visited[idx]) continue;
-                visited[idx] = 1;
-                
-                const pixelIdx = idx * 4;
-                const pixelColor = [originalData[pixelIdx], originalData[pixelIdx + 1], originalData[pixelIdx + 2]];
-                const pixelBrightness = (pixelColor[0] + pixelColor[1] + pixelColor[2]) / 3;
-                
-                // Check color and brightness similarity
-                const colorDiff = Math.abs(pixelColor[0] - startColor[0]) +
-                                 Math.abs(pixelColor[1] - startColor[1]) +
-                                 Math.abs(pixelColor[2] - startColor[2]);
-                const brightnessDiff = Math.abs(pixelBrightness - startBrightness);
-                
-                if (colorDiff + brightnessDiff > tolerance * 4) continue;
-                
-                // Fill pixel
-                maskData[pixelIdx] = 255;
-                maskData[pixelIdx + 1] = 255;
-                maskData[pixelIdx + 2] = 255;
-                maskData[pixelIdx + 3] = 255;
-                layer.pixelCount++;
-                
-                // Add neighbors (8-connected)
-                for (let dy = -1; dy <= 1; dy++) {
-                    for (let dx = -1; dx <= 1; dx++) {
-                        if (dx === 0 && dy === 0) continue;
-                        stack.push({x: x + dx, y: y + dy});
-                    }
-                }
-            }
+            let processed = 0;
+            const totalPixels = width * height;
             
-            updateLayerCanvas(currentLayerIndex);
-            saveLayerState(layer.id);
+            // Process in chunks
+            const processChunk = () => {
+                const chunkSize = 5000;
+                let count = 0;
+                
+                while (stack.length > 0 && count < chunkSize) {
+                    const {x, y} = stack.pop();
+                    
+                    if (x < 0 || x >= width || y < 0 || y >= height) continue;
+                    
+                    const idx = y * width + x;
+                    if (visited[idx]) continue;
+                    visited[idx] = 1;
+                    processed++;
+                    
+                    const pixelIdx = idx * 4;
+                    const pixelColor = [originalData[pixelIdx], originalData[pixelIdx + 1], originalData[pixelIdx + 2]];
+                    const pixelBrightness = (pixelColor[0] + pixelColor[1] + pixelColor[2]) / 3;
+                    
+                    // Check color and brightness similarity
+                    const colorDiff = Math.abs(pixelColor[0] - startColor[0]) +
+                                     Math.abs(pixelColor[1] - startColor[1]) +
+                                     Math.abs(pixelColor[2] - startColor[2]);
+                    const brightnessDiff = Math.abs(pixelBrightness - startBrightness);
+                    
+                    if (colorDiff + brightnessDiff > tolerance * 4) continue;
+                    
+                    // Fill pixel
+                    maskData[pixelIdx] = 255;
+                    maskData[pixelIdx + 1] = 255;
+                    maskData[pixelIdx + 2] = 255;
+                    maskData[pixelIdx + 3] = 255;
+                    layer.pixelCount++;
+                    
+                    // Add neighbors (8-connected)
+                    for (let dy = -1; dy <= 1; dy++) {
+                        for (let dx = -1; dx <= 1; dx++) {
+                            if (dx === 0 && dy === 0) continue;
+                            stack.push({x: x + dx, y: y + dy});
+                        }
+                    }
+                    
+                    count++;
+                }
+                
+                // Update progress
+                const progress = Math.min((processed / totalPixels) * 100, 100);
+                document.getElementById('loadingText').textContent = `Magic wand selection... ${progress.toFixed(0)}%`;
+                
+                if (stack.length > 0) {
+                    requestAnimationFrame(processChunk);
+                } else {
+                    // Finished
+                    updateLayerCanvas(currentLayerIndex);
+                    saveLayerState(layer.id);
+                    
+                    // Hide loading
+                    document.getElementById('loadingOverlay').classList.remove('active');
+                    document.querySelectorAll('.tool-button').forEach(btn => btn.disabled = false);
+                }
+            };
+            
+            requestAnimationFrame(processChunk);
         }
         
         function drawBrush(x, y) {
@@ -1201,6 +1321,7 @@
             [/]: Rotate<br>
             R: Reset, C: Center<br>
             H: Hide controls<br>
+            V: Toggle handles<br>
             F11: Fullscreen
         </div>
     </div>
@@ -1217,6 +1338,8 @@
             rotation: ${layer.transform.rotation}
         };
         
+        let showHandles = true;
+        
         function resizeCanvas() {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
@@ -1225,6 +1348,51 @@
         
         window.addEventListener('resize', resizeCanvas);
         resizeCanvas();
+        
+        function drawHandles(ctx, img) {
+            if (!showHandles) return;
+            
+            ctx.save();
+            ctx.translate(canvas.width/2 + transform.x, canvas.height/2 + transform.y);
+            ctx.rotate(transform.rotation * Math.PI / 180);
+            ctx.scale(transform.scale, transform.scale);
+            
+            // Draw border
+            ctx.strokeStyle = '#4CAF50';
+            ctx.lineWidth = 2 / transform.scale;
+            ctx.strokeRect(-img.width/2, -img.height/2, img.width, img.height);
+            
+            // Draw resize handles
+            const handleSize = 8 / transform.scale;
+            ctx.fillStyle = '#4CAF50';
+            
+            // Corners
+            const corners = [
+                {x: -img.width/2, y: -img.height/2},
+                {x: img.width/2, y: -img.height/2},
+                {x: img.width/2, y: img.height/2},
+                {x: -img.width/2, y: img.height/2}
+            ];
+            
+            corners.forEach(corner => {
+                ctx.fillRect(corner.x - handleSize/2, corner.y - handleSize/2, handleSize, handleSize);
+            });
+            
+            // Rotation handle
+            ctx.beginPath();
+            ctx.arc(0, -img.height/2 - 30/transform.scale, handleSize, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Line to rotation handle
+            ctx.strokeStyle = '#4CAF50';
+            ctx.setLineDash([5/transform.scale, 5/transform.scale]);
+            ctx.beginPath();
+            ctx.moveTo(0, -img.height/2);
+            ctx.lineTo(0, -img.height/2 - 30/transform.scale);
+            ctx.stroke();
+            
+            ctx.restore();
+        }
         
         function render() {
             ctx.fillStyle = 'black';
@@ -1241,6 +1409,9 @@
                         ctx.scale(transform.scale, transform.scale);
                         ctx.drawImage(img, -img.width/2, -img.height/2);
                         ctx.restore();
+                        
+                        // Add handles
+                        drawHandles(ctx, img);
                     };
                     img.src = maskData;
                 }
@@ -1286,9 +1457,16 @@
         };
         
         document.getElementById('scaleNum').oninput = function() {
-            transform.scale = parseFloat(this.value);
-            document.getElementById('scale').value = this.value;
-            updateTransform();
+            // Allow typing decimals without immediate parsing
+            const val = this.value;
+            if (val === '' || val === '.' || val === '0.') return;
+            
+            const parsed = parseFloat(val);
+            if (!isNaN(parsed) && parsed >= 0.1 && parsed <= 3) {
+                transform.scale = parsed;
+                document.getElementById('scale').value = parsed;
+                updateTransform();
+            }
         };
         
         document.getElementById('rotation').oninput = function() {
@@ -1376,6 +1554,11 @@
                 case 'h':
                 case 'H':
                     controls.classList.toggle('hidden');
+                    return;
+                case 'v':
+                case 'V':
+                    showHandles = !showHandles;
+                    render();
                     return;
                 case 'F11':
                     e.preventDefault();

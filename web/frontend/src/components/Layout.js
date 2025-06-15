@@ -26,6 +26,7 @@ import {
   Layers as DepthIcon,
   CameraAlt as ProjectionIcon,
   GridOn as OverlayIcon,
+  Animation as AnimationIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
@@ -38,6 +39,7 @@ const menuItems = [
   { text: 'Depth Processing', icon: <DepthIcon />, path: '/depth' },
   { text: 'Projection Mapping', icon: <ProjectionIcon />, path: '/projection' },
   { text: 'Overlay', icon: <OverlayIcon />, path: '/overlay' },
+  { text: 'Projection Animation', icon: <AnimationIcon />, path: '/projection-animation' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 

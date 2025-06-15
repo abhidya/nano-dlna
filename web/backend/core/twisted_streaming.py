@@ -464,13 +464,17 @@ class TwistedStreamingServer:
                 site = self.server_sites.pop(port)
                 site.stopListening()
         else:
-            logger.info("Stopping all streaming servers")
-            for port, site in list(self.server_sites.items()):
-                try:
-                    site.stopListening()
-                except Exception as e:
-                    logger.error(f"Error stopping server on port {port}: {e}")
-                self.server_sites.pop(port, None)
+            if self.server_sites:
+                logger.info(f"Stopping {len(self.server_sites)} streaming servers")
+                for port, site in list(self.server_sites.items()):
+                    try:
+                        site.stopListening()
+                        logger.debug(f"Stopped server on port {port}")
+                    except Exception as e:
+                        logger.error(f"Error stopping server on port {port}: {e}")
+                    self.server_sites.pop(port, None)
+            else:
+                logger.debug("No streaming servers to stop")
         
         # If no more servers, stop the reactor
         if not self.server_sites and self.reactor_running:
@@ -505,9 +509,6 @@ def get_instance():
     global _instance
     if _instance is None:
         _instance = TwistedStreamingServer()
-    else:
-        # Stop any existing servers to prevent port conflicts
-        _instance.stop_server()
     return _instance 
 
 def start_server(files: Dict[str, str], serve_ip: str, serve_port: Optional[int] = None, 

@@ -1,0 +1,420 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Projection Animation</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            background: black;
+            overflow: hidden;
+            width: 100vw;
+            height: 100vh;
+            position: relative;
+        }
+        
+        /* Main container for all content */
+        #projection-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Mask layer */
+        #mask-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+        }
+        
+        /* Video background layer */
+        #video-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 0;
+        }
+        
+        .zone-video {
+            position: absolute;
+            object-fit: cover;
+        }
+        
+        /* Animation layer */
+        #animation-layer {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 2;
+            pointer-events: none;
+        }
+        
+        .animation-zone {
+            position: absolute;
+            overflow: hidden;
+        }
+        
+        .animation-canvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        /* Info overlay */
+        #info-overlay {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.7);
+            color: white;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            z-index: 1000;
+            display: none;
+        }
+        
+        #info-overlay.visible {
+            display: block;
+        }
+        
+        /* Loading screen */
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: black;
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: Arial, sans-serif;
+            z-index: 9999;
+        }
+        
+        .loading-content {
+            text-align: center;
+        }
+        
+        .spinner {
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top: 3px solid white;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <!-- Loading Screen -->
+    <div id="loading">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <div>Loading projection...</div>
+        </div>
+    </div>
+    
+    <!-- Main Container -->
+    <div id="projection-container">
+        <!-- Video Background Layer -->
+        <div id="video-layer"></div>
+        
+        <!-- Animation Layer -->
+        <div id="animation-layer"></div>
+        
+        <!-- Mask Layer (for debugging) -->
+        <canvas id="mask-layer"></canvas>
+    </div>
+    
+    <!-- Info Overlay -->
+    <div id="info-overlay">
+        <div>FPS: <span id="fps">0</span></div>
+        <div>Zones: <span id="zone-count">0</span></div>
+        <div>Weather: <span id="weather-info">--</span></div>
+        <div>Transit: <span id="transit-info">--</span></div>
+        <div>Press 'I' to toggle info</div>
+        <div>Press 'D' to toggle debug mask</div>
+        <div>Press 'F11' for fullscreen</div>
+    </div>
+    
+    <!-- Animation Engine -->
+    <script src="/backend-static/js/projection/animation_engine.js"></script>
+    
+    <!-- Individual Animations -->
+    <script src="/backend-static/js/projection/animations/neural_noise.js"></script>
+    <script src="/backend-static/js/projection/animations/moving_clouds.js"></script>
+    <script src="/backend-static/js/projection/animations/spectrum_bars.js"></script>
+    <script src="/backend-static/js/projection/animations/webgl_flowers.js"></script>
+    <script src="/backend-static/js/projection/animations/gradient_bubbles.js"></script>
+    
+    <script>
+        // Global state
+        let session = null;
+        let animationEngine = null;
+        let dataUpdateInterval = null;
+        let showInfo = false;
+        let showDebugMask = false;
+        
+        // FPS tracking
+        let fps = 0;
+        let frameCount = 0;
+        let lastFpsUpdate = Date.now();
+        
+        // Get session ID from URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const sessionId = urlParams.get('session');
+        
+        // Initialize projection
+        async function init() {
+            if (!sessionId) {
+                showError('No session ID provided');
+                return;
+            }
+            
+            try {
+                // Fetch session data
+                const response = await fetch(`/api/projection/sessions/${sessionId}`);
+                if (!response.ok) throw new Error('Failed to load session');
+                
+                session = await response.json();
+                
+                // Initialize animation engine
+                animationEngine = new AnimationEngine();
+                
+                // Load mask
+                await loadMask(session.mask);
+                
+                // Setup zones
+                setupZones(session.zones);
+                
+                // Start data updates
+                startDataUpdates();
+                
+                // Hide loading screen
+                document.getElementById('loading').style.display = 'none';
+                
+                // Setup keyboard shortcuts
+                setupKeyboardShortcuts();
+                
+                // Start render loop
+                requestAnimationFrame(render);
+                
+            } catch (error) {
+                showError(`Failed to initialize: ${error.message}`);
+            }
+        }
+        
+        // Load and display mask
+        async function loadMask(maskData) {
+            const canvas = document.getElementById('mask-layer');
+            const ctx = canvas.getContext('2d');
+            
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            
+            // Load the actual mask image
+            return new Promise((resolve, reject) => {
+                const maskImage = new Image();
+                maskImage.onload = () => {
+                    // Draw mask to canvas for debugging
+                    ctx.drawImage(maskImage, 0, 0, canvas.width, canvas.height);
+                    
+                    // Pass mask image to animation engine
+                    if (animationEngine) {
+                        animationEngine.setMaskImage(maskImage);
+                    }
+                    
+                    canvas.style.display = 'none'; // Hidden by default
+                    resolve(maskImage);
+                };
+                maskImage.onerror = () => {
+                    console.error('Failed to load mask image');
+                    reject(new Error('Failed to load mask'));
+                };
+                
+                // Use the mask URL from session data
+                maskImage.src = maskData.url || `/api/projection/masks/${sessionId}/image`;
+            });
+        }
+        
+        // Setup animation zones
+        function setupZones(zones) {
+            const animationLayer = document.getElementById('animation-layer');
+            const videoLayer = document.getElementById('video-layer');
+            
+            document.getElementById('zone-count').textContent = zones.length;
+            
+            zones.forEach((zone, index) => {
+                const assignment = zone.assignment || { type: 'empty' };
+                
+                if (assignment.type === 'animation' && assignment.content) {
+                    // Create animation container
+                    const container = document.createElement('div');
+                    container.className = 'animation-zone';
+                    container.id = `zone-${zone.id}`;
+                    container.style.left = `${zone.bounds.x}px`;
+                    container.style.top = `${zone.bounds.y}px`;
+                    container.style.width = `${zone.bounds.width}px`;
+                    container.style.height = `${zone.bounds.height}px`;
+                    
+                    animationLayer.appendChild(container);
+                    
+                    // Initialize animation
+                    const animation = animationEngine.createAnimation(assignment.content, zone, container);
+                    if (animation) {
+                        animation.start();
+                    }
+                    
+                } else if (assignment.type === 'video' && assignment.content) {
+                    // Create video element
+                    const video = document.createElement('video');
+                    video.className = 'zone-video';
+                    video.style.left = `${zone.bounds.x}px`;
+                    video.style.top = `${zone.bounds.y}px`;
+                    video.style.width = `${zone.bounds.width}px`;
+                    video.style.height = `${zone.bounds.height}px`;
+                    video.loop = true;
+                    video.muted = true;
+                    video.autoplay = true;
+                    
+                    // Set video source (would need actual video URL from backend)
+                    video.src = `/api/videos/${assignment.content}/stream`;
+                    
+                    videoLayer.appendChild(video);
+                }
+            });
+        }
+        
+        // Start data updates
+        function startDataUpdates() {
+            // Update immediately
+            updateData();
+            
+            // Then update every 30 seconds
+            dataUpdateInterval = setInterval(updateData, 30000);
+        }
+        
+        // Fetch and update data
+        async function updateData() {
+            try {
+                // Fetch weather data
+                const weatherResponse = await fetch('/api/projection/data/weather');
+                const weatherData = await weatherResponse.json();
+                
+                // Fetch transit data
+                const transitResponse = await fetch('/api/projection/data/transit');
+                const transitData = await transitResponse.json();
+                
+                // Update info display
+                document.getElementById('weather-info').textContent = 
+                    `${weatherData.temperature}°C, ${weatherData.windSpeed}km/h wind`;
+                document.getElementById('transit-info').textContent = 
+                    `${transitData.routeName} in ${transitData.nextArrival}`;
+                
+                // Update animations
+                if (animationEngine) {
+                    animationEngine.updateData({ weather: weatherData, transit: transitData });
+                }
+                
+            } catch (error) {
+                console.error('Failed to update data:', error);
+            }
+        }
+        
+        // Render loop
+        function render(timestamp) {
+            // Update FPS
+            frameCount++;
+            const now = Date.now();
+            if (now - lastFpsUpdate >= 1000) {
+                fps = frameCount;
+                frameCount = 0;
+                lastFpsUpdate = now;
+                document.getElementById('fps').textContent = fps;
+            }
+            
+            // Continue render loop
+            requestAnimationFrame(render);
+        }
+        
+        // Setup keyboard shortcuts
+        function setupKeyboardShortcuts() {
+            document.addEventListener('keydown', (e) => {
+                switch(e.key.toLowerCase()) {
+                    case 'i':
+                        showInfo = !showInfo;
+                        document.getElementById('info-overlay').classList.toggle('visible', showInfo);
+                        break;
+                    case 'd':
+                        showDebugMask = !showDebugMask;
+                        document.getElementById('mask-layer').style.display = 
+                            showDebugMask ? 'block' : 'none';
+                        break;
+                    case 'f11':
+                        e.preventDefault();
+                        toggleFullscreen();
+                        break;
+                }
+            });
+        }
+        
+        // Toggle fullscreen
+        function toggleFullscreen() {
+            if (!document.fullscreenElement) {
+                document.documentElement.requestFullscreen();
+            } else {
+                document.exitFullscreen();
+            }
+        }
+        
+        // Show error
+        function showError(message) {
+            const loading = document.getElementById('loading');
+            loading.innerHTML = `
+                <div class="loading-content">
+                    <div style="color: #ff4444; font-size: 18px;">Error</div>
+                    <div style="margin-top: 10px;">${message}</div>
+                </div>
+            `;
+        }
+        
+        // Cleanup on unload
+        window.addEventListener('beforeunload', () => {
+            if (dataUpdateInterval) {
+                clearInterval(dataUpdateInterval);
+            }
+            if (animationEngine) {
+                animationEngine.destroy();
+            }
+        });
+        
+        // Start initialization
+        init();
+    </script>
+</body>
+</html>

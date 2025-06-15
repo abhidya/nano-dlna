@@ -401,12 +401,14 @@ function OverlayProjection() {
                         title="Overlay Configurations"
                         action={
                             <Tooltip title="Create new configuration">
-                                <IconButton 
-                                    onClick={() => setConfigNameDialog(true)}
-                                    disabled={!selectedVideo}
-                                >
-                                    <AddIcon />
-                                </IconButton>
+                                <span>
+                                    <IconButton 
+                                        onClick={() => setConfigNameDialog(true)}
+                                        disabled={!selectedVideo}
+                                    >
+                                        <AddIcon />
+                                    </IconButton>
+                                </span>
                             </Tooltip>
                         }
                     />

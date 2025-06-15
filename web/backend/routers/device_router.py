@@ -170,6 +170,7 @@ def play_video(
     """
     Play a video on a device
     """
+    logger.info(f"User action: Play video on device {device_id}")
     # Get the video
     video = video_service.get_video_by_id(play_request.video_id)
     if not video:

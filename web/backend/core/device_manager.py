@@ -1118,7 +1118,7 @@ class DeviceManager:
                 server_ip=serve_ip,
                 server_port=streaming_port
             )
-            logger.info(f"Registered streaming session {session.session_id} for device {device.name}")
+            logger.debug(f"Registered streaming session {session.session_id} for device {device.name}")
             
             # Start health monitoring
             self._start_playback_health_check(device.name, video_path)
@@ -1499,7 +1499,7 @@ class DeviceManager:
             Optional[Dict[str, Any]]: Device information if successful, None otherwise
         """
         try:
-            logger.info(f"Registering DLNA device at {location_url}")
+            logger.debug(f"Registering DLNA device at {location_url}")
             
             # Get device description
             xml_raw = urllibreq.urlopen(location_url).read().decode("UTF-8")
@@ -1545,7 +1545,7 @@ class DeviceManager:
                 
                 # Build the full action URL
                 action_url = f"http://{hostname}:{port}{action_url_path}"
-                logger.info(f"Found action URL: {action_url}")
+                logger.debug(f"Found action URL: {action_url}")
             else:
                 # Fallback: try to construct a default action URL
                 action_url = f"http://{hostname}:{port}/AVTransport/Control"

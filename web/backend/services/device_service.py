@@ -222,9 +222,9 @@ class DeviceService:
             if "location" in device.model_fields_set:
                 db_device.location = device.location
             if "status" in device.model_fields_set:
-                logger.info(f"DEBUG: Pydantic device.status is: {device.status}")
+                logger.debug(f"Pydantic device.status is: {device.status}")
                 db_device.status = device.status
-                logger.info(f"DEBUG: db_device.status AFTER assignment is: {db_device.status}")
+                logger.debug(f"db_device.status AFTER assignment is: {db_device.status}")
             if "is_playing" in device.model_fields_set:
                 db_device.is_playing = device.is_playing
             if "current_video" in device.model_fields_set:

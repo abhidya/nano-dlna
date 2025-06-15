@@ -19,6 +19,9 @@ function ProjectionMapping() {
     const [processingStep, setProcessingStep] = useState('');
     const [baseTransform, setBaseTransform] = useState({ x: 0, y: 0, scale: 1, rotation: 0 });
     const [edgeProcessing, setEdgeProcessing] = useState(false);
+    const [brushMode, setBrushMode] = useState('solid'); // 'solid' or 'spray'
+    const [brushShape, setBrushShape] = useState('circle'); // 'circle' or 'square'
+    const [magicWandMode, setMagicWandMode] = useState('radius'); // 'radius' or 'point'
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -72,6 +75,59 @@ function ProjectionMapping() {
                 return 'crosshair';
         }
     }, [currentTool]);
+    
+    // Transform mouse coordinates to layer space accounting for all transformations
+    const transformMouseToLayer = useCallback((mouseX, mouseY, layer) => {
+        if (!originalImage) return { x: mouseX, y: mouseY };
+        
+        // Get canvas center
+        const centerX = originalImage.width / 2;
+        const centerY = originalImage.height / 2;
+        
+        // Start with mouse coordinates relative to center
+        let x = mouseX - centerX;
+        let y = mouseY - centerY;
+        
+        // Apply inverse base transform first (in reverse order: translate, rotate, scale)
+        x -= baseTransform.x;
+        y -= baseTransform.y;
+        
+        // Inverse rotation for base transform
+        const baseAngle = -baseTransform.rotation * Math.PI / 180;
+        const baseCos = Math.cos(baseAngle);
+        const baseSin = Math.sin(baseAngle);
+        let tempX = x * baseCos - y * baseSin;
+        let tempY = x * baseSin + y * baseCos;
+        x = tempX;
+        y = tempY;
+        
+        // Inverse scale for base transform
+        x = x / baseTransform.scale;
+        y = y / baseTransform.scale;
+        
+        // Apply inverse layer transform (in reverse order: translate, rotate, scale)
+        x -= layer.transform.x;
+        y -= layer.transform.y;
+        
+        // Inverse rotation for layer transform
+        const layerAngle = -layer.transform.rotation * Math.PI / 180;
+        const layerCos = Math.cos(layerAngle);
+        const layerSin = Math.sin(layerAngle);
+        tempX = x * layerCos - y * layerSin;
+        tempY = x * layerSin + y * layerCos;
+        x = tempX;
+        y = tempY;
+        
+        // Inverse scale for layer transform
+        x = x / layer.transform.scale;
+        y = y / layer.transform.scale;
+        
+        // Convert back to image coordinates
+        return {
+            x: Math.floor(x + centerX),
+            y: Math.floor(y + centerY)
+        };
+    }, [originalImage, baseTransform]);
     
     // Batch update system
     const flushPendingUpdates = useCallback(() => {
@@ -186,8 +242,6 @@ function ProjectionMapping() {
         const data = imageData.data;
         const magnitudes = new Float32Array(width * height);
         
-        const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
-        const sobelY = [-1, -2, -1, 0, 0, 0, 1, 2, 1];
         
         // Convert to grayscale first (optimization)
         const grayData = new Uint8Array(width * height);
@@ -428,6 +482,58 @@ function ProjectionMapping() {
         });
     }, [layers, getContext, baseTransform]);
     
+    const drawBezierMarkers = (points) => {
+        const ctx = getContext(currentCanvasRef, 'current');
+        if (!ctx) return;
+        
+        // Redraw current canvas first
+        updateCurrentCanvas();
+        
+        // Draw markers and preview line
+        ctx.save();
+        points.forEach((point, index) => {
+            // Draw point marker
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
+            ctx.fillStyle = index === 0 || index === 3 ? '#ff4444' : '#4444ff'; // Red for endpoints, blue for control points
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+            
+            // Draw point number
+            ctx.fillStyle = '#ffffff';
+            ctx.font = '12px Arial';
+            ctx.fillText(index + 1, point.x + 8, point.y - 8);
+        });
+        
+        // Draw preview lines connecting points
+        if (points.length > 1) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            for (let i = 1; i < points.length; i++) {
+                ctx.lineTo(points[i].x, points[i].y);
+            }
+            ctx.strokeStyle = '#ffff00';
+            ctx.lineWidth = 1;
+            ctx.setLineDash([5, 5]);
+            ctx.stroke();
+            ctx.setLineDash([]);
+        }
+        
+        // If we have 3 points, show preview of the curve
+        if (points.length === 3) {
+            ctx.beginPath();
+            ctx.moveTo(points[0].x, points[0].y);
+            ctx.quadraticCurveTo(points[1].x, points[1].y, points[2].x, points[2].y);
+            ctx.strokeStyle = '#00ff00';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+        
+        ctx.restore();
+    };
+
     useEffect(() => {
         updateCurrentCanvas();
         updateCombinedCanvas();
@@ -435,7 +541,7 @@ function ProjectionMapping() {
         if (bezierPoints.length > 0) {
             drawBezierMarkers(bezierPoints);
         }
-    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, bezierPoints]);
+    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, bezierPoints, drawBezierMarkers]);
     
     useEffect(() => {
         // Debounce edge updates for smoother slider experience
@@ -694,8 +800,25 @@ function ProjectionMapping() {
         const scaleY = canvas.height / rect.height;
         
         // Apply scaling to get correct canvas coordinates
-        const x = Math.floor((e.clientX - rect.left) * scaleX);
-        const y = Math.floor((e.clientY - rect.top) * scaleY);
+        let x = Math.floor((e.clientX - rect.left) * scaleX);
+        let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // Transform coordinates to layer space if we have transformations
+        const currentLayer = layers[currentLayerIndex];
+        if (currentLayer && (
+            currentLayer.transform.rotation !== 0 || 
+            currentLayer.transform.scale !== 1 ||
+            currentLayer.transform.x !== 0 ||
+            currentLayer.transform.y !== 0 ||
+            baseTransform.rotation !== 0 ||
+            baseTransform.scale !== 1 ||
+            baseTransform.x !== 0 ||
+            baseTransform.y !== 0
+        )) {
+            const transformed = transformMouseToLayer(x, y, currentLayer);
+            x = transformed.x;
+            y = transformed.y;
+        }
         
         // For edge detection canvas, we need to apply the selection to the current layer
         const isEdgeCanvas = canvas === edgeCanvasRef.current;
@@ -730,8 +853,30 @@ function ProjectionMapping() {
         const scaleY = canvas.height / rect.height;
         
         // Apply scaling to get correct canvas coordinates
-        const x = Math.floor((e.clientX - rect.left) * scaleX);
-        const y = Math.floor((e.clientY - rect.top) * scaleY);
+        let x = Math.floor((e.clientX - rect.left) * scaleX);
+        let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // Transform coordinates for drawing operations
+        let drawX = x;
+        let drawY = y;
+        
+        if (currentLayerIndex >= 0) {
+            const currentLayer = layers[currentLayerIndex];
+            if (currentLayer && (
+                currentLayer.transform.rotation !== 0 || 
+                currentLayer.transform.scale !== 1 ||
+                currentLayer.transform.x !== 0 ||
+                currentLayer.transform.y !== 0 ||
+                baseTransform.rotation !== 0 ||
+                baseTransform.scale !== 1 ||
+                baseTransform.x !== 0 ||
+                baseTransform.y !== 0
+            )) {
+                const transformed = transformMouseToLayer(x, y, currentLayer);
+                drawX = transformed.x;
+                drawY = transformed.y;
+            }
+        }
         
         // Update cursor position for preview (both screen and canvas coordinates)
         setCursorPosition({ 
@@ -746,7 +891,7 @@ function ProjectionMapping() {
         if (!isDrawing || currentLayerIndex < 0) return;
         
         if (currentTool === 'brush' || currentTool === 'eraser') {
-            drawBrush(x, y);
+            drawBrush(drawX, drawY);
         }
     };
     
@@ -917,7 +1062,28 @@ function ProjectionMapping() {
         canvasWorkRef.current.isProcessing = true;
         
         const visited = new Uint8Array(width * height);
-        const stack = [{x: startX, y: startY}];
+        const stack = [];
+        
+        // Use brush size to define initial selection area in radius mode
+        if (magicWandMode === 'radius') {
+            // Add all pixels within brush radius to initial stack
+            for (let dy = -brushSize; dy <= brushSize; dy++) {
+                for (let dx = -brushSize; dx <= brushSize; dx++) {
+                    const dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist <= brushSize) {
+                        const px = startX + dx;
+                        const py = startY + dy;
+                        if (px >= 0 && px < width && py >= 0 && py < height) {
+                            stack.push({x: px, y: py});
+                        }
+                    }
+                }
+            }
+        } else {
+            // Original behavior - single point
+            stack.push({x: startX, y: startY});
+        }
+        
         // Use cached data if available
         const originalData = cachedImageDataRef.current ? cachedImageDataRef.current.data :
             getContext(originalCanvasRef, 'original').getImageData(0, 0, width, height).data;
@@ -1022,8 +1188,20 @@ function ProjectionMapping() {
         
         for (let dy = -brushSize; dy <= brushSize; dy++) {
             for (let dx = -brushSize; dx <= brushSize; dx++) {
-                const dist = Math.sqrt(dx * dx + dy * dy);
-                if (dist > brushSize) continue;
+                let isInBrush = false;
+                let dist = 0;
+                
+                if (brushShape === 'circle') {
+                    dist = Math.sqrt(dx * dx + dy * dy);
+                    isInBrush = dist <= brushSize;
+                } else {
+                    // Square shape - already bounded by the for loop
+                    isInBrush = true;
+                    // Calculate distance for spray effect on square
+                    dist = Math.max(Math.abs(dx), Math.abs(dy));
+                }
+                
+                if (!isInBrush) continue;
                 
                 const px = x + dx;
                 const py = y + dy;
@@ -1031,14 +1209,21 @@ function ProjectionMapping() {
                 if (px < 0 || px >= width || py < 0 || py >= originalImage.height) continue;
                 
                 const idx = (py * width + px) * 4;
-                const alpha = 1 - (dist / brushSize);
                 
                 if (currentTool === 'brush') {
                     maskData[idx] = 255;
                     maskData[idx + 1] = 255;
                     maskData[idx + 2] = 255;
-                    maskData[idx + 3] = Math.max(maskData[idx + 3], alpha * 255);
+                    
+                    if (brushMode === 'solid') {
+                        maskData[idx + 3] = 255;
+                    } else {
+                        // Spray mode - gradient opacity
+                        const alpha = 1 - (dist / brushSize);
+                        maskData[idx + 3] = Math.max(maskData[idx + 3], alpha * 255);
+                    }
                 } else {
+                    // Eraser
                     maskData[idx] = 0;
                     maskData[idx + 1] = 0;
                     maskData[idx + 2] = 0;
@@ -1064,58 +1249,6 @@ function ProjectionMapping() {
                 updateCurrentCanvas();
             });
         }
-    };
-    
-    const drawBezierMarkers = (points) => {
-        const ctx = getContext(currentCanvasRef, 'current');
-        if (!ctx) return;
-        
-        // Redraw current canvas first
-        updateCurrentCanvas();
-        
-        // Draw markers and preview line
-        ctx.save();
-        points.forEach((point, index) => {
-            // Draw point marker
-            ctx.beginPath();
-            ctx.arc(point.x, point.y, 5, 0, 2 * Math.PI);
-            ctx.fillStyle = index === 0 || index === 3 ? '#ff4444' : '#4444ff'; // Red for endpoints, blue for control points
-            ctx.fill();
-            ctx.strokeStyle = '#ffffff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-            
-            // Draw point number
-            ctx.fillStyle = '#ffffff';
-            ctx.font = '12px Arial';
-            ctx.fillText(index + 1, point.x + 8, point.y - 8);
-        });
-        
-        // Draw preview lines connecting points
-        if (points.length > 1) {
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            for (let i = 1; i < points.length; i++) {
-                ctx.lineTo(points[i].x, points[i].y);
-            }
-            ctx.strokeStyle = '#ffff00';
-            ctx.lineWidth = 1;
-            ctx.setLineDash([5, 5]);
-            ctx.stroke();
-            ctx.setLineDash([]);
-        }
-        
-        // If we have 3 points, show preview of the curve
-        if (points.length === 3) {
-            ctx.beginPath();
-            ctx.moveTo(points[0].x, points[0].y);
-            ctx.quadraticCurveTo(points[1].x, points[1].y, points[2].x, points[2].y);
-            ctx.strokeStyle = '#00ff00';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
-        
-        ctx.restore();
     };
     
     const drawBezier = (points) => {
@@ -1479,7 +1612,7 @@ function ProjectionMapping() {
             setProcessingProgress(20);
             
             // Run k-means clustering
-            const { centroids, assignments } = kMeansClustering(sampledPixels, autoLayerCount);
+            const { centroids } = kMeansClustering(sampledPixels, autoLayerCount);
             
             await new Promise(resolve => setTimeout(resolve, 10));
             
@@ -1769,6 +1902,42 @@ function ProjectionMapping() {
                         value={brushSize}
                         onChange={(e) => setBrushSize(parseInt(e.target.value))}
                     />
+                    
+                    <label>Brush Mode:</label>
+                    <div style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
+                        <button 
+                            className={`tool-button ${brushMode === 'solid' ? 'active' : ''}`}
+                            onClick={() => setBrushMode('solid')}
+                            style={{ flex: 1 }}
+                        >
+                            Solid
+                        </button>
+                        <button 
+                            className={`tool-button ${brushMode === 'spray' ? 'active' : ''}`}
+                            onClick={() => setBrushMode('spray')}
+                            style={{ flex: 1 }}
+                        >
+                            Spray
+                        </button>
+                    </div>
+                    
+                    <label>Brush Shape:</label>
+                    <div style={{ display: 'flex', gap: '5px', marginBottom: '10px' }}>
+                        <button 
+                            className={`tool-button ${brushShape === 'circle' ? 'active' : ''}`}
+                            onClick={() => setBrushShape('circle')}
+                            style={{ flex: 1 }}
+                        >
+                            ⭕ Circle
+                        </button>
+                        <button 
+                            className={`tool-button ${brushShape === 'square' ? 'active' : ''}`}
+                            onClick={() => setBrushShape('square')}
+                            style={{ flex: 1 }}
+                        >
+                            ⬜ Square
+                        </button>
+                    </div>
                 </div>
                 
                 <h3>Layers</h3>
@@ -1892,10 +2061,11 @@ function ProjectionMapping() {
                         <div 
                             className="cursor-preview"
                             style={{
-                                left: cursorPosition.x - (brushSize * edgeCanvasRef.current.getBoundingClientRect().width / edgeCanvasRef.current.width),
-                                top: cursorPosition.y - (brushSize * edgeCanvasRef.current.getBoundingClientRect().height / edgeCanvasRef.current.height),
-                                width: (brushSize * 2 * edgeCanvasRef.current.getBoundingClientRect().width / edgeCanvasRef.current.width),
-                                height: (brushSize * 2 * edgeCanvasRef.current.getBoundingClientRect().height / edgeCanvasRef.current.height),
+                                left: cursorPosition.x - brushSize,
+                                top: cursorPosition.y - brushSize,
+                                width: brushSize * 2,
+                                height: brushSize * 2,
+                                borderRadius: brushShape === 'circle' ? '50%' : '0',
                                 borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
                             }}
                         />
@@ -1921,10 +2091,11 @@ function ProjectionMapping() {
                         <div 
                             className="cursor-preview"
                             style={{
-                                left: cursorPosition.x - (brushSize * currentCanvasRef.current.getBoundingClientRect().width / currentCanvasRef.current.width),
-                                top: cursorPosition.y - (brushSize * currentCanvasRef.current.getBoundingClientRect().height / currentCanvasRef.current.height),
-                                width: (brushSize * 2 * currentCanvasRef.current.getBoundingClientRect().width / currentCanvasRef.current.width),
-                                height: (brushSize * 2 * currentCanvasRef.current.getBoundingClientRect().height / currentCanvasRef.current.height),
+                                left: cursorPosition.x - brushSize,
+                                top: cursorPosition.y - brushSize,
+                                width: brushSize * 2,
+                                height: brushSize * 2,
+                                borderRadius: brushShape === 'circle' ? '50%' : '0',
                                 borderColor: currentTool === 'eraser' ? '#ff4444' : layers[currentLayerIndex]?.color || '#fff'
                             }}
                         />

@@ -192,6 +192,7 @@
         let dragStart = { x: 0, y: 0 };
         let transformStart = null;
         let maskBounds = { width: 0, height: 0 };
+        let contentBounds = null; // Actual content bounds excluding transparent pixels
         
         function resizeCanvas() {
             canvas.width = window.innerWidth;
@@ -223,6 +224,10 @@
                     width: layerData.mask.width,
                     height: layerData.mask.height
                 };
+                
+                // Calculate content bounds
+                contentBounds = calculateContentBounds(layerData.mask);
+                console.log('Content bounds:', contentBounds);
                 
                 // Update UI
                 document.getElementById('layerName').textContent = layerData.name;
@@ -326,6 +331,56 @@
             updateHandles();
         }
         
+        function calculateContentBounds(maskData) {
+            if (!maskData || !maskData.data) return null;
+            
+            const width = maskData.width;
+            const height = maskData.height;
+            const data = maskData.data;
+            
+            let minX = width;
+            let minY = height;
+            let maxX = 0;
+            let maxY = 0;
+            let hasContent = false;
+            
+            // Find bounding box of non-transparent pixels
+            for (let y = 0; y < height; y++) {
+                for (let x = 0; x < width; x++) {
+                    const idx = (y * width + x) * 4;
+                    // Check alpha channel for transparency
+                    if (data[idx + 3] > 0) {
+                        hasContent = true;
+                        minX = Math.min(minX, x);
+                        minY = Math.min(minY, y);
+                        maxX = Math.max(maxX, x);
+                        maxY = Math.max(maxY, y);
+                    }
+                }
+            }
+            
+            if (!hasContent) {
+                // No content found, use full bounds
+                return {
+                    x: 0,
+                    y: 0,
+                    width: width,
+                    height: height,
+                    offsetX: 0,
+                    offsetY: 0
+                };
+            }
+            
+            return {
+                x: minX,
+                y: minY,
+                width: maxX - minX + 1,
+                height: maxY - minY + 1,
+                offsetX: minX + (maxX - minX + 1) / 2 - width / 2,
+                offsetY: minY + (maxY - minY + 1) / 2 - height / 2
+            };
+        }
+        
         function updateHandles() {
             if (!layerData || !layerData.mask) {
                 // Hide handles if no layer data
@@ -336,8 +391,16 @@
             // Show handles
             document.getElementById('transformHandles').style.display = 'block';
             
-            const width = layerData.mask.width;
-            const height = layerData.mask.height;
+            // Use content bounds if available, otherwise fall back to mask bounds
+            const bounds = contentBounds || {
+                width: layerData.mask.width,
+                height: layerData.mask.height,
+                offsetX: 0,
+                offsetY: 0
+            };
+            
+            const width = bounds.width;
+            const height = bounds.height;
             
             // Calculate transformed corners
             let centerX = canvas.width / 2;
@@ -347,8 +410,8 @@
             
             if (isBaseTransformMode) {
                 // In base mode, only show base transform
-                centerX += transform.x;
-                centerY += transform.y;
+                centerX += transform.x + bounds.offsetX * transform.scale;
+                centerY += transform.y + bounds.offsetY * transform.scale;
                 totalScale = transform.scale;
                 totalRotation = transform.rotation;
             } else {
@@ -365,6 +428,17 @@
                 
                 centerX += rotatedX * baseTransform.scale;
                 centerY += rotatedY * baseTransform.scale;
+                
+                // Apply content bounds offset
+                const contentOffsetRotated = {
+                    x: bounds.offsetX * transform.scale,
+                    y: bounds.offsetY * transform.scale
+                };
+                const finalOffsetX = contentOffsetRotated.x * baseCos - contentOffsetRotated.y * baseSin;
+                const finalOffsetY = contentOffsetRotated.x * baseSin + contentOffsetRotated.y * baseCos;
+                
+                centerX += finalOffsetX * baseTransform.scale;
+                centerY += finalOffsetY * baseTransform.scale;
                 
                 totalScale = baseTransform.scale * transform.scale;
                 totalRotation = baseTransform.rotation + transform.rotation;
@@ -588,6 +662,8 @@
                 isDragging = true;
                 dragStart = { x: e.clientX, y: e.clientY };
                 transformStart = { ...transform };
+                // Recalculate content bounds when starting drag
+                contentBounds = calculateContentBounds(layerData.mask);
                 maskBounds = { 
                     width: layerData.mask.width, 
                     height: layerData.mask.height 

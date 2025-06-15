@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background Circle -->
+  <circle cx="256" cy="256" r="240" fill="#1976D2" opacity="0.1"/>
+  
+  <!-- Projector/Source -->
+  <g transform="translate(256, 256)">
+    <!-- Main projector body -->
+    <rect x="-60" y="-30" width="120" height="60" rx="10" fill="#2196F3"/>
+    
+    <!-- Projection beam -->
+    <path d="M 60 -25 L 140 -60 L 140 60 L 60 25 Z" fill="#2196F3" opacity="0.3"/>
+    <path d="M 60 -20 L 120 -45 L 120 45 L 60 20 Z" fill="#2196F3" opacity="0.5"/>
+    
+    <!-- Network waves inside beam -->
+    <circle cx="80" cy="0" r="8" fill="#4CAF50"/>
+    <circle cx="80" cy="0" r="16" fill="none" stroke="#4CAF50" stroke-width="2" opacity="0.7"/>
+    <circle cx="80" cy="0" r="24" fill="none" stroke="#4CAF50" stroke-width="2" opacity="0.5"/>
+    
+    <circle cx="110" cy="-20" r="6" fill="#4CAF50"/>
+    <circle cx="110" cy="20" r="6" fill="#4CAF50"/>
+    
+    <!-- Connection lines -->
+    <line x1="80" y1="0" x2="110" y2="-20" stroke="#4CAF50" stroke-width="2" opacity="0.5"/>
+    <line x1="80" y1="0" x2="110" y2="20" stroke="#4CAF50" stroke-width="2" opacity="0.5"/>
+    
+    <!-- Projector lens -->
+    <circle cx="50" cy="0" r="15" fill="#1976D2"/>
+    <circle cx="50" cy="0" r="10" fill="#0D47A1"/>
+    
+    <!-- nano text -->
+    <text x="-40" y="5" font-family="Arial, sans-serif" font-size="24" font-weight="bold" fill="white">nano</text>
+  </g>
+  
+  <!-- Decorative dots -->
+  <circle cx="100" cy="100" r="4" fill="#4CAF50" opacity="0.6"/>
+  <circle cx="412" cy="100" r="4" fill="#4CAF50" opacity="0.6"/>
+  <circle cx="100" cy="412" r="4" fill="#4CAF50" opacity="0.6"/>
+  <circle cx="412" cy="412" r="4" fill="#4CAF50" opacity="0.6"/>
+</svg>

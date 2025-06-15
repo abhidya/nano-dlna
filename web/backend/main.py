@@ -11,7 +11,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 from database.database import init_db, get_db
-from routers import device_router, video_router, streaming_router, renderer_router, overlay_router
+from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router
 from core.device_manager import DeviceManager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
@@ -24,9 +24,26 @@ import logging.handlers
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
+# Create custom filter to exclude repetitive endpoint logs
+class EndpointFilter(logging.Filter):
+    def __init__(self):
+        super().__init__()
+        self.excluded_paths = [
+            "GET /api/devices/",
+            "GET /api/videos/",
+            "GET /api/devices HTTP",
+            "GET /api/videos HTTP",
+        ]
+    
+    def filter(self, record):
+        # Filter out repetitive GET requests for polling endpoints
+        message = record.getMessage()
+        return not any(path in message for path in self.excluded_paths)
+
 # Create handlers
 console_handler = logging.StreamHandler()
 console_handler.setLevel(logging.INFO)
+console_handler.addFilter(EndpointFilter())
 
 # Create a rotating file handler for dashboard_run.log
 file_handler = logging.handlers.RotatingFileHandler(
@@ -36,6 +53,7 @@ file_handler = logging.handlers.RotatingFileHandler(
     encoding='utf-8'
 )
 file_handler.setLevel(logging.INFO)
+file_handler.addFilter(EndpointFilter())
 
 # Create formatters and add them to handlers
 log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
@@ -77,6 +95,7 @@ app.include_router(video_router, prefix="/api")
 app.include_router(streaming_router, prefix="/api")
 app.include_router(renderer_router, prefix="/api")  # Add the renderer router
 app.include_router(overlay_router)  # Overlay router already has /api prefix
+app.include_router(projection_router)  # Projection router already has /api prefix
 
 # Try to include depth_router if dependencies are available
 try:
