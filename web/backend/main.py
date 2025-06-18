@@ -2,6 +2,7 @@ import logging
 import os
 import sys
 import traceback
+import time
 
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,17 +13,13 @@ from typing import List, Dict, Any, Optional
 
 from database.database import init_db, get_db
 from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router
-from core.device_manager import DeviceManager
+from core.device_manager import get_device_manager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
 from core.streaming_service import get_streaming_service
 
-# Configure logging
+# Configure logging - check if already configured by run.py
 import logging.handlers
-
-# Create a logger
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
 
 # Create custom filter to exclude repetitive endpoint logs
 class EndpointFilter(logging.Filter):
@@ -33,6 +30,9 @@ class EndpointFilter(logging.Filter):
             "GET /api/videos/",
             "GET /api/devices HTTP",
             "GET /api/videos HTTP",
+            "/health",
+            "/api/streaming/active-sessions",
+            "/api/projector",
         ]
     
     def filter(self, record):
@@ -40,38 +40,47 @@ class EndpointFilter(logging.Filter):
         message = record.getMessage()
         return not any(path in message for path in self.excluded_paths)
 
-# Create handlers
-console_handler = logging.StreamHandler()
-console_handler.setLevel(logging.INFO)
-console_handler.addFilter(EndpointFilter())
-
-# Create a rotating file handler for dashboard_run.log
-file_handler = logging.handlers.RotatingFileHandler(
-    'dashboard_run.log',
-    maxBytes=10485760,  # 10MB
-    backupCount=5,
-    encoding='utf-8'
-)
-file_handler.setLevel(logging.INFO)
-file_handler.addFilter(EndpointFilter())
-
-# Create formatters and add them to handlers
-log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-formatter = logging.Formatter(log_format)
-console_handler.setFormatter(formatter)
-file_handler.setFormatter(formatter)
-
-# Add handlers to the logger
-logger.addHandler(console_handler)
-logger.addHandler(file_handler)
-
-# Set up root logger to use our configuration
+# Check if logging is already configured
 root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
-for handler in root_logger.handlers[:]:
-    root_logger.removeHandler(handler)
-root_logger.addHandler(console_handler)
-root_logger.addHandler(file_handler)
+if not root_logger.handlers:
+    # Only configure if not already done
+    try:
+        from logging_config import setup_logging
+        setup_logging(log_level="INFO", log_file="dashboard_run.log")
+    except ImportError:
+        # Fallback configuration
+        logger = logging.getLogger(__name__)
+        logger.setLevel(logging.INFO)
+        
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)
+        console_handler.addFilter(EndpointFilter())
+        
+        file_handler = logging.handlers.RotatingFileHandler(
+            'dashboard_run.log',
+            maxBytes=10485760,  # 10MB
+            backupCount=5,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.INFO)
+        file_handler.addFilter(EndpointFilter())
+        
+        log_format = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+        formatter = logging.Formatter(log_format)
+        console_handler.setFormatter(formatter)
+        file_handler.setFormatter(formatter)
+        
+        root_logger.setLevel(logging.INFO)
+        root_logger.addHandler(console_handler)
+        root_logger.addHandler(file_handler)
+else:
+    # Add endpoint filter to existing handlers
+    endpoint_filter = EndpointFilter()
+    for handler in root_logger.handlers:
+        handler.addFilter(endpoint_filter)
+
+# Get logger for this module
+logger = logging.getLogger(__name__)
 
 # Create FastAPI app
 app = FastAPI(
@@ -136,7 +145,7 @@ async def startup_event():
     logger.info("Starting nano-dlna Dashboard API")
     
     # Initialize services here to prevent multiple executions during imports  
-    device_manager = DeviceManager()
+    device_manager = get_device_manager()  # Use singleton
     # Stop any existing streaming servers to prevent port conflicts
     streaming_service = get_twisted_streaming()
     streaming_service.stop_server()  # Explicitly stop any existing servers
@@ -163,6 +172,21 @@ async def startup_event():
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
     
+    # Create and set device service
+    try:
+        # Get the database session
+        db = next(get_db())
+        
+        # Create a device service instance
+        from services.device_service import DeviceService
+        device_service = DeviceService(db, device_manager)
+        
+        # Set the device service in device manager for recovery operations
+        device_manager.set_device_service(device_service)
+        logger.info("Device service set in device manager")
+    except Exception as e:
+        logger.error(f"Error creating device service: {e}")
+    
     # Load devices from configuration files
     try:
         # First, check for configuration files in the project root
@@ -185,14 +209,7 @@ async def startup_event():
             if os.path.exists(config_file):
                 logger.info(f"Loading devices from {config_file}")
                 try:
-                    # Get the database session
-                    db = next(get_db())
-                    
-                    # Create a device service instance
-                    from services.device_service import DeviceService
-                    device_service = DeviceService(db, device_manager)
-                    
-                    # Load devices from the config file
+                    # Load devices from the config file using the existing device_service
                     devices = device_service.load_devices_from_config(config_file)
                     logger.info(f"Loaded {len(devices)} devices from {config_file}")
                     
@@ -202,9 +219,6 @@ async def startup_event():
         
         if not loaded:
             logger.warning("No configuration files found or loaded. Using sample data.")
-            
-        # Store the device_service in the device_manager for status updates
-        device_manager.device_service = device_service
         
         # Start device discovery to find devices on the network
         # This will automatically play videos on devices when they are discovered
@@ -215,9 +229,18 @@ async def startup_event():
         # Log the number of devices in the device manager
         logger.info(f"Device manager has {len(device_manager.devices)} devices")
         
-        # Log all devices in the device manager
+        # Log all devices in the device manager and ensure their status is initialized
         for device_name, device in device_manager.devices.items():
             logger.info(f"Device in manager: {device_name}, type: {device.type}, hostname: {device.hostname}, action_url: {device.action_url}")
+            # Ensure device_status is initialized for all devices
+            with device_manager.status_lock:
+                if device_name not in device_manager.device_status:
+                    device_manager.device_status[device_name] = {
+                        "status": "disconnected",  # Start as disconnected until discovery confirms
+                        "last_updated": time.time(),
+                        "is_playing": False
+                    }
+                    logger.info(f"Initialized device_status for {device_name} on startup")
 
         # Start the renderer service's streaming server
         if renderer_service:

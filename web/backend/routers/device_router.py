@@ -15,14 +15,14 @@ from schemas.device import (
     DeviceActionResponse,
 )
 from services.device_service import DeviceService
-from core.device_manager import DeviceManager
+from core.device_manager import get_device_manager
 from routers.video_router import get_video_service
 
 # Set up logger
 logger = logging.getLogger(__name__)
 
-# Create a device manager instance
-device_manager = DeviceManager()
+# Get the singleton device manager instance
+device_manager = get_device_manager()
 
 # Create router
 router = APIRouter(

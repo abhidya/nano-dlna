@@ -178,6 +178,13 @@ class DeviceService:
             
             self.device_manager.register_device(device_info)
             
+            # Initialize device status
+            self.device_manager.update_device_status(
+                device_name=device.name,
+                status="connected",
+                is_playing=False
+            )
+            
             return db_device
         except SQLAlchemyError as e:
             self.db.rollback()
@@ -268,6 +275,14 @@ class DeviceService:
             
             # Register device with new info (handles updates atomically)
             self.device_manager.register_device(device_info)
+            
+            # Update device status in device manager to match database
+            self.device_manager.update_device_status(
+                device_name=current_db_device_state.name,
+                status=current_db_device_state.status,
+                is_playing=current_db_device_state.is_playing,
+                current_video=current_db_device_state.current_video
+            )
             
             # Clean up old name AFTER registering new one to avoid race condition
             if current_db_device_state.name != original_device_name_before_update:
@@ -439,6 +454,13 @@ class DeviceService:
                         # Register session with StreamingSessionRegistry so monitoring thread can track it
                         from core.streaming_registry import StreamingSessionRegistry
                         registry = StreamingSessionRegistry.get_instance()
+                        
+                        # Clean up any existing sessions for this device before creating new one
+                        existing_sessions = registry.get_sessions_for_device(device.name)
+                        for existing_session in existing_sessions:
+                            logger.info(f"Cleaning up existing session {existing_session.session_id} before playing new video")
+                            registry.unregister_session(existing_session.session_id)
+                        
                         session = registry.register_session(
                             device_name=device.name,
                             video_path=video_path,
@@ -926,6 +948,12 @@ class DeviceService:
                 
                 # Register the device with the device manager
                 self.device_manager.register_device(device_info)
+                
+                # Update device status in device manager
+                self.device_manager.update_device_status(
+                    device_name=device_name,
+                    status="disconnected"  # Start as disconnected until discovery confirms
+                )
             
             # Return the devices as dictionaries
             return [device.to_dict() for device in db_devices]
@@ -1040,6 +1068,28 @@ class DeviceService:
         # Otherwise use updated_at
         return device.updated_at.isoformat()
 
+    def _format_datetime_utc(self, dt: Optional[datetime]) -> Optional[str]:
+        """
+        Format datetime to ISO format with UTC timezone indicator
+        
+        Args:
+            dt: Datetime object (may or may not have timezone info)
+            
+        Returns:
+            ISO formatted string with 'Z' suffix for UTC, or None
+        """
+        if not dt:
+            return None
+        
+        # If datetime has no timezone info, assume it's UTC
+        if dt.tzinfo is None:
+            return dt.isoformat() + 'Z'
+        
+        # If it has timezone info, convert to UTC and format
+        utc_dt = dt.astimezone(timezone.utc)
+        # Use 'Z' suffix for UTC instead of '+00:00'
+        return utc_dt.isoformat().replace('+00:00', 'Z')
+    
     def _device_to_dict(self, device: DeviceModel) -> Dict[str, Any]: # Renamed from _device_model_to_dict
         """
         Convert a DeviceModel to a dictionary, incorporating live status from DeviceManager.
@@ -1060,32 +1110,33 @@ class DeviceService:
             "playback_position": device.playback_position,
             "playback_duration": device.playback_duration,
             "playback_progress": device.playback_progress,
-            "playback_started_at": device.playback_started_at.isoformat() if device.playback_started_at else None,
+            "playback_started_at": self._format_datetime_utc(device.playback_started_at),
             "config": device.config,
-            "created_at": device.created_at.isoformat() if device.created_at else None,
-            "updated_at": device.updated_at.isoformat() if device.updated_at else None,
+            "created_at": self._format_datetime_utc(device.created_at),
+            "updated_at": self._format_datetime_utc(device.updated_at),
         }
 
         # Debug logging
-        logger.info(f"Device {device.name}: is_playing={device.is_playing}, updated_at={device.updated_at}, playback_started_at={device_dict.get('playback_started_at')}")
-        print(f"DEVICE DICT for {device.name}: {device_dict}")  # Direct print to see in logs
+        logger.debug(f"Device {device.name}: is_playing={device.is_playing}, updated_at={device.updated_at}, playback_started_at={device_dict.get('playback_started_at')}")
         
         # Override with live status from DeviceManager if available
-        logger.info(f"DEBUG: _device_to_dict for device.name='{device.name}'")
-        logger.info(f"DEBUG: _device_to_dict: self.device_manager.device_status keys: {list(self.device_manager.device_status.keys())}")
+        logger.debug(f"_device_to_dict for device.name='{device.name}'")
+        logger.debug(f"_device_to_dict: self.device_manager.device_status keys: {list(self.device_manager.device_status.keys())}")
         
         with self.device_manager.status_lock:
             if device.name in self.device_manager.device_status:
-                logger.info(f"DEBUG: _device_to_dict: Found '{device.name}' in device_manager.device_status.")
+                logger.debug(f"_device_to_dict: Found '{device.name}' in device_manager.device_status")
                 status_info = self.device_manager.device_status[device.name]
                 # Prioritize live status from manager
                 device_dict["status"] = status_info.get("status", device.status) # Fallback to DB status if manager's status is None
-                # Update other live fields if necessary, e.g., last_seen, is_playing from manager's perspective
-                # For now, only overriding status for clarity on this bug.
+                # Add additional live info from device_status
+                device_dict["last_seen"] = status_info.get("last_updated")
+                device_dict["manager_is_playing"] = status_info.get("is_playing", device.is_playing)
+                logger.info(f"Device {device.name} status from manager: {status_info.get('status')}, is_playing: {status_info.get('is_playing')}")
             else:
-                logger.info(f"DEBUG: _device_to_dict: Did NOT find '{device.name}' in device_manager.device_status.")
+                logger.warning(f"Device '{device.name}' not found in device_manager.device_status, using DB status: {device.status}")
         
-        logger.info(f"DEBUG: _device_to_dict: final device_dict['status'] for '{device.name}' is '{device_dict['status']}'")
+        logger.debug(f"_device_to_dict: final device_dict['status'] for '{device.name}' is '{device_dict['status']}'")
         return device_dict
 
     def sync_device_status_with_discovery(self, discovered_device_names: set) -> None:

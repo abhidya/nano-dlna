@@ -57,9 +57,9 @@ api.interceptors.response.use(
 
 // Device API
 const deviceApi = {
-  getDevices: (params = {}) => api.get('/devices', { params }),
+  getDevices: (params = {}) => api.get('/devices/', { params }),
   getDevice: (id) => api.get(`/devices/${id}`),
-  createDevice: (data) => api.post('/devices', data),
+  createDevice: (data) => api.post('/devices/', data),
   updateDevice: (id, data) => api.put(`/devices/${id}`, data),
   deleteDevice: (id) => api.delete(`/devices/${id}`),
   discoverDevices: () => api.get('/devices/discover'),
@@ -90,9 +90,9 @@ const deviceApi = {
 
 // Video API
 const videoApi = {
-  getVideos: (params = {}) => api.get('/videos', { params }),
+  getVideos: (params = {}) => api.get('/videos/', { params }),
   getVideo: (id) => api.get(`/videos/${id}`),
-  createVideo: (data) => api.post('/videos', data),
+  createVideo: (data) => api.post('/videos/', data),
   updateVideo: (id, data) => api.put(`/videos/${id}`, data),
   deleteVideo: (id) => api.delete(`/videos/${id}`),
   uploadVideo: (formData, config = {}) => api.post('/videos/upload', formData, {

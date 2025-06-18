@@ -147,7 +147,7 @@ class GradientBubblesAnimation extends BaseAnimation {
         // Create gradient background HTML
         this.wrapper.innerHTML = `
             <div class="gradient-bg-canvas">
-                <svg viewBox="0 0 100vw 100vw" xmlns="http://www.w3.org/2000/svg" class="noiseBg">
+                <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" class="noiseBg">
                     <filter id="noiseFilterBg">
                         <feTurbulence type="fractalNoise" baseFrequency="0.6" stitchTiles="stitch" />
                     </filter>

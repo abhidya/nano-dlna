@@ -21,7 +21,14 @@ function ProjectionMapping() {
     const [edgeProcessing, setEdgeProcessing] = useState(false);
     const [brushMode, setBrushMode] = useState('solid'); // 'solid' or 'spray'
     const [brushShape, setBrushShape] = useState('circle'); // 'circle' or 'square'
-    const [magicWandMode, setMagicWandMode] = useState('radius'); // 'radius' or 'point'
+    const [magicWandMode] = useState('radius'); // 'radius' or 'point'
+    
+    // Selection tool states
+    const [selection, setSelection] = useState(null); // { x, y, width, height, data: ImageData }
+    const [selectionStart, setSelectionStart] = useState(null);
+    const [isSelecting, setIsSelecting] = useState(false);
+    const [clipboard, setClipboard] = useState(null); // { width, height, data: ImageData }
+    const [selectedLayers, setSelectedLayers] = useState(new Set()); // For multi-layer selection
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -34,6 +41,13 @@ function ProjectionMapping() {
     const cachedEdgeDataRef = useRef(null);
     const precomputedEdgesRef = useRef(null); // Store all edge magnitudes
     const edgeUpdateTimerRef = useRef(null);
+    
+    // Brush optimization refs
+    const brushCanvasRef = useRef(null);
+    const brushCtxRef = useRef(null);
+    const lastBrushPosRef = useRef(null);
+    const dirtyRectRef = useRef(null);
+    const brushUpdateTimerRef = useRef(null);
     
     // Cache canvas contexts
     const contextsRef = useRef({
@@ -177,6 +191,151 @@ function ProjectionMapping() {
         reader.readAsDataURL(file);
     };
     
+    const handleLayerImport = async (e) => {
+        const files = Array.from(e.target.files);
+        if (!files.length) return;
+        
+        if (!originalImage) {
+            setStatus('Please upload a base image first');
+            return;
+        }
+        
+        setStatus(`Processing ${files.length} files...`);
+        
+        let successCount = 0;
+        let firstLayerIndex = layers.length;
+        
+        // Process files one at a time to avoid memory issues
+        for (let fileIndex = 0; fileIndex < files.length; fileIndex++) {
+            const file = files[fileIndex];
+            
+            // Update status for each file
+            setStatus(`Processing file ${fileIndex + 1} of ${files.length}: ${file.name}`);
+            
+            try {
+                const layerData = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = (event) => {
+                        const img = new Image();
+                        img.onload = () => {
+                            // Create a canvas to read the image data
+                            const canvas = document.createElement('canvas');
+                            canvas.width = originalImage.width;
+                            canvas.height = originalImage.height;
+                            const ctx = canvas.getContext('2d');
+                            
+                            // Fill with black background
+                            ctx.fillStyle = 'black';
+                            ctx.fillRect(0, 0, canvas.width, canvas.height);
+                            
+                            // Draw the imported image, scaling to fit if needed
+                            const scale = Math.min(
+                                originalImage.width / img.width,
+                                originalImage.height / img.height
+                            );
+                            const scaledWidth = img.width * scale;
+                            const scaledHeight = img.height * scale;
+                            const x = (originalImage.width - scaledWidth) / 2;
+                            const y = (originalImage.height - scaledHeight) / 2;
+                            
+                            ctx.drawImage(img, x, y, scaledWidth, scaledHeight);
+                            
+                            // Get image data and create mask
+                            const imageData = ctx.getImageData(0, 0, originalImage.width, originalImage.height);
+                            const mask = new ImageData(originalImage.width, originalImage.height);
+                            const maskData = mask.data;
+                            const imgData = imageData.data;
+                            
+                            let pixelCount = 0;
+                            
+                            // Convert to mask: any non-black pixel becomes white in the mask
+                            for (let i = 0; i < imgData.length; i += 4) {
+                                // Check if pixel is not black (threshold of 30 to account for compression artifacts)
+                                if (imgData[i] > 30 || imgData[i + 1] > 30 || imgData[i + 2] > 30) {
+                                    maskData[i] = 255;
+                                    maskData[i + 1] = 255;
+                                    maskData[i + 2] = 255;
+                                    maskData[i + 3] = 255;
+                                    pixelCount++;
+                                }
+                            }
+                            
+                            // Extract filename without extension for layer name
+                            const layerName = file.name.replace(/\.[^/.]+$/, "").replace(/_/g, ' ');
+                            
+                            // Clear image source to free memory
+                            img.src = '';
+                            
+                            resolve({
+                                name: layerName,
+                                mask: mask,
+                                pixelCount: pixelCount
+                            });
+                        };
+                        img.onerror = () => reject(new Error(`Failed to load ${file.name}`));
+                        img.src = event.target.result;
+                    };
+                    reader.onerror = () => reject(new Error(`Failed to read ${file.name}`));
+                    reader.readAsDataURL(file);
+                });
+                
+                // Generate unique color
+                const usedColors = new Set(layers.map(l => l.color));
+                let color;
+                do {
+                    color = getRandomColor();
+                } while (usedColors.has(color));
+                
+                const layerId = Date.now() + Math.random();
+                const newLayer = {
+                    id: layerId,
+                    name: layerData.name,
+                    color: color,
+                    mask: layerData.mask,
+                    visible: true,
+                    pixelCount: layerData.pixelCount,
+                    transform: { x: 0, y: 0, scale: 1, rotation: 0 }
+                };
+                
+                // Add layer immediately to state
+                setLayers(currentLayers => [...currentLayers, newLayer]);
+                layerHistoryRef.current.set(layerId, { states: [], currentIndex: -1 });
+                canvasWorkRef.current.maskCache.set(layerId, layerData.mask);
+                
+                // Save initial state for undo/redo functionality
+                // We need to save the state directly since the layer isn't in the state array yet
+                const history = layerHistoryRef.current.get(layerId);
+                if (history) {
+                    const initialState = new ImageData(layerData.mask.data.slice(), layerData.mask.width, layerData.mask.height);
+                    history.states.push(initialState);
+                    history.currentIndex = 0;
+                }
+                
+                successCount++;
+                
+                // Allow browser to breathe between files
+                await new Promise(resolve => setTimeout(resolve, 10));
+                
+            } catch (error) {
+                console.error(`Error importing ${file.name}:`, error);
+                setStatus(`Failed to import ${file.name}`);
+                // Wait a bit before continuing with next file
+                await new Promise(resolve => setTimeout(resolve, 100));
+            }
+        }
+        
+        if (successCount > 0) {
+            setStatus(`Successfully imported ${successCount} of ${files.length} layers`);
+            // Select the first imported layer
+            setCurrentLayerIndex(firstLayerIndex);
+        } else {
+            setStatus('Failed to import any layers');
+        }
+        
+        // Reset the file input
+        e.target.value = '';
+    };
+    
     const initializeCanvases = (img) => {
         const canvases = [
             originalCanvasRef.current,
@@ -191,6 +350,9 @@ function ProjectionMapping() {
                 canvas.height = img.height;
             }
         });
+        
+        // Initialize brush canvas
+        initBrushCanvas(img);
         
         // Clear context cache when canvas sizes change
         contextsRef.current = {
@@ -330,7 +492,15 @@ function ProjectionMapping() {
         setLayers([...layers, newLayer]);
         layerHistoryRef.current.set(layerId, { states: [], currentIndex: -1 });
         setCurrentLayerIndex(layerIndex);
-        saveLayerState(layerId);
+        
+        // Save initial empty state directly to avoid race condition
+        const history = layerHistoryRef.current.get(layerId);
+        if (history) {
+            const initialState = new ImageData(newLayer.mask.data.slice(), newLayer.mask.width, newLayer.mask.height);
+            history.states.push(initialState);
+            history.currentIndex = 0;
+        }
+        
         setStatus(`Created ${newLayer.name}`);
     };
     
@@ -582,16 +752,143 @@ function ProjectionMapping() {
         }
         
         const layer = layers[index];
+        
+        // Close projection window if open
+        if (projectionWindowsRef.current.has(index)) {
+            projectionWindowsRef.current.get(index).close();
+            projectionWindowsRef.current.delete(index);
+        }
+        
         const newLayers = layers.filter((_, i) => i !== index);
         setLayers(newLayers);
         layerHistoryRef.current.delete(layer.id);
         canvasWorkRef.current.maskCache.delete(layer.id);
+        
+        // Update projection window references for remaining layers
+        const newProjectionWindows = new Map();
+        projectionWindowsRef.current.forEach((window, oldIndex) => {
+            if (oldIndex > index) {
+                newProjectionWindows.set(oldIndex - 1, window);
+            } else if (oldIndex < index) {
+                newProjectionWindows.set(oldIndex, window);
+            }
+        });
+        projectionWindowsRef.current = newProjectionWindows;
         
         if (currentLayerIndex >= newLayers.length) {
             setCurrentLayerIndex(newLayers.length - 1);
         }
         
         setStatus(`Deleted ${layer.name}`);
+    };
+    
+    const flattenSelectedLayers = () => {
+        const selectedIndices = Array.from(selectedLayers).map(id => 
+            layers.findIndex(layer => layer.id === id)
+        ).filter(index => index !== -1).sort((a, b) => a - b);
+        
+        if (selectedIndices.length < 2) {
+            setStatus('Select at least 2 layers to flatten');
+            return;
+        }
+        
+        // Create a new canvas for the flattened result
+        const canvas = document.createElement('canvas');
+        canvas.width = originalImage.width;
+        canvas.height = originalImage.height;
+        const ctx = canvas.getContext('2d');
+        
+        // Clear canvas
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        
+        // Draw each selected layer in order
+        selectedIndices.forEach(index => {
+            const layer = layers[index];
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = canvas.width;
+            tempCanvas.height = canvas.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            
+            // Draw the layer mask
+            tempCtx.fillStyle = layer.color;
+            tempCtx.globalAlpha = layer.opacity;
+            
+            const maskData = new ImageData(
+                new Uint8ClampedArray(layer.mask),
+                canvas.width,
+                canvas.height
+            );
+            
+            const maskCanvas = document.createElement('canvas');
+            maskCanvas.width = canvas.width;
+            maskCanvas.height = canvas.height;
+            const maskCtx = maskCanvas.getContext('2d');
+            maskCtx.putImageData(maskData, 0, 0);
+            
+            tempCtx.globalCompositeOperation = 'source-over';
+            tempCtx.fillRect(0, 0, canvas.width, canvas.height);
+            tempCtx.globalCompositeOperation = 'destination-in';
+            tempCtx.drawImage(maskCanvas, 0, 0);
+            
+            // Apply layer transform
+            ctx.save();
+            ctx.translate(canvas.width / 2, canvas.height / 2);
+            ctx.translate(layer.transform.x, layer.transform.y);
+            ctx.scale(layer.transform.scale, layer.transform.scale);
+            ctx.rotate((layer.transform.rotation * Math.PI) / 180);
+            ctx.translate(-canvas.width / 2, -canvas.height / 2);
+            
+            ctx.drawImage(tempCanvas, 0, 0);
+            ctx.restore();
+        });
+        
+        // Create new flattened layer
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const flattenedMask = new Uint8Array(canvas.width * canvas.height);
+        
+        // Extract alpha channel as mask
+        for (let i = 0; i < imageData.data.length; i += 4) {
+            const alpha = imageData.data[i + 3];
+            const maskIndex = i / 4;
+            flattenedMask[maskIndex] = alpha;
+        }
+        
+        // Get names of layers being flattened
+        const layerNames = selectedIndices.map(i => layers[i].name).join(' + ');
+        const newLayerName = `Flattened: ${layerNames}`;
+        
+        const newLayer = {
+            id: Date.now().toString(),
+            name: newLayerName,
+            mask: flattenedMask,
+            color: '#ffffff',
+            opacity: 1,
+            visible: true,
+            transform: { x: 0, y: 0, scale: 1, rotation: 0 }
+        };
+        
+        // Remove the selected layers (in reverse order to maintain indices)
+        const remainingLayers = layers.filter((_, index) => !selectedIndices.includes(index));
+        
+        // Close projection windows for deleted layers
+        selectedIndices.forEach(index => {
+            if (projectionWindowsRef.current.has(index)) {
+                projectionWindowsRef.current.get(index).close();
+                projectionWindowsRef.current.delete(index);
+            }
+        });
+        
+        // Add the new flattened layer
+        const newLayers = [...remainingLayers, newLayer];
+        setLayers(newLayers);
+        
+        // Clear selection
+        setSelectedLayers(new Set());
+        
+        // Set the new layer as current
+        setCurrentLayerIndex(newLayers.length - 1);
+        
+        setStatus(`Flattened ${selectedIndices.length} layers into "${newLayerName}"`);
     };
     
     const downloadLayer = (index, transformMode = 'combined') => {
@@ -766,6 +1063,354 @@ function ProjectionMapping() {
         setStatus('Reset base transform');
     };
     
+    const openFullscreenEditor = (index) => {
+        const layer = layers[index];
+        const canvas = document.createElement('canvas');
+        canvas.width = originalImage.width;
+        canvas.height = originalImage.height;
+        const ctx = canvas.getContext('2d');
+        
+        // Convert single-channel mask to RGBA ImageData
+        const maskSize = canvas.width * canvas.height;
+        const rgbaData = new Uint8ClampedArray(maskSize * 4);
+        
+        for (let i = 0; i < maskSize; i++) {
+            const alpha = layer.mask[i] || 0;
+            rgbaData[i * 4] = 255;     // R
+            rgbaData[i * 4 + 1] = 255; // G
+            rgbaData[i * 4 + 2] = 255; // B
+            rgbaData[i * 4 + 3] = alpha; // A
+        }
+        
+        const maskData = new ImageData(rgbaData, canvas.width, canvas.height);
+        ctx.putImageData(maskData, 0, 0);
+        
+        // Convert to data URL
+        const dataUrl = canvas.toDataURL('image/png');
+        
+        // Create fullscreen editor HTML
+        const editorHtml = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Layer Editor - ${layer.name}</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+        }
+        #canvas-container {
+            position: absolute;
+            top: 60px;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            overflow: auto;
+        }
+        #editor-canvas {
+            background: #2a2a2a;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            cursor: none;
+            image-rendering: pixelated;
+        }
+        #toolbar {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 60px;
+            background: #222;
+            color: white;
+            display: flex;
+            align-items: center;
+            padding: 0 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 100;
+        }
+        .tool-group {
+            display: flex;
+            align-items: center;
+            margin-right: 30px;
+        }
+        .tool-button {
+            background: #444;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            margin: 0 5px;
+            cursor: pointer;
+            border-radius: 4px;
+        }
+        .tool-button.active {
+            background: #2196F3;
+        }
+        .tool-button:hover {
+            background: #555;
+        }
+        .tool-button.active:hover {
+            background: #1976D2;
+        }
+        input[type="range"] {
+            width: 150px;
+            margin: 0 10px;
+        }
+        #cursor-preview {
+            position: fixed;
+            border: 2px solid white;
+            border-radius: 50%;
+            pointer-events: none;
+            mix-blend-mode: difference;
+        }
+        #zoom-info {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            background: rgba(0,0,0,0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        label {
+            margin-right: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="toolbar">
+        <div class="tool-group">
+            <button class="tool-button active" data-tool="brush">Brush</button>
+            <button class="tool-button" data-tool="eraser">Eraser</button>
+        </div>
+        <div class="tool-group">
+            <label>Size:</label>
+            <input type="range" id="brush-size" min="1" max="200" value="10">
+            <span id="size-display">10</span>
+        </div>
+        <div class="tool-group">
+            <label>Zoom:</label>
+            <input type="range" id="zoom" min="10" max="500" value="100" step="10">
+            <span id="zoom-display">100%</span>
+        </div>
+        <div class="tool-group">
+            <button class="tool-button" id="save-btn">Save & Close</button>
+            <button class="tool-button" id="cancel-btn">Cancel</button>
+        </div>
+    </div>
+    
+    <div id="canvas-container">
+        <canvas id="editor-canvas"></canvas>
+    </div>
+    
+    <div id="cursor-preview"></div>
+    <div id="zoom-info"></div>
+    
+    <script>
+        const canvas = document.getElementById('editor-canvas');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        const container = document.getElementById('canvas-container');
+        const cursorPreview = document.getElementById('cursor-preview');
+        const zoomInfo = document.getElementById('zoom-info');
+        
+        let currentTool = 'brush';
+        let brushSize = 10;
+        let zoom = 1;
+        let isDrawing = false;
+        let lastPos = null;
+        let hasChanges = false;
+        
+        // Load the layer mask
+        const img = new Image();
+        img.onload = function() {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+            updateCanvasSize();
+        };
+        img.src = '${dataUrl}';
+        
+        // Tool selection
+        document.querySelectorAll('[data-tool]').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                document.querySelectorAll('[data-tool]').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                currentTool = btn.dataset.tool;
+            });
+        });
+        
+        // Brush size
+        const sizeSlider = document.getElementById('brush-size');
+        const sizeDisplay = document.getElementById('size-display');
+        sizeSlider.addEventListener('input', (e) => {
+            brushSize = parseInt(e.target.value);
+            sizeDisplay.textContent = brushSize;
+            updateCursorPreview();
+        });
+        
+        // Zoom
+        const zoomSlider = document.getElementById('zoom');
+        const zoomDisplay = document.getElementById('zoom-display');
+        zoomSlider.addEventListener('input', (e) => {
+            zoom = parseInt(e.target.value) / 100;
+            zoomDisplay.textContent = e.target.value + '%';
+            updateCanvasSize();
+            updateZoomInfo();
+        });
+        
+        function updateCanvasSize() {
+            canvas.style.width = (canvas.width * zoom) + 'px';
+            canvas.style.height = (canvas.height * zoom) + 'px';
+        }
+        
+        function updateZoomInfo() {
+            const rect = canvas.getBoundingClientRect();
+            zoomInfo.textContent = \`Canvas: \${canvas.width}x\${canvas.height} | Display: \${Math.round(rect.width)}x\${Math.round(rect.height)}\`;
+        }
+        
+        function updateCursorPreview() {
+            const size = brushSize * zoom * 2;
+            cursorPreview.style.width = size + 'px';
+            cursorPreview.style.height = size + 'px';
+        }
+        
+        // Drawing functions
+        function getMousePos(e) {
+            const rect = canvas.getBoundingClientRect();
+            return {
+                x: Math.floor((e.clientX - rect.left) / zoom),
+                y: Math.floor((e.clientY - rect.top) / zoom)
+            };
+        }
+        
+        function drawLine(x0, y0, x1, y1) {
+            const dx = Math.abs(x1 - x0);
+            const dy = Math.abs(y1 - y0);
+            const sx = (x0 < x1) ? 1 : -1;
+            const sy = (y0 < y1) ? 1 : -1;
+            let err = dx - dy;
+            
+            while (true) {
+                drawBrush(x0, y0);
+                
+                if ((x0 === x1) && (y0 === y1)) break;
+                const e2 = 2 * err;
+                if (e2 > -dy) { err -= dy; x0 += sx; }
+                if (e2 < dx) { err += dx; y0 += sy; }
+            }
+        }
+        
+        function drawBrush(x, y) {
+            ctx.globalCompositeOperation = currentTool === 'eraser' ? 'destination-out' : 'source-over';
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(x, y, brushSize, 0, Math.PI * 2);
+            ctx.fill();
+            hasChanges = true;
+        }
+        
+        // Mouse events
+        canvas.addEventListener('mousedown', (e) => {
+            isDrawing = true;
+            const pos = getMousePos(e);
+            lastPos = pos;
+            drawBrush(pos.x, pos.y);
+        });
+        
+        canvas.addEventListener('mousemove', (e) => {
+            const pos = getMousePos(e);
+            
+            // Update cursor
+            cursorPreview.style.left = (e.clientX - brushSize * zoom) + 'px';
+            cursorPreview.style.top = (e.clientY - brushSize * zoom) + 'px';
+            
+            if (isDrawing && lastPos) {
+                drawLine(lastPos.x, lastPos.y, pos.x, pos.y);
+                lastPos = pos;
+            }
+        });
+        
+        canvas.addEventListener('mouseup', () => {
+            isDrawing = false;
+            lastPos = null;
+        });
+        
+        canvas.addEventListener('mouseleave', () => {
+            isDrawing = false;
+            lastPos = null;
+            cursorPreview.style.display = 'none';
+        });
+        
+        canvas.addEventListener('mouseenter', () => {
+            cursorPreview.style.display = 'block';
+            updateCursorPreview();
+        });
+        
+        // Save functionality
+        document.getElementById('save-btn').addEventListener('click', () => {
+            if (hasChanges && window.opener && !window.opener.closed) {
+                const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                const maskData = new Uint8Array(canvas.width * canvas.height);
+                
+                // Extract alpha channel as mask
+                for (let i = 0; i < imageData.data.length; i += 4) {
+                    maskData[i / 4] = imageData.data[i + 3];
+                }
+                
+                window.opener.postMessage({
+                    type: 'updateLayerMask',
+                    layerIndex: ${index},
+                    maskData: Array.from(maskData),
+                    width: canvas.width,
+                    height: canvas.height
+                }, '*');
+            }
+            window.close();
+        });
+        
+        document.getElementById('cancel-btn').addEventListener('click', () => {
+            if (hasChanges && !confirm('Discard changes?')) return;
+            window.close();
+        });
+        
+        // Keyboard shortcuts
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'b') {
+                document.querySelector('[data-tool="brush"]').click();
+            } else if (e.key === 'e') {
+                document.querySelector('[data-tool="eraser"]').click();
+            } else if (e.key === '[') {
+                sizeSlider.value = Math.max(1, brushSize - 5);
+                sizeSlider.dispatchEvent(new Event('input'));
+            } else if (e.key === ']') {
+                sizeSlider.value = Math.min(200, brushSize + 5);
+                sizeSlider.dispatchEvent(new Event('input'));
+            } else if (e.key === 'Escape') {
+                document.getElementById('cancel-btn').click();
+            }
+        });
+        
+        // Initial setup
+        updateCursorPreview();
+        updateZoomInfo();
+    </script>
+</body>
+</html>
+        `;
+        
+        // Open fullscreen editor window
+        const editorWindow = window.open('', `layer_editor_${index}`, 'width=1200,height=800');
+        editorWindow.document.write(editorHtml);
+        editorWindow.document.close();
+        
+        // Store reference
+        projectionWindowsRef.current.set(index, editorWindow);
+    };
+    
     const openProjectionWindow = (index) => {
         const layer = layers[index];
         
@@ -789,8 +1434,6 @@ function ProjectionMapping() {
     };
     
     const handleCanvasMouseDown = (e) => {
-        if (currentLayerIndex < 0) return;
-        
         // Get the actual canvas that was clicked
         const canvas = e.currentTarget;
         const rect = canvas.getBoundingClientRect();
@@ -802,6 +1445,16 @@ function ProjectionMapping() {
         // Apply scaling to get correct canvas coordinates
         let x = Math.floor((e.clientX - rect.left) * scaleX);
         let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // Handle selection tool
+        if (currentTool === 'select') {
+            setIsSelecting(true);
+            setSelectionStart({ x, y });
+            setSelection(null);
+            return;
+        }
+        
+        if (currentLayerIndex < 0) return;
         
         // Transform coordinates to layer space if we have transformations
         const currentLayer = layers[currentLayerIndex];
@@ -829,6 +1482,7 @@ function ProjectionMapping() {
             magicWandFloodFill(x, y, isEdgeCanvas);
         } else if (currentTool === 'brush' || currentTool === 'eraser') {
             setIsDrawing(true);
+            lastBrushPosRef.current = null; // Reset for new stroke
             drawBrush(x, y);
         } else if (currentTool === 'bezier') {
             const newPoints = [...bezierPoints, {x, y}];
@@ -855,6 +1509,23 @@ function ProjectionMapping() {
         // Apply scaling to get correct canvas coordinates
         let x = Math.floor((e.clientX - rect.left) * scaleX);
         let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // Handle selection drawing
+        if (isSelecting && selectionStart) {
+            const left = Math.min(selectionStart.x, x);
+            const top = Math.min(selectionStart.y, y);
+            const width = Math.abs(x - selectionStart.x);
+            const height = Math.abs(y - selectionStart.y);
+            
+            setSelection({ x: left, y: top, width, height });
+            
+            // Update visual feedback
+            requestAnimationFrame(() => {
+                drawSelectionPreview();
+            });
+            
+            return;
+        }
         
         // Transform coordinates for drawing operations
         let drawX = x;
@@ -896,8 +1567,29 @@ function ProjectionMapping() {
     };
     
     const handleCanvasMouseUp = () => {
+        if (isSelecting && selection) {
+            setIsSelecting(false);
+            // Capture selection data
+            if (currentLayerIndex >= 0 && selection.width > 0 && selection.height > 0) {
+                captureSelection();
+            }
+        }
+        
         if (isDrawing) {
             setIsDrawing(false);
+            
+            // Clear brush canvas for next stroke
+            if (brushCtxRef.current) {
+                brushCtxRef.current.clearRect(0, 0, brushCanvasRef.current.width, brushCanvasRef.current.height);
+            }
+            lastBrushPosRef.current = null;
+            
+            // Ensure any pending brush updates are flushed
+            if (brushUpdateTimerRef.current) {
+                clearTimeout(brushUpdateTimerRef.current);
+                flushBrushToMask();
+            }
+            
             saveLayerState(layers[currentLayerIndex].id);
         }
     };
@@ -906,8 +1598,217 @@ function ProjectionMapping() {
         setCursorPosition({ x: 0, y: 0, canvasX: 0, canvasY: 0, visible: false, activeCanvas: null });
         if (isDrawing) {
             setIsDrawing(false);
+            
+            // Clear brush canvas
+            if (brushCtxRef.current) {
+                brushCtxRef.current.clearRect(0, 0, brushCanvasRef.current.width, brushCanvasRef.current.height);
+            }
+            lastBrushPosRef.current = null;
+            
+            // Flush any pending updates
+            if (brushUpdateTimerRef.current) {
+                clearTimeout(brushUpdateTimerRef.current);
+                flushBrushToMask();
+            }
+            
             saveLayerState(layers[currentLayerIndex].id);
         }
+        
+        if (isSelecting) {
+            setIsSelecting(false);
+            setSelection(null);
+        }
+    };
+    
+    // Draw selection rectangle preview
+    const drawSelectionPreview = () => {
+        if (!selection || !currentCanvasRef.current) return;
+        
+        const ctx = getContext(currentCanvasRef, 'current');
+        if (!ctx) return;
+        
+        // Redraw current layer first
+        updateCurrentCanvas();
+        
+        // Draw selection rectangle
+        ctx.save();
+        ctx.strokeStyle = '#3498db';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([5, 5]);
+        ctx.strokeRect(selection.x, selection.y, selection.width, selection.height);
+        ctx.restore();
+    };
+    
+    // Capture selection data from current layer
+    const captureSelection = () => {
+        if (!selection || currentLayerIndex < 0) return;
+        
+        const layer = layers[currentLayerIndex];
+        const mask = canvasWorkRef.current.maskCache.get(layer.id) || layer.mask;
+        
+        // Create ImageData for selected region
+        const selectionData = new ImageData(selection.width, selection.height);
+        const maskData = mask.data;
+        const selData = selectionData.data;
+        
+        // Copy pixels from selection area
+        for (let y = 0; y < selection.height; y++) {
+            for (let x = 0; x < selection.width; x++) {
+                const srcIdx = ((selection.y + y) * originalImage.width + (selection.x + x)) * 4;
+                const destIdx = (y * selection.width + x) * 4;
+                
+                selData[destIdx] = maskData[srcIdx];
+                selData[destIdx + 1] = maskData[srcIdx + 1];
+                selData[destIdx + 2] = maskData[srcIdx + 2];
+                selData[destIdx + 3] = maskData[srcIdx + 3];
+            }
+        }
+        
+        setSelection({
+            ...selection,
+            data: selectionData
+        });
+        
+        setStatus('Selection captured - Use Ctrl/Cmd+C to copy, Ctrl/Cmd+X to cut, Ctrl/Cmd+V to paste');
+    };
+    
+    // Copy selection to clipboard
+    const copySelection = () => {
+        if (!selection || !selection.data) {
+            setStatus('No selection to copy');
+            return;
+        }
+        
+        setClipboard({
+            width: selection.width,
+            height: selection.height,
+            data: new ImageData(selection.data.data.slice(), selection.width, selection.height)
+        });
+        
+        setStatus('Selection copied');
+    };
+    
+    // Cut selection (copy and delete)
+    const cutSelection = () => {
+        if (!selection || !selection.data || currentLayerIndex < 0) {
+            setStatus('No selection to cut');
+            return;
+        }
+        
+        copySelection();
+        deleteSelection();
+    };
+    
+    // Delete selection content
+    const deleteSelection = () => {
+        if (!selection || currentLayerIndex < 0) {
+            setStatus('No selection to delete');
+            return;
+        }
+        
+        const layer = layers[currentLayerIndex];
+        let cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (!cachedMask) {
+            cachedMask = new ImageData(layer.mask.data.slice(), originalImage.width, originalImage.height);
+            canvasWorkRef.current.maskCache.set(layer.id, cachedMask);
+        }
+        
+        const maskData = cachedMask.data;
+        
+        // Clear pixels in selection area
+        for (let y = 0; y < selection.height; y++) {
+            for (let x = 0; x < selection.width; x++) {
+                const idx = ((selection.y + y) * originalImage.width + (selection.x + x)) * 4;
+                maskData[idx] = 0;
+                maskData[idx + 1] = 0;
+                maskData[idx + 2] = 0;
+                maskData[idx + 3] = 0;
+            }
+        }
+        
+        // Update layer
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: cachedMask,
+                pixelCount: countMaskPixels(cachedMask)
+            }
+        });
+        
+        flushPendingUpdates();
+        updateCurrentCanvas();
+        saveLayerState(layer.id);
+        
+        setSelection(null);
+        setStatus('Selection deleted');
+    };
+    
+    // Paste selection (wrapper for keyboard shortcut)
+    const pasteSelection = () => {
+        if (!clipboard) {
+            setStatus('Nothing to paste');
+            return;
+        }
+        
+        // Paste at center of canvas
+        const centerX = Math.floor((originalImage.width - clipboard.width) / 2);
+        const centerY = Math.floor((originalImage.height - clipboard.height) / 2);
+        
+        pasteFromClipboard(centerX, centerY);
+    };
+    
+    // Paste from clipboard
+    const pasteFromClipboard = (x = 0, y = 0) => {
+        if (!clipboard || currentLayerIndex < 0) {
+            setStatus('Nothing to paste');
+            return;
+        }
+        
+        const layer = layers[currentLayerIndex];
+        let cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (!cachedMask) {
+            cachedMask = new ImageData(layer.mask.data.slice(), originalImage.width, originalImage.height);
+            canvasWorkRef.current.maskCache.set(layer.id, cachedMask);
+        }
+        
+        const maskData = cachedMask.data;
+        const clipData = clipboard.data.data;
+        
+        // Paste pixels at position
+        for (let py = 0; py < clipboard.height; py++) {
+            for (let px = 0; px < clipboard.width; px++) {
+                const destX = x + px;
+                const destY = y + py;
+                
+                if (destX >= 0 && destX < originalImage.width && 
+                    destY >= 0 && destY < originalImage.height) {
+                    const srcIdx = (py * clipboard.width + px) * 4;
+                    const destIdx = (destY * originalImage.width + destX) * 4;
+                    
+                    if (clipData[srcIdx + 3] > 0) {
+                        maskData[destIdx] = clipData[srcIdx];
+                        maskData[destIdx + 1] = clipData[srcIdx + 1];
+                        maskData[destIdx + 2] = clipData[srcIdx + 2];
+                        maskData[destIdx + 3] = clipData[srcIdx + 3];
+                    }
+                }
+            }
+        }
+        
+        // Update layer
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: cachedMask,
+                pixelCount: countMaskPixels(cachedMask)
+            }
+        });
+        
+        flushPendingUpdates();
+        updateCurrentCanvas();
+        saveLayerState(layer.id);
+        
+        setStatus('Pasted from clipboard');
     };
     
     const smartFloodFill = (startX, startY, fromEdgeCanvas = false) => {
@@ -1165,8 +2066,41 @@ function ProjectionMapping() {
         }, 16);
     };
     
+    // Initialize brush canvas when image loads
+    const initBrushCanvas = useCallback((img) => {
+        const imageToUse = img || originalImage;
+        if (!imageToUse) return;
+        
+        brushCanvasRef.current = document.createElement('canvas');
+        brushCanvasRef.current.width = imageToUse.width;
+        brushCanvasRef.current.height = imageToUse.height;
+        brushCtxRef.current = brushCanvasRef.current.getContext('2d');
+        brushCtxRef.current.lineCap = 'round';
+        brushCtxRef.current.lineJoin = 'round';
+    }, [originalImage]);
+
+    // Update dirty rectangle
+    const updateDirtyRect = (x, y, radius) => {
+        const bounds = {
+            left: Math.max(0, Math.floor(x - radius)),
+            top: Math.max(0, Math.floor(y - radius)),
+            right: Math.min(originalImage.width, Math.ceil(x + radius)),
+            bottom: Math.min(originalImage.height, Math.ceil(y + radius))
+        };
+        
+        if (!dirtyRectRef.current) {
+            dirtyRectRef.current = bounds;
+        } else {
+            dirtyRectRef.current.left = Math.min(dirtyRectRef.current.left, bounds.left);
+            dirtyRectRef.current.top = Math.min(dirtyRectRef.current.top, bounds.top);
+            dirtyRectRef.current.right = Math.max(dirtyRectRef.current.right, bounds.right);
+            dirtyRectRef.current.bottom = Math.max(dirtyRectRef.current.bottom, bounds.bottom);
+        }
+    };
+
+    // Optimized brush drawing with interpolation
     const drawBrush = (x, y) => {
-        if (currentLayerIndex < 0) return;
+        if (currentLayerIndex < 0 || !brushCtxRef.current) return;
         
         const layer = layers[currentLayerIndex];
         const width = originalImage.width;
@@ -1175,80 +2109,143 @@ function ProjectionMapping() {
         // Ensure coordinates are within bounds
         if (x < 0 || x >= width || y < 0 || y >= height) return;
         
-        // Work directly on cached mask
-        let maskData;
-        const cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
-        if (cachedMask) {
-            maskData = cachedMask.data;
+        const ctx = brushCtxRef.current;
+        
+        // Set composite operation
+        ctx.globalCompositeOperation = currentTool === 'eraser' ? 'destination-out' : 'source-over';
+        
+        if (lastBrushPosRef.current && 
+            (Math.abs(x - lastBrushPosRef.current.x) > 1 || 
+             Math.abs(y - lastBrushPosRef.current.y) > 1)) {
+            // Draw interpolated line
+            ctx.beginPath();
+            ctx.moveTo(lastBrushPosRef.current.x, lastBrushPosRef.current.y);
+            ctx.lineTo(x, y);
+            ctx.lineWidth = brushSize * 2;
+            
+            if (brushMode === 'spray') {
+                // Create spray effect with gradient
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, brushSize);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.5)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.strokeStyle = gradient;
+            } else {
+                ctx.strokeStyle = 'white';
+            }
+            
+            ctx.stroke();
+            
+            // Update dirty rect for the line
+            updateDirtyRect(lastBrushPosRef.current.x, lastBrushPosRef.current.y, brushSize);
+            updateDirtyRect(x, y, brushSize);
         } else {
-            const newMask = new ImageData(layer.mask.data.slice(), width, height);
-            maskData = newMask.data;
-            canvasWorkRef.current.maskCache.set(layer.id, newMask);
+            // Draw single dot
+            ctx.beginPath();
+            
+            if (brushShape === 'circle') {
+                ctx.arc(x, y, brushSize, 0, Math.PI * 2);
+            } else {
+                ctx.rect(x - brushSize, y - brushSize, brushSize * 2, brushSize * 2);
+            }
+            
+            if (brushMode === 'spray') {
+                const gradient = ctx.createRadialGradient(x, y, 0, x, y, brushSize);
+                gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
+                gradient.addColorStop(0.5, 'rgba(255, 255, 255, 0.5)');
+                gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+                ctx.fillStyle = gradient;
+            } else {
+                ctx.fillStyle = 'white';
+            }
+            
+            ctx.fill();
+            updateDirtyRect(x, y, brushSize);
         }
         
-        for (let dy = -brushSize; dy <= brushSize; dy++) {
-            for (let dx = -brushSize; dx <= brushSize; dx++) {
-                let isInBrush = false;
-                let dist = 0;
+        lastBrushPosRef.current = { x, y };
+        
+        // Schedule update
+        if (brushUpdateTimerRef.current) {
+            clearTimeout(brushUpdateTimerRef.current);
+        }
+        
+        brushUpdateTimerRef.current = setTimeout(() => {
+            flushBrushToMask();
+        }, 16); // 60fps
+    };
+    
+    // Apply brush canvas to mask
+    const flushBrushToMask = () => {
+        if (!dirtyRectRef.current || currentLayerIndex < 0) return;
+        
+        const layer = layers[currentLayerIndex];
+        const rect = dirtyRectRef.current;
+        const width = rect.right - rect.left;
+        const height = rect.bottom - rect.top;
+        
+        if (width <= 0 || height <= 0) return;
+        
+        // Get brush data from dirty region
+        const brushData = brushCtxRef.current.getImageData(rect.left, rect.top, width, height);
+        
+        // Get or create cached mask
+        let cachedMask = canvasWorkRef.current.maskCache.get(layer.id);
+        if (!cachedMask) {
+            cachedMask = new ImageData(layer.mask.data.slice(), originalImage.width, originalImage.height);
+            canvasWorkRef.current.maskCache.set(layer.id, cachedMask);
+        }
+        
+        // Apply brush data to mask
+        const maskData = cachedMask.data;
+        const brushPixels = brushData.data;
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const brushIdx = (y * width + x) * 4;
+                const maskIdx = ((rect.top + y) * originalImage.width + (rect.left + x)) * 4;
                 
-                if (brushShape === 'circle') {
-                    dist = Math.sqrt(dx * dx + dy * dy);
-                    isInBrush = dist <= brushSize;
+                if (currentTool === 'eraser') {
+                    // Eraser: reduce alpha
+                    const alpha = brushPixels[brushIdx + 3] / 255;
+                    maskData[maskIdx + 3] = Math.max(0, maskData[maskIdx + 3] * (1 - alpha));
                 } else {
-                    // Square shape - already bounded by the for loop
-                    isInBrush = true;
-                    // Calculate distance for spray effect on square
-                    dist = Math.max(Math.abs(dx), Math.abs(dy));
-                }
-                
-                if (!isInBrush) continue;
-                
-                const px = x + dx;
-                const py = y + dy;
-                
-                if (px < 0 || px >= width || py < 0 || py >= originalImage.height) continue;
-                
-                const idx = (py * width + px) * 4;
-                
-                if (currentTool === 'brush') {
-                    maskData[idx] = 255;
-                    maskData[idx + 1] = 255;
-                    maskData[idx + 2] = 255;
-                    
-                    if (brushMode === 'solid') {
-                        maskData[idx + 3] = 255;
-                    } else {
-                        // Spray mode - gradient opacity
-                        const alpha = 1 - (dist / brushSize);
-                        maskData[idx + 3] = Math.max(maskData[idx + 3], alpha * 255);
-                    }
-                } else {
-                    // Eraser
-                    maskData[idx] = 0;
-                    maskData[idx + 1] = 0;
-                    maskData[idx + 2] = 0;
-                    maskData[idx + 3] = 0;
+                    // Brush: increase alpha
+                    const alpha = brushPixels[brushIdx + 3];
+                    maskData[maskIdx] = 255;
+                    maskData[maskIdx + 1] = 255;
+                    maskData[maskIdx + 2] = 255;
+                    maskData[maskIdx + 3] = Math.min(255, maskData[maskIdx + 3] + alpha);
                 }
             }
         }
         
-        // Update canvas immediately for visual feedback
-        const currentCtx = getContext(currentCanvasRef, 'current');
-        if (currentCtx && cachedMask) {
-            requestAnimationFrame(() => {
-                // Just update the affected area for better performance
-                const updateX = Math.max(0, x - brushSize - 1);
-                const updateY = Math.max(0, y - brushSize - 1);
-                const updateWidth = Math.min(width - updateX, brushSize * 2 + 2);
-                const updateHeight = Math.min(originalImage.height - updateY, brushSize * 2 + 2);
-                
-                // Create partial image data for the updated region
-                const partialData = currentCtx.getImageData(updateX, updateY, updateWidth, updateHeight);
-                currentCtx.putImageData(partialData, updateX, updateY);
-                
-                updateCurrentCanvas();
-            });
+        // Update the layer with new mask
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: cachedMask,
+                pixelCount: countMaskPixels(cachedMask)
+            }
+        });
+        
+        // Clear dirty rect and flush updates
+        dirtyRectRef.current = null;
+        flushPendingUpdates();
+        
+        // Update canvas display
+        requestAnimationFrame(() => {
+            updateCurrentCanvas();
+        });
+    };
+    
+    // Helper to count non-transparent pixels
+    const countMaskPixels = (mask) => {
+        let count = 0;
+        for (let i = 3; i < mask.data.length; i += 4) {
+            if (mask.data[i] > 128) count++;
         }
+        return count;
     };
     
     const drawBezier = (points) => {
@@ -1390,6 +2387,29 @@ function ProjectionMapping() {
             } else if (e.ctrlKey && e.key === 'y') {
                 e.preventDefault();
                 redo();
+            } else if (selection && currentTool === 'selection') {
+                // Selection tool keyboard shortcuts
+                if (e.ctrlKey || e.metaKey) {
+                    switch(e.key.toLowerCase()) {
+                        case 'x':
+                            e.preventDefault();
+                            cutSelection();
+                            break;
+                        case 'c':
+                            e.preventDefault();
+                            copySelection();
+                            break;
+                        case 'v':
+                            e.preventDefault();
+                            pasteSelection();
+                            break;
+                        default:
+                            break;
+                    }
+                } else if (e.key === 'Delete' || e.key === 'Backspace') {
+                    e.preventDefault();
+                    deleteSelection();
+                }
             }
         };
         
@@ -1402,6 +2422,19 @@ function ProjectionMapping() {
                 }
             } else if (event.data.type === 'updateBaseTransform') {
                 setBaseTransform(event.data.transform);
+            } else if (event.data.type === 'updateLayerMask') {
+                const { layerIndex, maskData, width, height } = event.data;
+                if (layerIndex >= 0 && layerIndex < layers.length && 
+                    width === originalImage.width && height === originalImage.height) {
+                    const updatedLayers = [...layers];
+                    updatedLayers[layerIndex] = {
+                        ...updatedLayers[layerIndex],
+                        mask: new Uint8Array(maskData)
+                    };
+                    setLayers(updatedLayers);
+                    canvasWorkRef.current.maskCache.set(updatedLayers[layerIndex].id, new Uint8Array(maskData));
+                    setStatus(`Updated ${updatedLayers[layerIndex].name} from editor`);
+                }
             }
         };
         
@@ -1412,7 +2445,27 @@ function ProjectionMapping() {
             document.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('message', handleMessage);
         };
-    }, [layers, undo, redo]);
+    }, [layers, undo, redo, selection, currentTool, cutSelection, copySelection, pasteSelection, deleteSelection]);
+    
+    // Cleanup projection windows on unmount
+    useEffect(() => {
+        return () => {
+            // Close all projection windows on component unmount
+            projectionWindowsRef.current.forEach(window => {
+                if (window && !window.closed) {
+                    window.close();
+                }
+            });
+            projectionWindowsRef.current.clear();
+        };
+    }, []);
+    
+    // Re-initialize brush canvas when originalImage changes
+    useEffect(() => {
+        if (originalImage && !brushCtxRef.current) {
+            initBrushCanvas(originalImage);
+        }
+    }, [originalImage, initBrushCanvas]);
     
     const renameLayer = (index, newName) => {
         const newLayers = [...layers];
@@ -1851,7 +2904,40 @@ function ProjectionMapping() {
                 </div>
                 
                 <h3>Tools</h3>
+                {currentTool === 'selection' && selection && selection.data && (
+                    <div style={{ 
+                        backgroundColor: '#2a2a2a', 
+                        padding: '10px', 
+                        marginBottom: '10px',
+                        borderRadius: '4px',
+                        fontSize: '12px'
+                    }}>
+                        <strong>Selection Active:</strong> {selection.width}×{selection.height}px
+                        <div style={{ marginTop: '5px' }}>
+                            <button onClick={cutSelection} style={{ marginRight: '5px', padding: '4px 8px', fontSize: '12px' }}>
+                                Cut (Ctrl+X)
+                            </button>
+                            <button onClick={copySelection} style={{ marginRight: '5px', padding: '4px 8px', fontSize: '12px' }}>
+                                Copy (Ctrl+C)
+                            </button>
+                            <button onClick={deleteSelection} style={{ padding: '4px 8px', fontSize: '12px' }}>
+                                Delete
+                            </button>
+                            {clipboard && (
+                                <button onClick={pasteSelection} style={{ marginLeft: '10px', padding: '4px 8px', fontSize: '12px' }}>
+                                    Paste ({clipboard.width}×{clipboard.height})
+                                </button>
+                            )}
+                        </div>
+                    </div>
+                )}
                 <div className="tool-buttons">
+                    <button 
+                        className={`tool-button ${currentTool === 'select' ? 'active' : ''}`}
+                        onClick={() => { setCurrentTool('select'); setBezierPoints([]); setSelection(null); }}
+                    >
+                        ⬚ Select
+                    </button>
                     <button 
                         className={`tool-button ${currentTool === 'floodFill' ? 'active' : ''}`}
                         onClick={() => { setCurrentTool('floodFill'); setBezierPoints([]); }}
@@ -1898,7 +2984,7 @@ function ProjectionMapping() {
                     <input 
                         type="range" 
                         min="1" 
-                        max="50" 
+                        max="200" 
                         value={brushSize}
                         onChange={(e) => setBrushSize(parseInt(e.target.value))}
                     />
@@ -1941,8 +3027,25 @@ function ProjectionMapping() {
                 </div>
                 
                 <h3>Layers</h3>
+                <div style={{ fontSize: '12px', color: '#888', marginBottom: '5px' }}>
+                    Ctrl/Cmd+Click to select multiple layers
+                </div>
                 <button onClick={createNewLayer}>+ New Layer</button>
                 <button onClick={downloadAllLayers}>⬇ Download All</button>
+                <button onClick={() => document.getElementById('layerImport').click()}>📁 Import Layers</button>
+                {selectedLayers.size >= 2 && (
+                    <button onClick={flattenSelectedLayers} style={{ backgroundColor: '#4CAF50' }}>
+                        🔀 Flatten {selectedLayers.size} Layers
+                    </button>
+                )}
+                <input 
+                    type="file" 
+                    id="layerImport" 
+                    accept="image/*" 
+                    multiple 
+                    style={{ display: 'none' }}
+                    onChange={handleLayerImport}
+                />
                 
                 <div className="control-group">
                     <label>Auto Create Layers: <span>{autoLayerCount}</span></label>
@@ -1987,11 +3090,28 @@ function ProjectionMapping() {
                 <div className="layers-list">
                     {layers.map((layer, index) => {
                         const coverage = ((layer.pixelCount / (originalImage?.width * originalImage?.height || 1)) * 100).toFixed(1);
+                        const isSelected = selectedLayers.has(layer.id);
                         
                         return (
                             <div 
                                 key={layer.id} 
-                                className={`layer-item ${index === currentLayerIndex ? 'active' : ''}`}
+                                className={`layer-item ${index === currentLayerIndex ? 'active' : ''} ${isSelected ? 'selected' : ''}`}
+                                onClick={(e) => {
+                                    if (e.ctrlKey || e.metaKey) {
+                                        // Toggle selection with Ctrl/Cmd click
+                                        const newSelection = new Set(selectedLayers);
+                                        if (isSelected) {
+                                            newSelection.delete(layer.id);
+                                        } else {
+                                            newSelection.add(layer.id);
+                                        }
+                                        setSelectedLayers(newSelection);
+                                    } else if (!e.target.closest('button') && !e.target.closest('[contenteditable]')) {
+                                        // Normal click - select only this layer
+                                        selectLayer(index);
+                                        setSelectedLayers(new Set());
+                                    }
+                                }}
                             >
                                 <div>
                                     <span 
@@ -2012,13 +3132,29 @@ function ProjectionMapping() {
                                     </small>
                                 </div>
                                 <div className="layer-controls">
-                                    <button onClick={() => selectLayer(index)}>Edit</button>
-                                    <button onClick={() => copyLayer(index)}>Copy</button>
-                                    <button onClick={() => deleteLayer(index)}>Delete</button>
-                                    <button onClick={() => downloadLayer(index, 'none')} title="Download original">⬇</button>
-                                    <button onClick={() => downloadLayer(index, 'layer')} title="Download with layer transform only">⬇L</button>
-                                    <button onClick={() => downloadLayer(index, 'combined')} title="Download with all transforms">⬇📐</button>
-                                    <button onClick={() => openProjectionWindow(index)}>📺</button>
+                                    <button onClick={() => selectLayer(index)} title="Select for editing">✏️</button>
+                                    <button onClick={() => copyLayer(index)} title="Copy layer">📋</button>
+                                    <button onClick={() => openFullscreenEditor(index)} title="Edit in fullscreen">🔍</button>
+                                    <button onClick={() => openProjectionWindow(index)} title="Projection window">📺</button>
+                                    <button onClick={() => deleteLayer(index)} title="Delete layer">🗑️</button>
+                                    <select 
+                                        onChange={(e) => {
+                                            const action = e.target.value;
+                                            e.target.value = ''; // Reset select
+                                            switch(action) {
+                                                case 'download': downloadLayer(index, 'none'); break;
+                                                case 'download-layer': downloadLayer(index, 'layer'); break;
+                                                case 'download-combined': downloadLayer(index, 'combined'); break;
+                                            }
+                                        }}
+                                        title="More actions"
+                                        style={{ marginLeft: 'auto' }}
+                                    >
+                                        <option value="">⋯</option>
+                                        <option value="download">Download Original</option>
+                                        <option value="download-layer">Download w/ Layer Transform</option>
+                                        <option value="download-combined">Download w/ All Transforms</option>
+                                    </select>
                                 </div>
                             </div>
                         );

@@ -84,7 +84,7 @@ function Videos() {
 
   const handleAddVideo = async () => {
     try {
-      await videoApi.addVideo(newVideo);
+      await videoApi.createVideo(newVideo);
       setOpenAddDialog(false);
       setNewVideo({
         name: '',

@@ -21,57 +21,62 @@ class MaskAnalyzer:
         self.width, self.height = img.size
         pixels = img.load()
         
-        # For now, return a simple zone detection
-        # In production, you'd want to use OpenCV for proper connected component analysis
+        # Find bounding box of all white pixels
+        min_x, min_y = self.width, self.height
+        max_x, max_y = 0, 0
+        has_white = False
+        
+        # Scan entire image to find white pixel bounds
+        for y in range(self.height):
+            for x in range(self.width):
+                r, g, b = pixels[x, y]
+                # Check if pixel is white (allowing some tolerance)
+                if r > 250 and g > 250 and b > 250:
+                    has_white = True
+                    min_x = min(min_x, x)
+                    min_y = min(min_y, y)
+                    max_x = max(max_x, x)
+                    max_y = max(max_y, y)
+        
         zones = []
         
-        # Simple scanning to find white regions (this is a placeholder)
-        # Real implementation would use flood fill or connected components
-        visited = set()
-        
-        for y in range(0, self.height, 50):  # Sample every 50 pixels
-            for x in range(0, self.width, 50):
-                if (x, y) in visited:
-                    continue
-                    
-                # Check if this pixel is white
-                r, g, b = pixels[x, y]
-                if r == 255 and g == 255 and b == 255:
-                    # Found a white pixel, create a zone around it
-                    zone_bounds = self._find_zone_bounds(img, x, y, visited)
-                    
-                    if zone_bounds:
-                        zone = {
-                            "id": str(uuid.uuid4()),
-                            "bounds": zone_bounds,
-                            "center": {
-                                "x": zone_bounds["x"] + zone_bounds["width"] // 2,
-                                "y": zone_bounds["y"] + zone_bounds["height"] // 2
-                            },
-                            "area": zone_bounds["width"] * zone_bounds["height"],
-                            "aspectRatio": round(zone_bounds["width"] / zone_bounds["height"], 2) if zone_bounds["height"] > 0 else 1
-                        }
-                        zones.append(zone)
-        
-        # Sort zones by area (largest first)
-        zones.sort(key=lambda z: z["area"], reverse=True)
-        
-        # For demo purposes, if no zones found, create one large zone
-        if not zones:
+        if has_white:
+            # Create a zone for the bounding box of white pixels
+            width = max_x - min_x + 1
+            height = max_y - min_y + 1
+            
+            zone = {
+                "id": str(uuid.uuid4()),
+                "bounds": {
+                    "x": min_x,
+                    "y": min_y,
+                    "width": width,
+                    "height": height
+                },
+                "center": {
+                    "x": min_x + width // 2,
+                    "y": min_y + height // 2
+                },
+                "area": width * height,
+                "aspectRatio": round(width / height, 2) if height > 0 else 1
+            }
+            zones.append(zone)
+        else:
+            # No white pixels found, use full image as fallback
             zones.append({
                 "id": str(uuid.uuid4()),
                 "bounds": {
-                    "x": 100,
-                    "y": 100,
-                    "width": self.width - 200,
-                    "height": self.height - 200
+                    "x": 0,
+                    "y": 0,
+                    "width": self.width,
+                    "height": self.height
                 },
                 "center": {
                     "x": self.width // 2,
                     "y": self.height // 2
                 },
-                "area": (self.width - 200) * (self.height - 200),
-                "aspectRatio": round((self.width - 200) / (self.height - 200), 2)
+                "area": self.width * self.height,
+                "aspectRatio": round(self.width / self.height, 2) if self.height > 0 else 1
             })
         
         return zones

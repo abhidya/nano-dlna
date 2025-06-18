@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form, Body
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from typing import List, Optional
 import os
@@ -188,6 +189,29 @@ async def upload_video(
         "video": video.to_dict() if video else None,
     }
 
+
+@router.get("/{video_id}/file")
+def get_video_file(
+    video_id: int,
+    video_service: VideoService = Depends(get_video_service),
+):
+    """
+    Get video file for direct playback
+    """
+    video = video_service.get_video_by_id(video_id)
+    if not video:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video with ID {video_id} not found",
+        )
+    
+    if not os.path.exists(video.path):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Video file not found at path: {video.path}",
+        )
+    
+    return FileResponse(video.path, media_type="video/mp4")
 
 @router.post("/{video_id}/stream")
 def stream_video(

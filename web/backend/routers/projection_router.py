@@ -11,10 +11,20 @@ import numpy as np
 
 from database.database import get_db
 from services.mask_analyzer import MaskAnalyzer
+from services.projection_service import ProjectionService
+from schemas.projection import (
+    ProjectionConfigCreate,
+    ProjectionConfigUpdate,
+    ProjectionConfigResponse,
+    Zone,
+    ZoneTransform,
+    ZoneAssignment,
+    MaskData
+)
 
 router = APIRouter(prefix="/api/projection", tags=["projection"])
 
-# In-memory storage for now (will add database later)
+# In-memory storage for masks and temporary sessions
 projection_sessions = {}
 uploaded_masks = {}
 
@@ -52,28 +62,14 @@ async def upload_mask(
             with open(filepath, "wb") as f:
                 f.write(content)
             
-            # Get image dimensions
-            img = Image.open(filepath)
-            width, height = img.size
+            # Analyze mask to find white regions
+            analyzer = MaskAnalyzer()
+            detected_zones = analyzer.analyze_mask(filepath)
             
-            # Create one zone for this entire mask
-            zone = {
-                "id": str(uuid.uuid4()),
-                "bounds": {
-                    "x": 0,  # Position will be handled by frontend
-                    "y": 0,
-                    "width": width,
-                    "height": height
-                },
-                "center": {
-                    "x": width // 2,
-                    "y": height // 2
-                },
-                "area": width * height,
-                "aspectRatio": round(width / height, 2) if height > 0 else 1,
-                "sourceMask": mask.filename  # Track which file this zone came from
-            }
-            all_zones.append(zone)
+            # Add source mask info to each detected zone
+            for zone in detected_zones:
+                zone["sourceMask"] = mask.filename
+            all_zones.extend(detected_zones)
         
         # Store mask info
         mask_info = {
@@ -103,20 +99,40 @@ async def get_mask(mask_id: str, db: Session = Depends(get_db)):
 
 @router.get("/masks/{session_id}/image")
 async def get_mask_image(session_id: str):
-    """Get the mask image file for a session"""
+    """Get the mask image file for a session - returns composite of all masks"""
     # First check if this is a session ID
     if session_id in projection_sessions:
         session = projection_sessions[session_id]
         mask_id = session.get("maskId")
         if mask_id and mask_id in uploaded_masks:
-            # For simplicity, return the first mask image
-            # In a real app, you might composite multiple masks
             upload_dir = uploaded_masks[mask_id]["filepath"]
-            mask_file = f"{mask_id}_0.png"
-            filepath = os.path.join(upload_dir, mask_file)
+            mask_info = uploaded_masks[mask_id]
             
-            if os.path.exists(filepath):
-                return FileResponse(filepath, media_type="image/png")
+            # Create composite mask with all uploaded mask files
+            composite = None
+            # Iterate through all possible mask files (not zones)
+            mask_index = 0
+            while True:
+                mask_file = f"{mask_id}_{mask_index}.png"
+                filepath = os.path.join(upload_dir, mask_file)
+                
+                if os.path.exists(filepath):
+                    img = Image.open(filepath).convert('RGBA')
+                    if composite is None:
+                        composite = Image.new('RGBA', img.size, (0, 0, 0, 255))
+                    
+                    # Paste white areas from this mask onto composite
+                    composite.paste(img, (0, 0), img)
+                    mask_index += 1
+                else:
+                    # No more mask files
+                    break
+            
+            if composite:
+                # Save composite temporarily
+                composite_path = os.path.join(upload_dir, f"{mask_id}_composite.png")
+                composite.save(composite_path)
+                return FileResponse(composite_path, media_type="image/png")
     
     # Try direct mask ID lookup
     if session_id in uploaded_masks:
@@ -294,6 +310,101 @@ async def delete_session(
     
     del projection_sessions[session_id]
     return {"status": "deleted"}
+
+# Configuration endpoints (database-backed)
+@router.post("/configs", response_model=ProjectionConfigResponse)
+async def create_projection_config(
+    config: ProjectionConfigCreate,
+    db: Session = Depends(get_db)
+):
+    """Create a new projection configuration"""
+    try:
+        service = ProjectionService(db)
+        return service.create_config(config)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/configs", response_model=List[ProjectionConfigResponse])
+async def list_projection_configs(
+    db: Session = Depends(get_db)
+):
+    """List all projection configurations"""
+    service = ProjectionService(db)
+    return service.get_configs()
+
+@router.get("/configs/{config_id}", response_model=ProjectionConfigResponse)
+async def get_projection_config(
+    config_id: int,
+    db: Session = Depends(get_db)
+):
+    """Get a specific projection configuration"""
+    service = ProjectionService(db)
+    config = service.get_config_by_id(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    return config
+
+@router.put("/configs/{config_id}", response_model=ProjectionConfigResponse)
+async def update_projection_config(
+    config_id: int,
+    update_data: ProjectionConfigUpdate,
+    db: Session = Depends(get_db)
+):
+    """Update a projection configuration"""
+    service = ProjectionService(db)
+    config = service.update_config(config_id, update_data)
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    return config
+
+@router.delete("/configs/{config_id}")
+async def delete_projection_config(
+    config_id: int,
+    db: Session = Depends(get_db)
+):
+    """Delete a projection configuration"""
+    service = ProjectionService(db)
+    if not service.delete_config(config_id):
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    return {"status": "deleted"}
+
+@router.post("/configs/{config_id}/duplicate", response_model=ProjectionConfigResponse)
+async def duplicate_projection_config(
+    config_id: int,
+    new_name: str = Query(..., description="Name for the duplicated configuration"),
+    db: Session = Depends(get_db)
+):
+    """Duplicate a projection configuration"""
+    service = ProjectionService(db)
+    config = service.duplicate_config(config_id, new_name)
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    return config
+
+@router.post("/configs/{config_id}/launch")
+async def launch_from_config(
+    config_id: int,
+    db: Session = Depends(get_db)
+):
+    """Create a session from a saved configuration"""
+    service = ProjectionService(db)
+    config = service.get_config_by_id(config_id)
+    if not config:
+        raise HTTPException(status_code=404, detail="Configuration not found")
+    
+    # Create session from config
+    session_id = str(uuid.uuid4())
+    session = {
+        "id": session_id,
+        "config_id": config_id,
+        "maskId": config.mask_data.get("id"),
+        "mask": config.mask_data,
+        "zones": config.zones,
+        "created_at": datetime.utcnow().isoformat()
+    }
+    
+    projection_sessions[session_id] = session
+    return {"id": session_id, "status": "created"}
 
 @router.get("/data/weather")
 async def get_weather_data():

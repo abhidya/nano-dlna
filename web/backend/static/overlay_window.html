@@ -260,6 +260,37 @@
             line-height: 1.6;
         }
         
+        .transit-content .prediction {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 5px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+        
+        .transit-content .prediction:last-child {
+            border-bottom: none;
+        }
+        
+        .transit-content .prediction-route {
+            flex: 1;
+            font-weight: 500;
+        }
+        
+        .transit-content .prediction-time {
+            color: #ffcc00;
+            font-weight: bold;
+            min-width: 60px;
+            text-align: right;
+        }
+        
+        .transit-content .no-service {
+            text-align: center;
+            color: rgba(255, 255, 255, 0.6);
+            font-style: italic;
+            padding: 20px 0;
+        }
+        
         /* Split-flap display styles */
         .split-flap-display {
             padding: 10px;
@@ -1243,14 +1274,17 @@
             const timeWidgets = document.querySelectorAll('.time-widget');
             const now = new Date();
             
-            const timeString = now.toLocaleTimeString('en-US', { 
-                hour12: false,
-                hour: '2-digit',
+            // Convert to PST
+            const pstTime = new Date(now.toLocaleString("en-US", {timeZone: "America/Los_Angeles"}));
+            
+            const timeString = pstTime.toLocaleTimeString('en-US', { 
+                hour12: true,
+                hour: 'numeric',
                 minute: '2-digit',
                 second: '2-digit'
             });
             
-            const dateString = now.toLocaleDateString('en-US', {
+            const dateString = pstTime.toLocaleDateString('en-US', {
                 weekday: 'long',
                 year: 'numeric',
                 month: 'long',
@@ -1260,7 +1294,7 @@
             timeWidgets.forEach(widget => {
                 const timeEl = widget.querySelector('.time-content');
                 const dateEl = widget.querySelector('.date-content');
-                if (timeEl) timeEl.textContent = timeString;
+                if (timeEl) timeEl.textContent = timeString + ' PST';
                 if (dateEl) dateEl.textContent = dateString;
             });
         }
@@ -1282,7 +1316,7 @@
                 
                 // Get weather
                 const weatherResponse = await fetch(
-                    `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${config.api_configs.weather_api_key}&units=metric`
+                    `https://api.openweathermap.org/data/2.5/weather?q=${city}&appid=${config.api_configs.weather_api_key}&units=imperial`
                 );
                 const weatherData = await weatherResponse.json();
                 
@@ -1305,7 +1339,7 @@
                 
                 weatherWidgets.forEach(widget => {
                     widget.querySelector('.weather-icon').textContent = icon;
-                    widget.querySelector('.temperature').textContent = `${temp}°`;
+                    widget.querySelector('.temperature').textContent = `${temp}°F`;
                     widget.querySelector('.weather-description').textContent = description;
                     widget.querySelector('.weather-location').textContent = location;
                 });
@@ -1336,34 +1370,84 @@
                     const widgetConfig = widgets.find(w => w.id === widget.id);
                     const routeFilter = widgetConfig?.config?.routeFilter?.toLowerCase();
                     
-                    // Filter predictions
-                    let predictions = data;
+                    // Collect all predictions with valid times
+                    let allPredictions = [];
+                    
+                    data.forEach(routeData => {
+                        if (routeData.values && routeData.values.length > 0) {
+                            // Add each prediction with route info
+                            routeData.values.forEach(value => {
+                                if (value.minutes !== undefined && value.minutes !== null) {
+                                    allPredictions.push({
+                                        route: routeData.route,
+                                        minutes: value.minutes,
+                                        direction: value.direction,
+                                        vehicleId: value.vehicleId
+                                    });
+                                }
+                            });
+                        }
+                    });
+                    
+                    // Sort by minutes
+                    allPredictions.sort((a, b) => a.minutes - b.minutes);
+                    
+                    // Apply route filter if specified
+                    let filteredPredictions = allPredictions;
                     if (routeFilter) {
-                        predictions = data.filter(p => 
+                        // First try exact match
+                        filteredPredictions = allPredictions.filter(p => 
                             p.route.title.toLowerCase().includes(routeFilter)
                         );
+                        
+                        // If no exact matches and it's late night, include Night Owl
+                        if (filteredPredictions.length === 0) {
+                            const hour = new Date().getHours();
+                            // Between 11 PM and 5 AM, show Night Owl service
+                            if (hour >= 23 || hour <= 5) {
+                                filteredPredictions = allPredictions.filter(p => 
+                                    p.route.id.includes('NOWL') || p.route.id.includes('OWL')
+                                );
+                            }
+                        }
+                        
+                        // If still no predictions, show all available
+                        if (filteredPredictions.length === 0) {
+                            filteredPredictions = allPredictions;
+                        }
                     }
                     
                     const content = widget.querySelector('.transit-content');
                     const widgetEl = document.getElementById(widget.id);
                     
-                    if (predictions.length === 0) {
-                        content.innerHTML = 'No predictions available';
+                    if (filteredPredictions.length === 0) {
+                        const hour = new Date().getHours();
+                        const message = (hour >= 1 && hour <= 5) 
+                            ? 'No service until morning' 
+                            : 'No predictions available';
+                        content.innerHTML = `<div class="no-service">${message}</div>`;
                         return;
                     }
                     
                     // Check if this is a split-flap display
                     if (widgetConfig?.displayStyle === 'splitFlap' || content.classList.contains('split-flap-display')) {
-                        // Update split-flap display with animations
-                        updateSplitFlapDisplay(content, predictions);
+                        // Convert back to original format for split-flap display
+                        const formattedPredictions = filteredPredictions.slice(0, 3).map(p => ({
+                            route: p.route,
+                            values: [{ minutes: p.minutes }]
+                        }));
+                        updateSplitFlapDisplay(content, formattedPredictions);
                     } else {
                         // Show simple display up to 3 predictions
-                        const html = predictions.slice(0, 3).map(prediction => {
-                            const minutes = prediction.values[0]?.minutes || 'N/A';
+                        const html = filteredPredictions.slice(0, 3).map(prediction => {
+                            const routeName = prediction.route.title;
+                            const isNightOwl = prediction.route.id.includes('NOWL') || prediction.route.id.includes('OWL');
+                            const displayName = isNightOwl ? `${routeName} 🌙` : routeName;
+                            
                             return `
                                 <div class="prediction">
-                                    <span class="prediction-route">${prediction.route.title}</span>
-                                    <span class="prediction-time">${minutes} min</span>
+                                    <span class="prediction-route">${displayName}</span>
+                                    <span class="prediction-time">${prediction.minutes} min</span>
                                 </div>
                             `;
                         }).join('');

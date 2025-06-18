@@ -68,11 +68,59 @@
         .animation-zone {
             position: absolute;
             overflow: hidden;
+            transform-origin: center;
+            transition: transform 0.2s ease;
+        }
+        
+        .animation-zone.selected {
+            outline: 2px solid #3498db;
+            outline-offset: 2px;
         }
         
         .animation-canvas {
             width: 100%;
             height: 100%;
+        }
+        
+        /* Transform controls overlay */
+        #transform-controls {
+            position: fixed;
+            bottom: 20px;
+            left: 20px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 10px;
+            backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            z-index: 1000;
+            display: none;
+            min-width: 300px;
+        }
+        
+        #transform-controls.visible {
+            display: block;
+        }
+        
+        .control-group {
+            margin-bottom: 15px;
+        }
+        
+        .control-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-size: 12px;
+            opacity: 0.8;
+        }
+        
+        .control-group input[type="range"] {
+            width: 100%;
+            margin-bottom: 5px;
+        }
+        
+        .control-value {
+            font-family: monospace;
+            opacity: 0.8;
         }
         
         /* Info overlay */
@@ -159,7 +207,36 @@
         <div>Transit: <span id="transit-info">--</span></div>
         <div>Press 'I' to toggle info</div>
         <div>Press 'D' to toggle debug mask</div>
+        <div>Press 'T' to toggle transform controls</div>
         <div>Press 'F11' for fullscreen</div>
+    </div>
+    
+    <!-- Transform Controls -->
+    <div id="transform-controls">
+        <h3 style="margin-top: 0;">Zone Transform</h3>
+        <div id="selected-zone-name" style="margin-bottom: 15px; opacity: 0.8;">No zone selected</div>
+        
+        <div class="control-group">
+            <label>X Position: <span class="control-value" id="transform-x-value">0</span>px</label>
+            <input type="range" id="transform-x" min="-500" max="500" value="0">
+        </div>
+        
+        <div class="control-group">
+            <label>Y Position: <span class="control-value" id="transform-y-value">0</span>px</label>
+            <input type="range" id="transform-y" min="-500" max="500" value="0">
+        </div>
+        
+        <div class="control-group">
+            <label>Scale: <span class="control-value" id="transform-scale-value">1.0</span>x</label>
+            <input type="range" id="transform-scale" min="0.1" max="3" step="0.1" value="1">
+        </div>
+        
+        <div class="control-group">
+            <label>Rotation: <span class="control-value" id="transform-rotation-value">0</span>°</label>
+            <input type="range" id="transform-rotation" min="-180" max="180" value="0">
+        </div>
+        
+        <button onclick="resetTransform()" style="width: 100%; margin-top: 10px;">Reset Transform</button>
     </div>
     
     <!-- Animation Engine -->
@@ -171,6 +248,12 @@
     <script src="/backend-static/js/projection/animations/spectrum_bars.js"></script>
     <script src="/backend-static/js/projection/animations/webgl_flowers.js"></script>
     <script src="/backend-static/js/projection/animations/gradient_bubbles.js"></script>
+    <script src="/backend-static/js/projection/animations/pipes_flow.js"></script>
+    <script src="/backend-static/js/projection/animations/milk_physics.js"></script>
+    <script src="/backend-static/js/projection/animations/segment_clock.js"></script>
+    <script src="/backend-static/js/projection/animations/rainstorm.js"></script>
+    <script src="/backend-static/js/projection/animations/pride_spectrum.js"></script>
+    <script src="/backend-static/js/projection/animations/skillet_switch.js"></script>
     
     <script>
         // Global state
@@ -179,6 +262,9 @@
         let dataUpdateInterval = null;
         let showInfo = false;
         let showDebugMask = false;
+        let showTransformControls = false;
+        let selectedZone = null;
+        let zoneTransforms = {};
         
         // FPS tracking
         let fps = 0;
@@ -220,6 +306,9 @@
                 
                 // Setup keyboard shortcuts
                 setupKeyboardShortcuts();
+                
+                // Setup transform controls
+                setupTransformControls();
                 
                 // Start render loop
                 requestAnimationFrame(render);
@@ -269,18 +358,40 @@
             
             document.getElementById('zone-count').textContent = zones.length;
             
+            // Calculate scale factor if mask dimensions are provided
+            let scaleX = 1;
+            let scaleY = 1;
+            if (session.mask && session.mask.width && session.mask.height) {
+                const viewportWidth = window.innerWidth;
+                const viewportHeight = window.innerHeight;
+                scaleX = viewportWidth / session.mask.width;
+                scaleY = viewportHeight / session.mask.height;
+            }
+            
             zones.forEach((zone, index) => {
                 const assignment = zone.assignment || { type: 'empty' };
                 
+                // Initialize transform for this zone if not exists
+                if (!zoneTransforms[zone.id]) {
+                    zoneTransforms[zone.id] = zone.transform || { x: 0, y: 0, scale: 1, rotation: 0 };
+                }
+                
                 if (assignment.type === 'animation' && assignment.content) {
-                    // Create animation container
+                    // Create animation container with scaled bounds
                     const container = document.createElement('div');
                     container.className = 'animation-zone';
                     container.id = `zone-${zone.id}`;
-                    container.style.left = `${zone.bounds.x}px`;
-                    container.style.top = `${zone.bounds.y}px`;
-                    container.style.width = `${zone.bounds.width}px`;
-                    container.style.height = `${zone.bounds.height}px`;
+                    container.style.left = `${zone.bounds.x * scaleX}px`;
+                    container.style.top = `${zone.bounds.y * scaleY}px`;
+                    container.style.width = `${zone.bounds.width * scaleX}px`;
+                    container.style.height = `${zone.bounds.height * scaleY}px`;
+                    
+                    // Apply transform
+                    applyZoneTransform(container, zoneTransforms[zone.id]);
+                    
+                    // Add click handler for selection
+                    container.style.pointerEvents = 'auto';
+                    container.addEventListener('click', () => selectZone(zone));
                     
                     animationLayer.appendChild(container);
                     
@@ -291,19 +402,19 @@
                     }
                     
                 } else if (assignment.type === 'video' && assignment.content) {
-                    // Create video element
+                    // Create video element with scaled bounds
                     const video = document.createElement('video');
                     video.className = 'zone-video';
-                    video.style.left = `${zone.bounds.x}px`;
-                    video.style.top = `${zone.bounds.y}px`;
-                    video.style.width = `${zone.bounds.width}px`;
-                    video.style.height = `${zone.bounds.height}px`;
+                    video.style.left = `${zone.bounds.x * scaleX}px`;
+                    video.style.top = `${zone.bounds.y * scaleY}px`;
+                    video.style.width = `${zone.bounds.width * scaleX}px`;
+                    video.style.height = `${zone.bounds.height * scaleY}px`;
                     video.loop = true;
                     video.muted = true;
                     video.autoplay = true;
                     
-                    // Set video source (would need actual video URL from backend)
-                    video.src = `/api/videos/${assignment.content}/stream`;
+                    // Set video source to file endpoint
+                    video.src = `/api/videos/${assignment.content}/file`;
                     
                     videoLayer.appendChild(video);
                 }
@@ -362,6 +473,90 @@
             requestAnimationFrame(render);
         }
         
+        // Zone transform functions
+        function applyZoneTransform(element, transform) {
+            element.style.transform = `
+                translate(${transform.x}px, ${transform.y}px)
+                scale(${transform.scale})
+                rotate(${transform.rotation}deg)
+            `;
+        }
+        
+        function selectZone(zone) {
+            // Deselect previous zone
+            if (selectedZone) {
+                const prevElement = document.getElementById(`zone-${selectedZone.id}`);
+                if (prevElement) {
+                    prevElement.classList.remove('selected');
+                }
+            }
+            
+            // Select new zone
+            selectedZone = zone;
+            const element = document.getElementById(`zone-${zone.id}`);
+            if (element) {
+                element.classList.add('selected');
+            }
+            
+            // Update controls
+            const transform = zoneTransforms[zone.id];
+            document.getElementById('selected-zone-name').textContent = 
+                `Zone: ${zone.sourceMask || zone.id}`;
+            
+            document.getElementById('transform-x').value = transform.x;
+            document.getElementById('transform-x-value').textContent = transform.x;
+            document.getElementById('transform-y').value = transform.y;
+            document.getElementById('transform-y-value').textContent = transform.y;
+            document.getElementById('transform-scale').value = transform.scale;
+            document.getElementById('transform-scale-value').textContent = transform.scale.toFixed(1);
+            document.getElementById('transform-rotation').value = transform.rotation;
+            document.getElementById('transform-rotation-value').textContent = transform.rotation;
+        }
+        
+        function resetTransform() {
+            if (!selectedZone) return;
+            
+            zoneTransforms[selectedZone.id] = { x: 0, y: 0, scale: 1, rotation: 0 };
+            
+            const element = document.getElementById(`zone-${selectedZone.id}`);
+            if (element) {
+                applyZoneTransform(element, zoneTransforms[selectedZone.id]);
+            }
+            
+            selectZone(selectedZone); // Update controls
+        }
+        
+        // Setup transform control listeners
+        function setupTransformControls() {
+            ['x', 'y', 'scale', 'rotation'].forEach(prop => {
+                const input = document.getElementById(`transform-${prop}`);
+                input.addEventListener('input', (e) => {
+                    if (!selectedZone) return;
+                    
+                    const value = parseFloat(e.target.value);
+                    zoneTransforms[selectedZone.id][prop] = value;
+                    
+                    const element = document.getElementById(`zone-${selectedZone.id}`);
+                    if (element) {
+                        applyZoneTransform(element, zoneTransforms[selectedZone.id]);
+                    }
+                    
+                    // Update display value
+                    const displayValue = prop === 'scale' ? value.toFixed(1) : value;
+                    document.getElementById(`transform-${prop}-value`).textContent = displayValue;
+                    
+                    // Send update to parent window if exists
+                    if (window.opener && !window.opener.closed) {
+                        window.opener.postMessage({
+                            type: 'zoneTransformUpdate',
+                            zoneId: selectedZone.id,
+                            transform: zoneTransforms[selectedZone.id]
+                        }, '*');
+                    }
+                });
+            });
+        }
+        
         // Setup keyboard shortcuts
         function setupKeyboardShortcuts() {
             document.addEventListener('keydown', (e) => {
@@ -374,6 +569,10 @@
                         showDebugMask = !showDebugMask;
                         document.getElementById('mask-layer').style.display = 
                             showDebugMask ? 'block' : 'none';
+                        break;
+                    case 't':
+                        showTransformControls = !showTransformControls;
+                        document.getElementById('transform-controls').classList.toggle('visible', showTransformControls);
                         break;
                     case 'f11':
                         e.preventDefault();
@@ -410,6 +609,25 @@
             }
             if (animationEngine) {
                 animationEngine.destroy();
+            }
+        });
+        
+        // Listen for messages from parent window
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'updateTransforms') {
+                // Update transforms for all zones
+                Object.entries(event.data.transforms).forEach(([zoneId, transform]) => {
+                    zoneTransforms[zoneId] = transform;
+                    const element = document.getElementById(`zone-${zoneId}`);
+                    if (element) {
+                        applyZoneTransform(element, transform);
+                    }
+                });
+                
+                // Update controls if selected zone was updated
+                if (selectedZone && event.data.transforms[selectedZone.id]) {
+                    selectZone(selectedZone);
+                }
             }
         });
         

@@ -95,6 +95,16 @@ class DeviceManager:
         self.playback_stats_lock = threading.Lock()
         self.connectivity_timeout = 30  # Seconds to wait before considering a device offline
 
+    def set_device_service(self, device_service):
+        """
+        Set the device service reference for database operations
+        
+        Args:
+            device_service: The DeviceService instance to use
+        """
+        self.device_service = device_service
+        logger.info("Device service reference set in DeviceManager")
+
     def _acquire_device_lock(self):
         """Acquire the device lock with timeout to prevent deadlock"""
         start_time = time.time()
@@ -428,6 +438,16 @@ class DeviceManager:
             finally:
                 self._release_device_lock()
             
+            # Initialize device status if not already present
+            with self.status_lock:
+                if device_name not in self.device_status:
+                    self.device_status[device_name] = {
+                        "status": "connected",
+                        "last_updated": time.time(),
+                        "is_playing": False
+                    }
+                    logger.info(f"Initialized device_status for {device_name}")
+            
             return device
         except Exception as e:
             logger.error(f"Error registering device: {e}")
@@ -679,7 +699,7 @@ class DeviceManager:
                         device = self.register_device(device_info)
                         if device:
                             logger.info(f"Successfully registered device: {device_name}")
-                            self.update_device_status(device_name, True, self.device_service)
+                            self.update_device_status(device_name, "connected")
                             with self.status_lock:
                                 self.last_seen[device_name] = time.time()
                                 self.device_connected_at[device_name] = time.time()
@@ -692,7 +712,7 @@ class DeviceManager:
                             self.last_seen[device_name] = time.time()
                             # Only update status if device was previously disconnected
                             if self.device_status.get(device_name, {}).get("status") != "connected":
-                                self.update_device_status(device_name, True, self.device_service)
+                                self.update_device_status(device_name, "connected")
                     
                     # Process discovered device against configurations using improved assignment logic
                     self._process_device_video_assignment(device_name, is_new_device, is_changed_device)
@@ -1215,11 +1235,34 @@ class DeviceManager:
                     
                     if time_since_last_seen > self.connectivity_timeout:
                         logger.info(f"Device {device_name} not seen for {time_since_last_seen:.1f}s, marking disconnected")
-                        self.update_device_status(device_name, False, self.device_service)
+                        self.update_device_status(device_name, "disconnected")
+                        
+                        # Clean up any active streaming sessions for this device
+                        try:
+                            from .streaming_registry import StreamingSessionRegistry
+                            streaming_registry = StreamingSessionRegistry.get_instance()
+                            device_sessions = streaming_registry.get_sessions_for_device(device_name)
+                            for session in device_sessions:
+                                logger.info(f"Cleaning up streaming session {session.session_id} for disconnected device {device_name}")
+                                streaming_registry.unregister_session(session.session_id)
+                        except Exception as e:
+                            logger.error(f"Error cleaning up streaming sessions for device {device_name}: {e}")
                         
                         # Clear device from memory if it's been disconnected for too long
                         if time_since_last_seen > self.connectivity_timeout * 2:
                             logger.info(f"Removing device {device_name} from memory due to extended disconnection")
+                            
+                            # Also clean up any lingering streaming sessions
+                            try:
+                                from .streaming_registry import StreamingSessionRegistry
+                                streaming_registry = StreamingSessionRegistry.get_instance()
+                                device_sessions = streaming_registry.get_sessions_for_device(device_name)
+                                for session in device_sessions:
+                                    logger.info(f"Cleaning up streaming session {session.session_id} for removed device {device_name}")
+                                    streaming_registry.unregister_session(session.session_id)
+                            except Exception as e:
+                                logger.error(f"Error cleaning up streaming sessions for removed device {device_name}: {e}")
+                            
                             self.devices.pop(device_name, None)
                             self.device_status.pop(device_name, None)
                             self.last_seen.pop(device_name, None)

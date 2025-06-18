@@ -64,7 +64,21 @@ function Devices() {
   useEffect(() => {
     fetchDevices();
     fetchDiscoveryStatus();
+    
+    // Set up polling interval to fetch fresh device data every 5 seconds
+    const pollingInterval = setInterval(() => {
+      fetchDevices(true); // true = isPolling, to avoid showing loading spinner
+      fetchDiscoveryStatus();
+    }, 5000); // Poll every 5 seconds
+    
+    // Cleanup polling interval on unmount
+    return () => {
+      clearInterval(pollingInterval);
+    };
   }, []);
+
+  // Add a state to force re-renders for timer updates
+  const [, forceUpdate] = useState(0);
 
   // Timer to update display every second
   useEffect(() => {
@@ -77,7 +91,7 @@ function Devices() {
       // Update display every second
       interval = setInterval(() => {
         // Force re-render to update calculated time
-        setDevices(prev => [...prev]);
+        forceUpdate(prev => prev + 1);
       }, 1000); // Update every second
     }
     
@@ -97,7 +111,16 @@ function Devices() {
       }
       setError(null); // Clear any previous errors
       const response = await deviceApi.getDevices();
-      console.log('Devices response:', response.data.devices[0]); // Debug first device
+      // Debug: log playing devices
+      const playingDevices = response.data.devices.filter(d => d.is_playing);
+      if (playingDevices.length > 0) {
+        console.log('Playing devices:', playingDevices.map(d => ({
+          name: d.name,
+          playback_started_at: d.playback_started_at,
+          is_playing: d.is_playing,
+          current_video: d.current_video
+        })));
+      }
       setDevices(response.data.devices);
       if (!isPolling) {
         setLoading(false);
@@ -390,40 +413,58 @@ function Devices() {
 
   // Calculate current playback position
   const calculateCurrentPosition = (device) => {
-    // If we have a start time, calculate position
-    if (device.is_playing && device.playback_started_at) {
-      // Backend sends ISO format timestamp from updated_at
-      // Ensure it's parsed as UTC
-      const startTime = new Date(device.playback_started_at).getTime();
-      const currentTime = Date.now();
-      const elapsedMs = currentTime - startTime;
-      
-      // Prevent negative values (in case of timezone issues)
-      const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
-      
-      // Parse duration to check if we exceeded it
-      if (device.playback_duration) {
-        const durationParts = device.playback_duration.split(':');
-        const totalSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+    try {
+      // If we have a start time, calculate position
+      if (device.is_playing && device.playback_started_at) {
+        // Backend sends timezone-naive timestamp, treat it as UTC
+        // Add 'Z' to indicate UTC if not present
+        let timestampStr = device.playback_started_at;
+        if (!timestampStr.endsWith('Z') && !timestampStr.includes('+') && !timestampStr.includes('-')) {
+          timestampStr += 'Z';
+        }
         
-        // Don't exceed duration
-        const currentSeconds = Math.min(elapsedSeconds, totalSeconds);
+        const startTime = new Date(timestampStr).getTime();
+        const currentTime = Date.now();
+        const elapsedMs = currentTime - startTime;
         
-        // Prevent negative hours/minutes/seconds
-        const hours = Math.max(0, Math.floor(currentSeconds / 3600));
-        const minutes = Math.max(0, Math.floor((currentSeconds % 3600) / 60));
-        const seconds = Math.max(0, currentSeconds % 60);
+        
+        // Prevent negative values (in case of timezone issues)
+        const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+        
+        // Parse duration to check if we exceeded it
+        if (device.playback_duration) {
+          const durationParts = device.playback_duration.split(':');
+          const totalSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+          
+          // Don't exceed duration
+          const currentSeconds = Math.min(elapsedSeconds, totalSeconds);
+          
+          // Format the time
+          const hours = Math.floor(currentSeconds / 3600);
+          const minutes = Math.floor((currentSeconds % 3600) / 60);
+          const seconds = currentSeconds % 60;
+          
+          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+        
+        // If no duration, just show elapsed time
+        const hours = Math.floor(elapsedSeconds / 3600);
+        const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+        const seconds = elapsedSeconds % 60;
         
         return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       }
+      
+      // If we have a position from backend, use it
+      if (device.playback_position) {
+        return device.playback_position;
+      }
+      
+      return "00:00:00";
+    } catch (error) {
+      console.error('Error calculating playback position:', error, device);
+      return "00:00:00";
     }
-    
-    // If we have a position from backend, use it
-    if (device.playback_position) {
-      return device.playback_position;
-    }
-    
-    return "00:00:00";
   };
 
   // Calculate progress percentage
@@ -504,13 +545,18 @@ function Devices() {
           <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <Box>
               <Typography variant="h6">Discovery Control</Typography>
-              <Typography variant="body2" color="textSecondary">
-                Discovery Loop: {discoveryStatus?.running ? 
+              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+                <Typography variant="body2" color="textSecondary" component="span">
+                  Discovery Loop: 
+                </Typography>
+                {discoveryStatus?.running ? 
                   <Chip label="Running" color="success" size="small" sx={{ ml: 1 }} /> : 
                   <Chip label="Paused" color="default" size="small" sx={{ ml: 1 }} />
                 }
-                {discoveryStatus && ` • ${discoveryStatus.devices_discovered} devices • ${discoveryStatus.devices_playing} playing`}
-              </Typography>
+                <Typography variant="body2" color="textSecondary" component="span" sx={{ ml: 1 }}>
+                  {discoveryStatus && ` • ${discoveryStatus.devices_discovered} devices • ${discoveryStatus.devices_playing} playing`}
+                </Typography>
+              </Box>
             </Box>
             <Box>
               <Button
@@ -618,7 +664,14 @@ function Devices() {
                 </Typography>
               </CardContent>
               <CardActions>
-                {device.is_playing ? (
+                <Button 
+                  size="small" 
+                  color="primary"
+                  onClick={() => navigate(`/devices/${device.id}`)}
+                >
+                  Details
+                </Button>
+                {device.is_playing && (
                   <>
                     <Button 
                       size="small" 
@@ -637,14 +690,6 @@ function Devices() {
                       Stop
                     </Button>
                   </>
-                ) : (
-                  <Button 
-                    size="small" 
-                    color="primary"
-                    onClick={() => navigate(`/devices/${device.id}`)}
-                  >
-                    Details
-                  </Button>
                 )}
                 <Button 
                   size="small" 

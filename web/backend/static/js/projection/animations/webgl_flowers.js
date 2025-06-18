@@ -44,14 +44,23 @@ class WebGLFlowersAnimation extends BaseAnimation {
     initThreeScene() {
         const THREE = this.THREE;
         
-        // Setup renderer
-        this.renderer = new THREE.WebGLRenderer({
-            canvas: this.canvas,
-            alpha: true,
-            preserveDrawingBuffer: true
-        });
-        this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        this.renderer.setSize(this.canvas.width, this.canvas.height);
+        // Check if we can create a WebGL context
+        try {
+            // Create offscreen canvas for WebGL
+            this.webglCanvas = document.createElement('canvas');
+            this.webglCanvas.width = this.canvas.width;
+            this.webglCanvas.height = this.canvas.height;
+            
+            // Setup renderer with offscreen canvas
+            this.renderer = new THREE.WebGLRenderer({
+                canvas: this.webglCanvas,
+                alpha: true,
+                preserveDrawingBuffer: true,
+                antialias: false,
+                powerPreference: "low-power"
+            });
+            this.renderer.setPixelRatio(1); // Use lower pixel ratio to save resources
+            this.renderer.setSize(this.canvas.width, this.canvas.height);
         
         // Setup scenes
         this.sceneShader = new THREE.Scene();
@@ -70,6 +79,10 @@ class WebGLFlowersAnimation extends BaseAnimation {
         
         // Create plane for rendering
         this.createPlane();
+        } catch (error) {
+            console.warn('WebGL context creation failed, using fallback:', error);
+            this.useFallbackRenderer = true;
+        }
     }
     
     createShaders() {
@@ -249,9 +262,13 @@ class WebGLFlowersAnimation extends BaseAnimation {
         // Update basic material
         this.basicMaterial.map = this.renderTargets[1].texture;
         
-        // Render to canvas
+        // Render to WebGL canvas
         this.renderer.setRenderTarget(null);
         this.renderer.render(this.sceneBasic, this.camera);
+        
+        // Copy WebGL canvas to main canvas
+        this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+        this.ctx.drawImage(this.webglCanvas, 0, 0);
         
         // Swap render targets
         const tmp = this.renderTargets[0];

@@ -381,8 +381,7 @@ async def trigger_sync(
     synced_devices = []
     failed_devices = []
     try:
-        from core.device_manager import get_device_manager
-        device_manager = get_device_manager()
+        from routers.device_router import device_manager
         
         for device in device_manager.get_devices():
             if device.is_playing:

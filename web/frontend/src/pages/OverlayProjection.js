@@ -131,7 +131,7 @@ function OverlayProjection() {
                     size: { width: 400, height: 200 },
                     config: {
                         city: 'San Francisco',
-                        units: 'metric'
+                        units: 'imperial'
                     },
                     visible: true
                 },
@@ -141,8 +141,9 @@ function OverlayProjection() {
                     position: { x: 1470, y: 50 },
                     size: { width: 300, height: 100 },
                     config: {
-                        format: '24h',
-                        showSeconds: true
+                        format: '12h',
+                        showSeconds: true,
+                        timezone: 'PST'
                     },
                     visible: true
                 },

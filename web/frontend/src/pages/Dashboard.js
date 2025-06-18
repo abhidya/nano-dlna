@@ -38,11 +38,11 @@ function Dashboard() {
         setLoading(true);
         
         // Fetch devices
-        const devicesResponse = await axios.get('/api/devices');
+        const devicesResponse = await axios.get('/api/devices/');
         setDevices(devicesResponse.data.devices);
         
         // Fetch videos
-        const videosResponse = await axios.get('/api/videos');
+        const videosResponse = await axios.get('/api/videos/');
         setVideos(videosResponse.data.videos);
         
         setLoading(false);
@@ -61,7 +61,7 @@ function Dashboard() {
       await axios.post(`/api/devices/${deviceId}/${action}`);
       
       // Refresh devices after action
-      const devicesResponse = await axios.get('/api/devices');
+      const devicesResponse = await axios.get('/api/devices/');
       setDevices(devicesResponse.data.devices);
     } catch (err) {
       console.error(`Error performing ${action} action:`, err);

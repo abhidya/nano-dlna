@@ -48,6 +48,7 @@ def init_db():
     from models.device import DeviceModel
     from models.video import VideoModel
     from models.overlay import OverlayConfig
+    from models.projection import ProjectionConfig
     
     # When running under pytest, skip the actual Base.metadata.create_all(bind=engine) call.
     # The test fixtures will handle creating tables on the temporary test database.

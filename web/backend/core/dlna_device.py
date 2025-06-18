@@ -42,6 +42,7 @@ class DLNADevice(Device):
         self._last_activity_time = None
         self._inactivity_timeout = 90  # Default seconds of inactivity before considering playback stalled
         self._dynamic_inactivity_timeout = True  # Enable dynamic timeout based on video duration
+        self._zero_position_count = 0  # Track consecutive times position is at 00:00:00
         
         # Video playback attributes
         self.current_video_duration = None  # Duration of current video in seconds
@@ -850,6 +851,13 @@ class DLNADevice(Device):
                         self.current_position = rel_time_str
                         position_seconds = self._parse_time(rel_time_str)
                         
+                        # Track zero position count
+                        if position_seconds == 0 and transport_state == "PLAYING":
+                            self._zero_position_count += 1
+                            logger.debug(f"[{self.name}] Position at 0, count: {self._zero_position_count}")
+                        else:
+                            self._zero_position_count = 0  # Reset if position changes
+                        
                         if self.current_video_duration and self.current_video_duration > 0:
                             progress = min(100, int((position_seconds / self.current_video_duration) * 100))
                             self.playback_progress = progress
@@ -857,13 +865,24 @@ class DLNADevice(Device):
                                 self.device_manager.update_device_playback_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
                             
                             # Restart logic
-                            # Consider restarting if very close to end OR if state is STOPPED/NO_MEDIA but loop is on
-                            if progress >= 98 or (transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0):
-                                logger.info(f"[{self.name}] Video (v2) near end (progress {progress}%) or stopped. Restarting.")
+                            # Consider restarting if:
+                            # 1. Very close to end (progress >= 98%)
+                            # 2. State is STOPPED/NO_MEDIA with position at 0
+                            # 3. NEW: Position stuck at 0 while claiming to play for >3 checks (15+ seconds)
+                            if (progress >= 98 or 
+                                (transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0) or
+                                (position_seconds == 0 and self._zero_position_count > 3)):
+                                
+                                if self._zero_position_count > 3:
+                                    logger.info(f"[{self.name}] Video stuck at position 00:00:00 while playing. Restarting.")
+                                else:
+                                    logger.info(f"[{self.name}] Video (v2) near end (progress {progress}%) or stopped. Restarting.")
+                                
                                 if self._try_restart_video(video_url):
                                      monitoring_start_time = time.time() # Reset monitoring time
                                      last_progress_update_time = time.time() # Reset update time
                                      self.current_video_duration = None # Re-fetch duration
+                                     self._zero_position_count = 0  # Reset zero position counter
                                      # Re-fetch duration immediately
                                      retry_count = 0
                                      while retry_count < max_duration_retries:

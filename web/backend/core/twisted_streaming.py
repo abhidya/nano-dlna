@@ -16,17 +16,8 @@ from twisted.web.resource import Resource
 from twisted.web.server import Site
 from twisted.web.static import File
 
-# Configure logger for this module
+# Get logger for this module (uses root logger configuration)
 logger = logging.getLogger(__name__)
-logger.setLevel(logging.DEBUG)
-
-# Add a stream handler if not already present
-if not logger.handlers:
-    handler = logging.StreamHandler()
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-    handler.setFormatter(formatter)
-    logger.addHandler(handler)
 
 # Global flag to track if the reactor is running
 reactor_running = False
@@ -169,7 +160,7 @@ class DLNAMediaResource(Resource):
                     logger.debug(f"Successfully opened file: {self.path}")
                     return f
                 except Exception as e:
-                    logger.error(f"Error opening file {self.path}: {e}")
+                    logger.error(f"Error opening file {self.path}: {e}", exc_info=True)
                     raise
             
         # Serve the file
@@ -180,7 +171,7 @@ class DLNAMediaResource(Resource):
             logger.debug(f"File resource render result type: {type(result)}")
             return result
         except Exception as e:
-            logger.error(f"Error serving file {self.file_path}: {e}")
+            logger.error(f"Error serving file {self.file_path}: {e}", exc_info=True)
             request.setResponseCode(500)
             return f"Error serving file: {str(e)}".encode('utf-8')
 

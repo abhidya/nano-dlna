@@ -44,6 +44,7 @@ function DeviceDetail() {
     message: '',
     severity: 'success'
   });
+  const [, forceUpdate] = useState(0);
 
   useEffect(() => {
     fetchDevice();
@@ -52,9 +53,33 @@ function DeviceDetail() {
     return () => clearInterval(interval);
   }, [id]);
 
+  // Timer to update display every second
+  useEffect(() => {
+    let interval;
+    
+    // Check if device is currently playing
+    if (device && device.is_playing) {
+      // Update display every second
+      interval = setInterval(() => {
+        // Force re-render to update calculated time
+        forceUpdate(prev => prev + 1);
+      }, 1000); // Update every second
+    }
+    
+    // Cleanup interval on unmount or when deps change
+    return () => {
+      if (interval) {
+        clearInterval(interval);
+      }
+    };
+  }, [device]);
+
   const fetchDevice = async () => {
     try {
-      setLoading(true);
+      // Only show loading on initial load
+      if (!device) {
+        setLoading(true);
+      }
       const response = await deviceApi.getDevice(id);
       setDevice(response.data);
       setLoading(false);
@@ -93,6 +118,85 @@ function DeviceDetail() {
       ...prev,
       open: false
     }));
+  };
+
+  // Calculate current playback position
+  const calculateCurrentPosition = (device) => {
+    try {
+      // If we have a start time, calculate position
+      if (device.is_playing && device.playback_started_at) {
+        // Backend sends timezone-naive timestamp, treat it as UTC
+        // Add 'Z' to indicate UTC if not present
+        let timestampStr = device.playback_started_at;
+        if (!timestampStr.endsWith('Z') && !timestampStr.includes('+') && !timestampStr.includes('-')) {
+          timestampStr += 'Z';
+        }
+        
+        const startTime = new Date(timestampStr).getTime();
+        const currentTime = Date.now();
+        const elapsedMs = currentTime - startTime;
+        
+        // Prevent negative values (in case of timezone issues)
+        const elapsedSeconds = Math.max(0, Math.floor(elapsedMs / 1000));
+        
+        // Parse duration to check if we exceeded it
+        if (device.playback_duration) {
+          const durationParts = device.playback_duration.split(':');
+          const totalSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+          
+          // Don't exceed duration
+          const currentSeconds = Math.min(elapsedSeconds, totalSeconds);
+          
+          // Format the time
+          const hours = Math.floor(currentSeconds / 3600);
+          const minutes = Math.floor((currentSeconds % 3600) / 60);
+          const seconds = currentSeconds % 60;
+          
+          return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+        }
+        
+        // If no duration, just show elapsed time
+        const hours = Math.floor(elapsedSeconds / 3600);
+        const minutes = Math.floor((elapsedSeconds % 3600) / 60);
+        const seconds = elapsedSeconds % 60;
+        
+        return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+      }
+      
+      // If we have a position from backend, use it
+      if (device.playback_position) {
+        return device.playback_position;
+      }
+      
+      return "00:00:00";
+    } catch (error) {
+      console.error('Error calculating playback position:', error, device);
+      return "00:00:00";
+    }
+  };
+
+  // Calculate progress percentage
+  const calculateProgress = (device) => {
+    // Calculate based on position if we have start time
+    if (device.is_playing && device.playback_started_at && device.playback_duration) {
+      const currentPos = calculateCurrentPosition(device);
+      const posParts = currentPos.split(':');
+      const durationParts = device.playback_duration.split(':');
+      
+      const posSeconds = parseInt(posParts[0]) * 3600 + parseInt(posParts[1]) * 60 + parseInt(posParts[2]);
+      const durationSeconds = parseInt(durationParts[0]) * 3600 + parseInt(durationParts[1]) * 60 + parseInt(durationParts[2]);
+      
+      if (durationSeconds === 0) return 0;
+      
+      return Math.min(100, Math.floor((posSeconds / durationSeconds) * 100));
+    }
+    
+    // Use the progress from backend if available
+    if (device.playback_progress !== null && device.playback_progress !== undefined) {
+      return device.playback_progress;
+    }
+    
+    return 0;
   };
 
   if (loading && !device) {
@@ -222,12 +326,12 @@ function DeviceDetail() {
                     }} 
                   />
                 </ListItem>
-                {device.is_playing && device.playback_progress !== null && (
+                {device.is_playing && (
                   <ListItem>
                     <Box sx={{ width: '100%' }}>
                       <Box sx={{ display: 'flex', justifyContent: 'space-between', mb: 0.5 }}>
                         <Typography variant="caption" color="textSecondary">
-                          {device.playback_position || "00:00:00"}
+                          {calculateCurrentPosition(device)}
                         </Typography>
                         <Typography variant="caption" color="textSecondary">
                           {device.playback_duration || "00:00:00"}
@@ -236,10 +340,15 @@ function DeviceDetail() {
                       <Box sx={{ width: '100%', mr: 1 }}>
                         <LinearProgress 
                           variant="determinate" 
-                          value={device.playback_progress || 0} 
+                          value={calculateProgress(device)} 
                           sx={{ height: 8, borderRadius: 4 }}
                         />
                       </Box>
+                      {!device.playback_started_at && (
+                        <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block' }}>
+                          Timer requires restart (Stop → Play)
+                        </Typography>
+                      )}
                     </Box>
                   </ListItem>
                 )}

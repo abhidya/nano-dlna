@@ -13,45 +13,23 @@ class MovingCloudsAnimation extends BaseAnimation {
     }
     
     createClouds() {
-        // Cloud image URLs from the original CodePen
-        const cloudImages = [
-            'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEhhtiwNp_GGXVBTIBHgwcU1iQfvBwGcNpEWws17jURxLgsTocyKGMzAWZK5-mNe3XprsjDz36yis19PmnSKvpEtg_Lbwto3pgFoOSTxCqcwp_v5OsNqRl23bzqssv8epDnNQazhL2AB1OuITxdhlqfv_YsXirU0W_mbfLYisiFPYgR1G0cpo9RumyNMq5M/s1600/cloud-03.png',
-            'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEjgpQUDtHjzt5ERnQ41HOOChn4ruWGjmY72CqEtryfk_IOvHn9rrcf_JNlvREpx0tLcc2vPbThJfuKRcDDE1sVBVism3kDKSL3EqPoPqy3z09gCfjcw3UzCpoeGCHj5O397FDzu-4tVI7R36f-zd73bFw_C3k4N_2bR5wRl-D-Ae1_wJZMMe2aPp3qmWLk/s1600/cloud-01.png',
-            'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEisGYgS3dB3vT_wI4DB4anTvu5KWnSpvx5QkkPtLkWZ2LGm64TkWFQs8nqevH5KeFi3bfE7BO4Cny8hwr_9jiBycBsoQq7T1qS_2WuCI0uYbjE0Kn7y5PxtapKiaf4VQHBoVeLrxjjm78Cx8CpiZG16IkJ6Skd17BD0J-IpgWo_MT8TE3qiQCxsQAdWJ6U/s1600/cloud-02.png',
-            'https://blogger.googleusercontent.com/img/b/R29vZ2xl/AVvXsEgtF2ldV1Z-0zEQa0NUSzO7bLUVRXyaAXBiWGcXQrl4dQC2fCoMHaxSblPg57hTZlR5j16VEVpvmAA0k_hmo45uSdDu5q1bL7jQOaJqFJjeb_B62tgepM6Rig8uQNey1WojLy4zvbUKmPlDbcL_hzhHiX0nhIwJEefJ1XLfRNi1_yuMI08XzDPVOa_ds0U/s1600/cloud-04.png'
-        ];
+        // Create procedural clouds instead of loading external images to avoid CORS issues
+        const speedMultipliers = [1, 2, 3, 4];
+        const cloudCount = 4;
         
-        // Create cloud layers with different speeds
-        const speedMultipliers = [1, 2, 3, 4]; // Original uses 20s, 40s, 60s, 80s
-        
-        cloudImages.forEach((imgSrc, index) => {
-            const img = new Image();
-            img.crossOrigin = 'anonymous';
-            img.src = imgSrc;
-            
+        for (let i = 0; i < cloudCount; i++) {
             const cloud = {
-                image: img,
-                loaded: false,
-                x: this.canvas.width,
-                speedMultiplier: speedMultipliers[index],
-                opacity: 0.7 - (index * 0.1), // Vary opacity for depth
-                scale: 1.0 - (index * 0.1) // Vary scale for depth
-            };
-            
-            img.onload = () => {
-                cloud.loaded = true;
-            };
-            
-            img.onerror = () => {
-                console.warn(`Failed to load cloud image ${index + 1}`);
-                // Create a procedural cloud as fallback
-                cloud.loaded = true;
-                cloud.useCanvas = true;
-                cloud.canvas = this.createProceduralCloud();
+                loaded: true,
+                useCanvas: true,
+                canvas: this.createProceduralCloud(),
+                x: this.canvas.width + (i * 200),
+                speedMultiplier: speedMultipliers[i],
+                opacity: 0.7 - (i * 0.1),
+                scale: 1.0 - (i * 0.1)
             };
             
             this.clouds.push(cloud);
-        });
+        }
     }
     
     createProceduralCloud() {

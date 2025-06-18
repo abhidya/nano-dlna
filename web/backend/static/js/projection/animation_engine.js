@@ -21,6 +21,33 @@ class AnimationEngine {
         if (typeof MovingCloudsAnimation !== 'undefined') {
             this.animationClasses.set('moving_clouds', MovingCloudsAnimation);
         }
+        if (typeof SpectrumBarsAnimation !== 'undefined') {
+            this.animationClasses.set('spectrum_bars', SpectrumBarsAnimation);
+        }
+        if (typeof WebGLFlowersAnimation !== 'undefined') {
+            this.animationClasses.set('webgl_flowers', WebGLFlowersAnimation);
+        }
+        if (typeof GradientBubblesAnimation !== 'undefined') {
+            this.animationClasses.set('gradient_bubbles', GradientBubblesAnimation);
+        }
+        if (typeof PipesFlowAnimation !== 'undefined') {
+            this.animationClasses.set('pipes_flow', PipesFlowAnimation);
+        }
+        if (typeof MilkPhysicsAnimation !== 'undefined') {
+            this.animationClasses.set('milk_physics', MilkPhysicsAnimation);
+        }
+        if (typeof SegmentClockAnimation !== 'undefined') {
+            this.animationClasses.set('segment_clock', SegmentClockAnimation);
+        }
+        if (typeof RainstormAnimation !== 'undefined') {
+            this.animationClasses.set('rainstorm', RainstormAnimation);
+        }
+        if (typeof PrideSpectrumAnimation !== 'undefined') {
+            this.animationClasses.set('pride_spectrum', PrideSpectrumAnimation);
+        }
+        if (typeof SkilletSwitchAnimation !== 'undefined') {
+            this.animationClasses.set('skillet_switch', SkilletSwitchAnimation);
+        }
     }
     
     setMaskImage(maskImage) {
@@ -111,6 +138,19 @@ class BaseAnimation {
                 0, 0,
                 this.zone.bounds.width, this.zone.bounds.height
             );
+            
+            // Convert black pixels to transparent for proper masking
+            const imageData = this.maskCtx.getImageData(0, 0, this.maskCanvas.width, this.maskCanvas.height);
+            const data = imageData.data;
+            
+            for (let i = 0; i < data.length; i += 4) {
+                // If pixel is black (or very dark), make it transparent
+                if (data[i] < 10 && data[i + 1] < 10 && data[i + 2] < 10) {
+                    data[i + 3] = 0; // Set alpha to 0 (transparent)
+                }
+            }
+            
+            this.maskCtx.putImageData(imageData, 0, 0);
         }
         
         // Call child class setup
