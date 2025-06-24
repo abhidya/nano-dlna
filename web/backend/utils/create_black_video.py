@@ -8,13 +8,13 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-def create_black_video(output_path: str = None, duration: int = 3600, width: int = 1920, height: int = 1080) -> str:
+def create_black_video(output_path: str = None, duration: int = 86400, width: int = 1920, height: int = 1080) -> str:
     """
     Create a black video file using ffmpeg
     
     Args:
         output_path: Path for the output video file (default: static/black_video.mp4)
-        duration: Duration in seconds (default: 3600 = 1 hour)
+        duration: Duration in seconds (default: 86400 = 24 hours)
         width: Video width (default: 1920)
         height: Video height (default: 1080)
         

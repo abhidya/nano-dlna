@@ -446,7 +446,20 @@ class DLNADevice(Device):
             self.update_status("connected")
             self.update_playing(False)
             self.current_video = None
+            self.current_video_duration = None  # Clear cached duration
+            self.current_video_path = None  # Clear cached path
             self.update_streaming_info(None, None)  # Clear streaming info
+            
+            # Clean up streaming sessions
+            try:
+                from core.streaming_registry import StreamingSessionRegistry
+                registry = StreamingSessionRegistry.get_instance()
+                sessions = registry.get_sessions_for_device(self.name)
+                for session in sessions:
+                    logger.info(f"Completing streaming session {session.session_id} on device stop")
+                    session.complete()
+            except Exception as e:
+                logger.warning(f"Could not clean up streaming sessions: {e}")
             
             return True
         except Exception as e:
@@ -634,9 +647,16 @@ class DLNADevice(Device):
         """
         logger.warning(f"[{self.name}] Handling streaming health check for session {session_id}")
         
-        # Check if this session belongs to this device
-        if session_id not in getattr(self, '_streaming_sessions', []):
-            logger.warning(f"[{self.name}] Received health check for session belonging to device {session_id.split('-')[0]}")
+        # Check if this session belongs to this device by checking with the registry
+        try:
+            from core.streaming_registry import StreamingSessionRegistry
+            registry = StreamingSessionRegistry.get_instance()
+            session = registry.get_session(session_id)
+            if not session or session.device_name != self.name:
+                logger.warning(f"[{self.name}] Session {session_id} does not belong to this device")
+                return
+        except Exception as e:
+            logger.error(f"Error checking session ownership: {e}")
             return
             
         # Handle different health check reasons
@@ -725,6 +745,7 @@ class DLNADevice(Device):
         monitoring_start_time = time.time()
         update_interval = 2  # Check every 2 seconds
         last_progress_update_time = 0
+        seeking_triggered = False  # Track if we've triggered seek for this loop
 
         # Attempt to determine duration
         retry_count = 0
@@ -847,7 +868,13 @@ class DLNADevice(Device):
                     transport_state = self._get_transport_info().get("CurrentTransportState", "UNKNOWN")
                     logger.debug(f"[{self.name}] Monitor (v2): Pos={rel_time_str}, State={transport_state}")
 
+                    # Determine position and progress
+                    use_time_based_tracking = False
+                    position_seconds = 0
+                    progress = 0
+                    
                     if rel_time_str and rel_time_str not in ("UNKNOWN", "NOT_IMPLEMENTED"):
+                        # Device reports position - use it
                         self.current_position = rel_time_str
                         position_seconds = self._parse_time(rel_time_str)
                         
@@ -855,34 +882,93 @@ class DLNADevice(Device):
                         if position_seconds == 0 and transport_state == "PLAYING":
                             self._zero_position_count += 1
                             logger.debug(f"[{self.name}] Position at 0, count: {self._zero_position_count}")
+                            
+                            # If stuck at 0 for too long, switch to time-based tracking
+                            if self._zero_position_count > 3:
+                                use_time_based_tracking = True
+                                elapsed_time = current_time - monitoring_start_time
+                                position_seconds = int(elapsed_time) % int(self.current_video_duration)
+                                self.current_position = self._format_time(position_seconds)
+                                logger.info(f"[{self.name}] Device stuck at 0 after {self._zero_position_count} checks, switching to time-based tracking: position={self.current_position}")
                         else:
                             self._zero_position_count = 0  # Reset if position changes
-                        
-                        if self.current_video_duration and self.current_video_duration > 0:
-                            progress = min(100, int((position_seconds / self.current_video_duration) * 100))
-                            self.playback_progress = progress
-                            if hasattr(self, 'device_manager') and self.device_manager:
-                                self.device_manager.update_device_playback_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
+                    else:
+                        # Device doesn't report position - use time-based tracking
+                        if transport_state == "PLAYING" and self.current_video_duration:
+                            use_time_based_tracking = True
+                            elapsed_time = current_time - monitoring_start_time
                             
-                            # Restart logic
+                            # Calculate position within current loop
+                            position_seconds = int(elapsed_time) % int(self.current_video_duration)
+                            self.current_position = self._format_time(position_seconds)
+                            
+                            logger.info(f"[{self.name}] Time-based tracking: elapsed={elapsed_time:.1f}s, position={self.current_position}")
+                    
+                    # Calculate progress
+                    if self.current_video_duration and self.current_video_duration > 0:
+                        if use_time_based_tracking:
+                            # For time-based tracking, use elapsed time for progress
+                            elapsed_time = current_time - monitoring_start_time
+                            progress = min(100, int((elapsed_time / self.current_video_duration) * 100))
+                        else:
+                            # For position-based tracking
+                            progress = min(100, int((position_seconds / self.current_video_duration) * 100))
+                        
+                        self.playback_progress = progress
+                        if hasattr(self, 'device_manager') and self.device_manager:
+                            self.device_manager.update_device_playback_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
+                            
+                            # Seek-based looping logic
+                            # Try to seek at 95% to avoid gap, fall back to restart if needed
+                            if progress >= 95 and not seeking_triggered and transport_state == "PLAYING":
+                                logger.info(f"[{self.name}] Approaching end (progress {progress}%), attempting seek to beginning")
+                                
+                                if self.seek("00:00:00"):
+                                    logger.info(f"[{self.name}] Successfully seeked to beginning for seamless loop")
+                                    seeking_triggered = True
+                                    monitoring_start_time = time.time()  # Reset time tracking
+                                    last_progress_update_time = time.time()
+                                    self._zero_position_count = 0
+                                    # Don't reset duration - we still know it
+                                    
+                                    # Wait a moment then reset the seeking flag for next loop
+                                    time.sleep(0.5)
+                                    seeking_triggered = False
+                                    continue
+                                else:
+                                    logger.warning(f"[{self.name}] Seek failed, will use restart fallback")
+                            
+                            # Restart logic (fallback when seek fails or video ends)
                             # Consider restarting if:
                             # 1. Very close to end (progress >= 98%)
                             # 2. State is STOPPED/NO_MEDIA with position at 0
-                            # 3. NEW: Position stuck at 0 while claiming to play for >3 checks (15+ seconds)
-                            if (progress >= 98 or 
-                                (transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0) or
-                                (position_seconds == 0 and self._zero_position_count > 3)):
-                                
-                                if self._zero_position_count > 3:
-                                    logger.info(f"[{self.name}] Video stuck at position 00:00:00 while playing. Restarting.")
-                                else:
-                                    logger.info(f"[{self.name}] Video (v2) near end (progress {progress}%) or stopped. Restarting.")
+                            # 3. Position stuck at 0 while claiming to play for >3 checks
+                            # 4. Time-based: elapsed time exceeds duration (for UNKNOWN position)
+                            should_restart = False
+                            restart_reason = ""
+                            
+                            if progress >= 98:
+                                should_restart = True
+                                restart_reason = f"near end (progress {progress}%)"
+                            elif transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0:
+                                should_restart = True
+                                restart_reason = "stopped state"
+                            elif position_seconds == 0 and self._zero_position_count > 3:
+                                should_restart = True
+                                restart_reason = "stuck at position 00:00:00"
+                            elif use_time_based_tracking and elapsed_time >= self.current_video_duration:
+                                should_restart = True
+                                restart_reason = f"time-based: elapsed {elapsed_time:.1f}s >= duration {self.current_video_duration}s"
+                            
+                            if should_restart:
+                                logger.info(f"[{self.name}] Restarting video: {restart_reason}")
                                 
                                 if self._try_restart_video(video_url):
                                      monitoring_start_time = time.time() # Reset monitoring time
                                      last_progress_update_time = time.time() # Reset update time
                                      self.current_video_duration = None # Re-fetch duration
                                      self._zero_position_count = 0  # Reset zero position counter
+                                     seeking_triggered = False  # Reset seeking flag for next loop
                                      # Re-fetch duration immediately
                                      retry_count = 0
                                      while retry_count < max_duration_retries:
@@ -915,6 +1001,7 @@ class DLNADevice(Device):
                         if self._try_restart_video(video_url):
                             monitoring_start_time = time.time()
                             last_progress_update_time = time.time()
+                            seeking_triggered = False  # Reset seeking flag
                             # Re-fetch duration as above
                         else:
                             time.sleep(5)
@@ -954,6 +1041,7 @@ class DLNADevice(Device):
                     if self._try_restart_video(video_url):
                         monitoring_start_time = time.time() # Reset monitoring time
                         last_progress_update_time = time.time()
+                        seeking_triggered = False  # Reset seeking flag
                     else:
                         time.sleep(5) # Wait on failure
                     continue

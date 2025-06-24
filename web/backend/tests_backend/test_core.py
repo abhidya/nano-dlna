@@ -11,7 +11,7 @@ from unittest.mock import patch, MagicMock, ANY
 from datetime import datetime # Added for status update tests
 from web.backend.core.device import Device
 from web.backend.models.device import DeviceModel # Added import for DeviceModel
-from web.backend.tests_backend.mock_device import MockDevice
+# from web.backend.tests_backend.mock_device import MockDevice  # Removed - file deleted
 from web.backend.tests_backend.mock_streaming_session import MockStreamingSession
 from web.backend.core.device_manager import DeviceManager 
 # Corrected import for DeviceService:

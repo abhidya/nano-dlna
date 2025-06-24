@@ -1,1 +1,0 @@
-../../tests/test_dlna_device.py

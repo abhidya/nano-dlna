@@ -31,7 +31,8 @@ class BrightnessControlService:
     def _ensure_black_video(self):
         """Ensure black video file exists"""
         try:
-            self.black_video_path = create_black_video()
+            # Create a 24-hour black video to avoid looping edge cases
+            self.black_video_path = create_black_video(duration=86400)  # 24 hours
             logger.info(f"Black video available at: {self.black_video_path}")
         except Exception as e:
             logger.error(f"Failed to create black video: {e}")
@@ -109,12 +110,24 @@ class BrightnessControlService:
                 # Only affect devices that are currently playing
                 if device.is_playing and device.current_video:
                     # Backup current state
-                    # Get the actual file path from device_manager's assigned_videos
-                    actual_video_path = device.current_video
-                    with self.device_manager.assigned_videos_lock:
-                        assigned_path = self.device_manager.assigned_videos.get(device.name)
-                        if assigned_path and os.path.exists(assigned_path):
-                            actual_video_path = assigned_path
+                    # Get the actual file path (not the streaming URL)
+                    actual_video_path = None
+                    
+                    # First try to get the original file path from current_video_path
+                    if hasattr(device, 'current_video_path') and device.current_video_path:
+                        actual_video_path = device.current_video_path
+                        logger.info(f"Using current_video_path for backup: {actual_video_path}")
+                    else:
+                        # Fallback to assigned_videos
+                        with self.device_manager.assigned_videos_lock:
+                            assigned_path = self.device_manager.assigned_videos.get(device.name)
+                            if assigned_path and os.path.exists(assigned_path):
+                                actual_video_path = assigned_path
+                                logger.info(f"Using assigned_videos for backup: {actual_video_path}")
+                            else:
+                                # Last resort - use current_video (which is the URL)
+                                actual_video_path = device.current_video
+                                logger.warning(f"Using current_video URL for backup: {actual_video_path}")
                     
                     self.device_state_backup[device.name] = {
                         "video_path": actual_video_path,
@@ -186,7 +199,45 @@ class BrightnessControlService:
                     # Restore original video
                     video_path = backup["video_path"]
                     
-                    if os.path.exists(video_path):
+                    # Check if it's a URL or local file path
+                    is_url = video_path.startswith(('http://', 'https://'))
+                    
+                    # For URLs, we can't check existence with os.path.exists
+                    # For local files, verify they exist
+                    can_restore = is_url or os.path.exists(video_path)
+                    
+                    if can_restore:
+                        # If it's a URL, we need to extract the original file path
+                        # The URL format is typically: http://ip:port/filename.mp4
+                        if is_url:
+                            logger.warning(f"Restoring from URL backup: {video_path}")
+                            # Try to find the original file by searching for files with the same name
+                            from urllib.parse import urlparse, unquote
+                            parsed = urlparse(video_path)
+                            filename = os.path.basename(unquote(parsed.path))
+                            
+                            # Search for the file in common locations
+                            possible_paths = [
+                                f"/Users/mannybhidya/Movies/kitchendoorjune/{filename}",
+                                f"/Users/mannybhidya/Desktop/{filename}",
+                                f"/Users/mannybhidya/PycharmProjects/nano-dlna/web/backend/uploads/{filename}",
+                                f"/Users/mannybhidya/PycharmProjects/nano-dlna/web/uploads/videos/{filename}",
+                            ]
+                            
+                            found_path = None
+                            for path in possible_paths:
+                                if os.path.exists(path):
+                                    found_path = path
+                                    logger.info(f"Found original file at: {found_path}")
+                                    break
+                            
+                            if found_path:
+                                video_path = found_path
+                            else:
+                                logger.error(f"Could not find original file for URL: {video_path}")
+                                errors.append(f"Could not locate original file for {device.name}")
+                                continue
+                        
                         success = self.device_manager.auto_play_video(
                             device,
                             video_path,
@@ -198,6 +249,22 @@ class BrightnessControlService:
                             logger.info(f"Successfully restored video on {device.name}")
                             # Remove from backup after successful restore
                             del self.device_state_backup[device.name]
+                            
+                            # Trigger overlay sync
+                            try:
+                                import requests
+                                response = requests.post(
+                                    "http://localhost:8000/api/overlay/sync",
+                                    params={
+                                        "triggered_by": "brightness_restore",
+                                        "video_name": os.path.basename(video_path) if video_path else None
+                                    },
+                                    timeout=2
+                                )
+                                if response.status_code == 200:
+                                    logger.info(f"Triggered overlay sync after brightness restore for {device.name}")
+                            except Exception as e:
+                                logger.warning(f"Failed to sync overlays after brightness restore: {e}")
                         else:
                             errors.append(f"Failed to restore video on {device.name}")
                             logger.error(f"Failed to restore video on {device.name}")
