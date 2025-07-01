@@ -30,6 +30,9 @@ class StreamingSession:
         self.connection_history = []  # List of (timestamp, status) tuples
         self.status = "initializing"  # One of: initializing, active, stalled, error, completed
         self.error_message = None
+        self.reconnection_attempts = 0  # Track reconnection attempts
+        self.last_reconnection_attempt = None  # Track when we last attempted reconnection
+        self.max_reconnection_attempts = 5  # Maximum reconnection attempts before giving up
         
     def update_activity(self, client_ip: Optional[str] = None, bytes_transferred: int = 0) -> None:
         """
@@ -136,6 +139,41 @@ class StreamingSession:
         time_since_activity = (datetime.now() - self.last_activity_time).total_seconds()
         return time_since_activity > inactivity_threshold
         
+    def record_reconnection_attempt(self) -> None:
+        """
+        Record that a reconnection attempt was made
+        """
+        self.reconnection_attempts += 1
+        self.last_reconnection_attempt = datetime.now()
+        
+    def has_exceeded_reconnection_limit(self) -> bool:
+        """
+        Check if the session has exceeded the maximum reconnection attempts
+        
+        Returns:
+            bool: True if exceeded, False otherwise
+        """
+        return self.reconnection_attempts >= self.max_reconnection_attempts
+        
+    def should_attempt_reconnection(self) -> bool:
+        """
+        Check if we should attempt to reconnect this session
+        
+        Returns:
+            bool: True if we should attempt reconnection, False otherwise
+        """
+        # Don't reconnect if we've exceeded the limit
+        if self.has_exceeded_reconnection_limit():
+            return False
+            
+        # Don't reconnect if we just tried recently (within 30 seconds)
+        if self.last_reconnection_attempt:
+            time_since_last_attempt = (datetime.now() - self.last_reconnection_attempt).total_seconds()
+            if time_since_last_attempt < 30:
+                return False
+                
+        return True
+        
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert session to dictionary for API responses
@@ -159,5 +197,6 @@ class StreamingSession:
             "active": self.active,
             "bandwidth_bps": self.get_bandwidth(),
             "duration_seconds": (datetime.now() - self.start_time).total_seconds(),
-            "error_message": self.error_message
+            "error_message": self.error_message,
+            "reconnection_attempts": self.reconnection_attempts
         } 

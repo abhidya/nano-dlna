@@ -107,13 +107,10 @@ class DeviceManager:
 
     def _acquire_device_lock(self):
         """Acquire the device lock with timeout to prevent deadlock"""
-        start_time = time.time()
-        while not self.device_lock.acquire(blocking=False):
-            time.sleep(0.1)
-            if time.time() - start_time > self.device_lock_timeout:
-                logger.warning("Failed to acquire device lock within timeout")
-                return False
-        return True
+        acquired = self.device_lock.acquire(blocking=True, timeout=self.device_lock_timeout)
+        if not acquired:
+            logger.warning(f"Failed to acquire device lock within {self.device_lock_timeout}s timeout")
+        return acquired
 
     def _release_device_lock(self):
         """Release the device lock"""
@@ -724,8 +721,11 @@ class DeviceManager:
             
             except Exception as e:
                 logger.error(f"Error during DLNA discovery loop: {e}")
+                logger.error(f"Exception details: {traceback.format_exc()}")
             
             time.sleep(self.discovery_interval)
+        
+        logger.error("Discovery loop exited unexpectedly!")
 
     def _process_device_video_assignment(self, device_name: str, is_new_device: bool, is_changed_device: bool) -> None:
         """
@@ -1544,8 +1544,8 @@ class DeviceManager:
         try:
             logger.debug(f"Registering DLNA device at {location_url}")
             
-            # Get device description
-            xml_raw = urllibreq.urlopen(location_url).read().decode("UTF-8")
+            # Get device description with timeout
+            xml_raw = urllibreq.urlopen(location_url, timeout=5).read().decode("UTF-8")
             xml = re.sub(r"""\s(xmlns="[^"]+"|xmlns='[^']+')""", '', xml_raw, count=1)
             info = ET.fromstring(xml)
             

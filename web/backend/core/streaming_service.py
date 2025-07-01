@@ -517,13 +517,53 @@ class StreamingService:
         """
         logger.warning(f"Handling stalled session {session.session_id} for device {session.device_name}")
         
+        # Check if we've exceeded reconnection attempts
+        if session.has_exceeded_reconnection_limit():
+            logger.error(f"Session {session.session_id} has exceeded max reconnection attempts ({session.max_reconnection_attempts})")
+            # Unregister the session to prevent infinite retries
+            self.registry.unregister_session(session.session_id)
+            # Clean up server reference if it exists
+            server_key = f"{session.server_ip}:{session.server_port}"
+            if server_key in self.servers and not self._has_other_active_sessions(server_key):
+                logger.info(f"Cleaning up server {server_key} after session failure")
+                server = self.servers[server_key]
+                self.stop_server(server)
+            return
+        
+        # Check if we should attempt reconnection (respects cooldown period)
+        if not session.should_attempt_reconnection():
+            logger.info(f"Skipping reconnection for session {session.session_id} (cooldown period)")
+            return
+        
         # Special handling for overlay sessions - they don't have a device in device_manager
         if session.device_name == "overlay":
             logger.info(f"Overlay session {session.session_id} is stalled, marking for cleanup")
             # Mark session as error state to prevent repeated health checks
             session.status = "error"
             session.active = False
+            session.record_reconnection_attempt()
             return
+        
+        # Check if this is a false positive before taking action
+        if self.device_manager:
+            device = self.device_manager.get_device(session.device_name)
+            if device:
+                # Get actual device state
+                try:
+                    transport_info = device._get_transport_info() if hasattr(device, '_get_transport_info') else {}
+                    transport_state = transport_info.get("CurrentTransportState", "UNKNOWN")
+                    
+                    if transport_state == "PLAYING":
+                        # Device is actually playing - this is a false positive
+                        logger.info(f"Device {session.device_name} reports PLAYING state - ignoring stall detection")
+                        # Just update activity to reset the stall timer
+                        session.update_activity()
+                        return
+                except Exception as e:
+                    logger.debug(f"Could not check transport state: {e}")
+        
+        # Record the reconnection attempt
+        session.record_reconnection_attempt()
         
         # Try to recover the streaming connection
         if self._attempt_streaming_reconnection(session):
@@ -657,7 +697,7 @@ class StreamingService:
             for url, session_id in self.file_to_session_map.items():
                 if server_id in url:
                     session = self.registry.get_session(session_id)
-                    if session and session.is_active():
+                    if session and session.active:
                         has_active_session = True
                         break
             
@@ -674,6 +714,26 @@ class StreamingService:
                 if server_id in self.temp_dirs:
                     self.temp_dirs[server_id].cleanup()
                     del self.temp_dirs[server_id]
+    
+    def _has_other_active_sessions(self, server_key: str) -> bool:
+        """
+        Check if a server has other active sessions besides the current one
+        
+        Args:
+            server_key: Server identifier (ip:port)
+            
+        Returns:
+            bool: True if there are other active sessions, False otherwise
+        """
+        active_count = 0
+        for url, session_id in self.file_to_session_map.items():
+            if server_key in url:
+                session = self.registry.get_session(session_id)
+                if session and session.active:
+                    active_count += 1
+                    if active_count > 1:
+                        return True
+        return False
 
     def _attempt_streaming_reconnection(self, session) -> bool:
         """

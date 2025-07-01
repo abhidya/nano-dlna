@@ -267,6 +267,17 @@ class StreamingSessionRegistry:
         
         for session in active_sessions:
             try:
+                # Check for sessions that have been running too long (e.g., 24 hours)
+                session_duration = (datetime.now() - session.start_time).total_seconds()
+                max_session_duration = 86400  # 24 hours in seconds
+                
+                if session_duration > max_session_duration:
+                    logger.warning(f"Session {session.session_id} has been running for {session_duration/3600:.1f} hours, marking as timed out")
+                    session.set_error("Session timed out after 24 hours")
+                    # Unregister the session
+                    self.unregister_session(session.session_id)
+                    continue
+                
                 # Check for stalled sessions
                 # Increased from 15s to 90s to account for devices that buffer entire video
                 if session.is_stalled(inactivity_threshold=90.0):

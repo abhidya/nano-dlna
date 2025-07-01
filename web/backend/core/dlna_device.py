@@ -736,6 +736,24 @@ class DLNADevice(Device):
         """
         logger.info(f"[{self.name}] Starting playback monitoring (v2) for {video_url}")
         
+        # Set up dedicated progress debug logger
+        progress_logger = logging.getLogger(f"{__name__}.progress_debug")
+        progress_logger.setLevel(logging.DEBUG)
+        
+        # Create file handler for progress debugging
+        import os
+        from logging.handlers import RotatingFileHandler
+        debug_log_path = "/tmp/dlna_progress_debug.log"
+        if not any(isinstance(h, RotatingFileHandler) and h.baseFilename == debug_log_path 
+                   for h in progress_logger.handlers):
+            handler = RotatingFileHandler(debug_log_path, maxBytes=10*1024*1024, backupCount=2)
+            handler.setLevel(logging.DEBUG)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            progress_logger.addHandler(handler)
+        
+        progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] === MONITOR THREAD STARTED === URL: {video_url}")
+        
         if not hasattr(self, 'current_video_duration') or self.current_video_duration is None:
             self.current_video_duration = None # Will attempt to determine
         
@@ -750,25 +768,32 @@ class DLNADevice(Device):
         # Attempt to determine duration
         retry_count = 0
         max_duration_retries = 5
+        progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Attempting to determine video duration...")
+        
         while retry_count < max_duration_retries:
             with self._thread_lock: # Check loop_enabled under lock
                 if not self._loop_enabled:
                     logger.info(f"[{self.name}] Loop disabled (v2) during duration check. Exiting monitor thread.")
+                    progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Loop disabled during duration check, exiting")
                     return
 
             try:
                 position_info = self._get_position_info()
                 track_duration_str = position_info.get("TrackDuration")
+                progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Duration attempt {retry_count + 1}: TrackDuration={track_duration_str}")
+                
                 if track_duration_str and track_duration_str not in ("UNKNOWN", "NOT_IMPLEMENTED", "0:00:00"):
                     self.current_video_duration = self._parse_time(track_duration_str)
+                    progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Got duration from device: {track_duration_str} = {self.current_video_duration}s")
                     logger.info(f"[{self.name}] Video duration (v2) from position info: {self.current_video_duration}s")
                     break
             except Exception as e:
+                progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Error getting duration (attempt {retry_count + 1}): {e}")
                 logger.warning(f"[{self.name}] Error getting video duration (v2) (attempt {retry_count + 1}): {e}")
             
             retry_count += 1
             if retry_count < max_duration_retries:
-                 time.sleep(update_interval)
+                time.sleep(update_interval)
 
 
         if not self.current_video_duration:
@@ -842,20 +867,30 @@ class DLNADevice(Device):
             # Final fallback - use a more reasonable default for video files
             if not self.current_video_duration:
                 logger.warning(f"[{self.name}] Couldn't determine video duration (v2), using default 1800s (30 min).")
+                progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Duration unknown after all attempts, using default 1800s")
                 self.current_video_duration = 1800  # 30 minutes is more reasonable default for videos 
             
         self.duration_formatted = self._format_time(self.current_video_duration)
+        progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Final duration: {self.duration_formatted} ({self.current_video_duration}s)")
         
         if hasattr(self, 'device_manager') and self.device_manager:
             self.device_manager.update_device_playback_progress(self.name, "00:00:00", self.duration_formatted, 0)
+            progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Initial progress update sent to device manager")
 
+        progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Entering main monitoring loop")
+        loop_iteration = 0
+        
         while True: # Main monitoring loop
+            loop_iteration += 1
+            progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Loop iteration {loop_iteration} starting")
+            
             loop_active_check = False
             with self._thread_lock:
                 loop_active_check = self._loop_enabled
             
             if not loop_active_check:
                 logger.info(f"[{self.name}] Loop disabled (v2). Exiting monitor thread.")
+                progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Loop disabled, exiting monitor thread")
                 break
 
             try:
@@ -863,9 +898,17 @@ class DLNADevice(Device):
                 
                 # Update progress
                 if current_time - last_progress_update_time >= update_interval:
+                    progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Time to update progress (interval: {update_interval}s)")
+                    
                     position_info = self._get_position_info()
                     rel_time_str = position_info.get("RelTime")
-                    transport_state = self._get_transport_info().get("CurrentTransportState", "UNKNOWN")
+                    transport_info = self._get_transport_info()
+                    transport_state = transport_info.get("CurrentTransportState", "UNKNOWN")
+                    
+                    progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Got position info: RelTime={rel_time_str}, State={transport_state}")
+                    progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Full position_info: {position_info}")
+                    progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Full transport_info: {transport_info}")
+                    
                     logger.debug(f"[{self.name}] Monitor (v2): Pos={rel_time_str}, State={transport_state}")
 
                     # Determine position and progress
@@ -877,23 +920,30 @@ class DLNADevice(Device):
                         # Device reports position - use it
                         self.current_position = rel_time_str
                         position_seconds = self._parse_time(rel_time_str)
+                        progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Device reports position: {rel_time_str} = {position_seconds}s")
                         
                         # Track zero position count
                         if position_seconds == 0 and transport_state == "PLAYING":
                             self._zero_position_count += 1
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Position at 0 while PLAYING, count: {self._zero_position_count}")
                             logger.debug(f"[{self.name}] Position at 0, count: {self._zero_position_count}")
                             
                             # If stuck at 0 for too long, switch to time-based tracking
                             if self._zero_position_count > 3:
                                 use_time_based_tracking = True
                                 elapsed_time = current_time - monitoring_start_time
-                                position_seconds = int(elapsed_time) % int(self.current_video_duration)
+                                position_seconds = int(elapsed_time) % int(self.current_video_duration) if self.current_video_duration else 0
                                 self.current_position = self._format_time(position_seconds)
+                                progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] SWITCHING TO TIME-BASED: stuck at 0 after {self._zero_position_count} checks")
                                 logger.info(f"[{self.name}] Device stuck at 0 after {self._zero_position_count} checks, switching to time-based tracking: position={self.current_position}")
                         else:
+                            if self._zero_position_count > 0:
+                                progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Position changed from 0, resetting zero_position_count")
                             self._zero_position_count = 0  # Reset if position changes
                     else:
                         # Device doesn't report position - use time-based tracking
+                        progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Device doesn't report position (RelTime={rel_time_str})")
+                        
                         if transport_state == "PLAYING" and self.current_video_duration:
                             use_time_based_tracking = True
                             elapsed_time = current_time - monitoring_start_time
@@ -902,6 +952,7 @@ class DLNADevice(Device):
                             position_seconds = int(elapsed_time) % int(self.current_video_duration)
                             self.current_position = self._format_time(position_seconds)
                             
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Using TIME-BASED tracking: elapsed={elapsed_time:.1f}s, position={self.current_position}")
                             logger.info(f"[{self.name}] Time-based tracking: elapsed={elapsed_time:.1f}s, position={self.current_position}")
                     
                     # Calculate progress
@@ -910,91 +961,112 @@ class DLNADevice(Device):
                             # For time-based tracking, use elapsed time for progress
                             elapsed_time = current_time - monitoring_start_time
                             progress = min(100, int((elapsed_time / self.current_video_duration) * 100))
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] TIME-BASED progress: {progress}% (elapsed={elapsed_time:.1f}s / duration={self.current_video_duration}s)")
                         else:
                             # For position-based tracking
                             progress = min(100, int((position_seconds / self.current_video_duration) * 100))
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] POSITION-BASED progress: {progress}% (pos={position_seconds}s / duration={self.current_video_duration}s)")
                         
                         self.playback_progress = progress
+                        progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Final progress calculation: position={self.current_position}, progress={self.playback_progress}%")
+                        
                         if hasattr(self, 'device_manager') and self.device_manager:
                             self.device_manager.update_device_playback_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
+                            progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Updated device manager with progress")
+                    else:
+                        progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Cannot calculate progress: duration={self.current_video_duration}")
+                    
+                    # Keep streaming session alive by updating its activity
+                    # This prevents false stall detection for devices that buffer entire videos
+                    try:
+                        from core.streaming_registry import StreamingSessionRegistry
+                        registry = StreamingSessionRegistry.get_instance()
+                        sessions = registry.get_sessions_for_device(self.name)
+                        for session in sessions:
+                            if session.active:
+                                session.update_activity()
+                                logger.debug(f"[{self.name}] Updated streaming session activity to prevent false stall detection")
+                    except Exception as e:
+                        # Don't break playback if session update fails
+                        logger.debug(f"[{self.name}] Could not update session activity: {e}")
+                    
+                    # Seek-based looping logic
+                    # Try to seek at 95% to avoid gap, fall back to restart if needed
+                    if progress >= 95 and not seeking_triggered and transport_state == "PLAYING":
+                        logger.info(f"[{self.name}] Approaching end (progress {progress}%), attempting seek to beginning")
+                        
+                        if self.seek("00:00:00"):
+                            logger.info(f"[{self.name}] Successfully seeked to beginning for seamless loop")
+                            seeking_triggered = True
+                            monitoring_start_time = time.time()  # Reset time tracking
+                            last_progress_update_time = time.time()
+                            self._zero_position_count = 0
+                            # Don't reset duration - we still know it
                             
-                            # Seek-based looping logic
-                            # Try to seek at 95% to avoid gap, fall back to restart if needed
-                            if progress >= 95 and not seeking_triggered and transport_state == "PLAYING":
-                                logger.info(f"[{self.name}] Approaching end (progress {progress}%), attempting seek to beginning")
-                                
-                                if self.seek("00:00:00"):
-                                    logger.info(f"[{self.name}] Successfully seeked to beginning for seamless loop")
-                                    seeking_triggered = True
-                                    monitoring_start_time = time.time()  # Reset time tracking
-                                    last_progress_update_time = time.time()
-                                    self._zero_position_count = 0
-                                    # Don't reset duration - we still know it
-                                    
-                                    # Wait a moment then reset the seeking flag for next loop
-                                    time.sleep(0.5)
-                                    seeking_triggered = False
-                                    continue
-                                else:
-                                    logger.warning(f"[{self.name}] Seek failed, will use restart fallback")
-                            
-                            # Restart logic (fallback when seek fails or video ends)
-                            # Consider restarting if:
-                            # 1. Very close to end (progress >= 98%)
-                            # 2. State is STOPPED/NO_MEDIA with position at 0
-                            # 3. Position stuck at 0 while claiming to play for >3 checks
-                            # 4. Time-based: elapsed time exceeds duration (for UNKNOWN position)
-                            should_restart = False
-                            restart_reason = ""
-                            
-                            if progress >= 98:
-                                should_restart = True
-                                restart_reason = f"near end (progress {progress}%)"
-                            elif transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0:
-                                should_restart = True
-                                restart_reason = "stopped state"
-                            elif position_seconds == 0 and self._zero_position_count > 3:
-                                should_restart = True
-                                restart_reason = "stuck at position 00:00:00"
-                            elif use_time_based_tracking and elapsed_time >= self.current_video_duration:
-                                should_restart = True
-                                restart_reason = f"time-based: elapsed {elapsed_time:.1f}s >= duration {self.current_video_duration}s"
-                            
-                            if should_restart:
-                                logger.info(f"[{self.name}] Restarting video: {restart_reason}")
-                                
-                                if self._try_restart_video(video_url):
-                                     monitoring_start_time = time.time() # Reset monitoring time
-                                     last_progress_update_time = time.time() # Reset update time
-                                     self.current_video_duration = None # Re-fetch duration
-                                     self._zero_position_count = 0  # Reset zero position counter
-                                     seeking_triggered = False  # Reset seeking flag for next loop
-                                     # Re-fetch duration immediately
-                                     retry_count = 0
-                                     while retry_count < max_duration_retries:
-                                         with self._thread_lock:
-                                             if not self._loop_enabled: break
-                                         try:
-                                             pos_info_restart = self._get_position_info()
-                                             dur_str_restart = pos_info_restart.get("TrackDuration")
-                                             if dur_str_restart and dur_str_restart not in ("UNKNOWN", "NOT_IMPLEMENTED", "0:00:00"):
-                                                 self.current_video_duration = self._parse_time(dur_str_restart)
-                                                 self.duration_formatted = self._format_time(self.current_video_duration)
-                                                 logger.info(f"[{self.name}] Re-fetched duration after restart (v2): {self.current_video_duration}s")
-                                                 break
-                                         except Exception: pass
-                                         retry_count += 1
-                                         if retry_count < max_duration_retries: time.sleep(1)
-                                     if not self.current_video_duration: self.current_video_duration = 60
-                                     self.duration_formatted = self._format_time(self.current_video_duration)
+                            # Wait a moment then reset the seeking flag for next loop
+                            time.sleep(0.5)
+                            seeking_triggered = False
+                            continue
+                        else:
+                            logger.warning(f"[{self.name}] Seek failed, will use restart fallback")
+                    
+                    # Restart logic (fallback when seek fails or video ends)
+                    # Consider restarting if:
+                    # 1. Very close to end (progress >= 98%)
+                    # 2. State is STOPPED/NO_MEDIA with position at 0
+                    # 3. Position stuck at 0 while claiming to play for >3 checks
+                    # 4. Time-based: elapsed time exceeds duration (for UNKNOWN position)
+                    should_restart = False
+                    restart_reason = ""
+                    
+                    if progress >= 98:
+                        should_restart = True
+                        restart_reason = f"near end (progress {progress}%)"
+                    elif transport_state in ["STOPPED", "NO_MEDIA_PRESENT"] and position_seconds == 0:
+                        should_restart = True
+                        restart_reason = "stopped state"
+                    elif position_seconds == 0 and self._zero_position_count > 3:
+                        should_restart = True
+                        restart_reason = "stuck at position 00:00:00"
+                    elif use_time_based_tracking and elapsed_time >= self.current_video_duration:
+                        should_restart = True
+                        restart_reason = f"time-based: elapsed {elapsed_time:.1f}s >= duration {self.current_video_duration}s"
+                    
+                    if should_restart:
+                        logger.info(f"[{self.name}] Restarting video: {restart_reason}")
+                        
+                        if self._try_restart_video(video_url):
+                            monitoring_start_time = time.time() # Reset monitoring time
+                            last_progress_update_time = time.time() # Reset update time
+                            self.current_video_duration = None # Re-fetch duration
+                            self._zero_position_count = 0  # Reset zero position counter
+                            seeking_triggered = False  # Reset seeking flag for next loop
+                            # Re-fetch duration immediately
+                            retry_count = 0
+                            while retry_count < max_duration_retries:
+                                with self._thread_lock:
+                                    if not self._loop_enabled: break
+                                try:
+                                    pos_info_restart = self._get_position_info()
+                                    dur_str_restart = pos_info_restart.get("TrackDuration")
+                                    if dur_str_restart and dur_str_restart not in ("UNKNOWN", "NOT_IMPLEMENTED", "0:00:00"):
+                                        self.current_video_duration = self._parse_time(dur_str_restart)
+                                        self.duration_formatted = self._format_time(self.current_video_duration)
+                                        logger.info(f"[{self.name}] Re-fetched duration after restart (v2): {self.current_video_duration}s")
+                                        break
+                                except Exception: pass
+                                retry_count += 1
+                                if retry_count < max_duration_retries: time.sleep(1)
+                            if not self.current_video_duration: self.current_video_duration = 60
+                            self.duration_formatted = self._format_time(self.current_video_duration)
 
-                                     if hasattr(self, 'device_manager') and self.device_manager: # Reset progress display
-                                        self.device_manager.update_device_playback_progress(self.name, "00:00:00", self.duration_formatted, 0)
-                                     continue # Restart loop immediately
-                                else:
-                                    logger.error(f"[{self.name}] Failed to restart video (v2). Will retry.")
-                                    time.sleep(5) # Wait before next cycle if restart fails
-                                    continue
+                            if hasattr(self, 'device_manager') and self.device_manager: # Reset progress display
+                                self.device_manager.update_device_playback_progress(self.name, "00:00:00", self.duration_formatted, 0)
+                            continue # Restart loop immediately
+                        else:
+                            logger.error(f"[{self.name}] Failed to restart video (v2). Will retry.")
+                            time.sleep(5) # Wait before next cycle if restart fails
+                            continue
                     
                     elif transport_state not in ["PLAYING", "TRANSITIONING", "UNKNOWN"]:
                         logger.warning(f"[{self.name}] Device not playing (state: {transport_state}) (v2). Attempting restart.")
@@ -1051,9 +1123,12 @@ class DLNADevice(Device):
             except Exception as e:
                 logger.error(f"[{self.name}] Error in loop monitoring (v2): {e}")
                 logger.error(traceback.format_exc())
+                progress_logger.error(f"[PROGRESS_DEBUG] [{self.name}] ERROR in monitoring loop iteration {loop_iteration}: {e}")
+                progress_logger.error(f"[PROGRESS_DEBUG] [{self.name}] Traceback: {traceback.format_exc()}")
                 time.sleep(5) # Sleep on error
         
         logger.info(f"[{self.name}] Playback monitoring (v2) for {video_url} finished.")
+        progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] === MONITOR THREAD EXITED === After {loop_iteration} iterations")
 
     def _parse_time(self, time_str: str) -> int:
         """

@@ -7,6 +7,11 @@ import inspect
 from pathlib import Path
 
 # Project root should be on PYTHONPATH via run_tests.sh
+# Add web/backend to path for backend relative imports
+project_root = Path(__file__).parent.parent
+backend_root = project_root / "web" / "backend"
+if str(backend_root) not in sys.path:
+    sys.path.insert(0, str(backend_root))
 
 
 class TestImportErrors(unittest.TestCase):

@@ -13,36 +13,41 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 if project_root not in sys.path:
     sys.path.insert(0, project_root)
 
+# Set environment variable to indicate we're in test mode
+os.environ["PYTEST_CURRENT_TEST"] = "true"
+
 # Now imports like `from web.backend...` should work.
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm import sessionmaker, clear_mappers
 import tempfile
 
-# Add the current directory to the path
-# sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__)))) # This might be redundant if tests are run from project root
+# Import database components
+from web.backend.database.database import Base, get_db, metadata_obj
 
-# import sys # No longer needed directly here if root conftest handles path
-# import os # No longer needed directly here if root conftest handles path
+# Import all models at module level to ensure they're registered with metadata
+# This must happen before any Base.metadata operations
+from web.backend.models.device import DeviceModel
+from web.backend.models.video import VideoModel
+from web.backend.models.overlay import OverlayConfig
+from web.backend.models.projection import ProjectionConfig
 
-# Assuming project root is on sys.path via root conftest.py
-from web.backend.database.database import Base, get_db
+# Clear and re-register models to avoid conflicts
+try:
+    print(f"INFO: web/backend/tests_backend/conftest.py: Clearing metadata and mappers")
+    Base.metadata.clear()
+    clear_mappers()
+    
+    # Re-import models after clearing to ensure clean registration
+    from web.backend.database.database import init_db
+    init_db()
+    
+    print(f"INFO: web/backend/tests_backend/conftest.py: Models re-registered successfully")
+except Exception as e:
+    print(f"WARNING: Error during metadata clearing in web/backend/tests_backend/conftest.py: {e}")
 
-# Attempt to clear metadata here as well, in case xdist workers re-initialize things
-# or if collection order causes issues.
-# try:
-#     print(f"Attempting to clear Base.metadata in web/backend/tests_backend/conftest.py (ID: {id(Base.metadata)})")
-#     Base.metadata.clear()
-#     print(f"Base.metadata cleared in web/backend/tests_backend/conftest.py (ID: {id(Base.metadata)})")
-# except Exception as e:
-#     print(f"Error clearing metadata in web/backend/tests_backend/conftest.py: {e}")
-
-from web.backend.main import app # main.py imports models, routers etc.
-# Models are imported via web.backend.database.database at module level,
-# but we might need to ensure they are re-processed for this specific Base instance
-# if pytest-xdist causes separate module states.
-from web.backend.models.device import DeviceModel # Import models at module level
-from web.backend.models.video import VideoModel   # Import models at module level
+# Import app and core components
+from web.backend.main import app
 from web.backend.core.device_manager import DeviceManager
 from web.backend.core.streaming_registry import StreamingSessionRegistry
 from web.backend.core.twisted_streaming import get_instance as get_twisted_streaming

@@ -10,23 +10,8 @@ from unittest.mock import MagicMock, patch
 
 # sys.path modifications are handled by tests/conftest.py
 
-# Mock Device class that DLNADevice inherits from
-class MockDevice:
-    def __init__(self, device_info):
-        self.name = device_info.get("name", "Unknown")
-        self.id = device_info.get("id", "unknown-id")
-        self.status = "disconnected"
-        self.video = None
-        self.playing = False
-    
-    def update_status(self, status):
-        self.status = status
-    
-    def update_video(self, video):
-        self.video = video
-    
-    def update_playing(self, playing):
-        self.playing = playing
+# Import mocks from central location
+from tests.mocks.device_mocks import MockDevice
 
 # Patch the Device import in dlna_device
 with patch('web.backend.core.device.Device', MockDevice):
