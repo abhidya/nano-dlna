@@ -13,18 +13,25 @@
         "type": "dlna",
         "hostname": "10.0.0.122",
         "action_url": "http://10.0.0.122:49595/upnp/control/rendertransport1",
-        "video_file": "/Users/mannybhidya/PycharmProjects/nano-dlna/kitchendoorv2.mp4",
+        "video_file": "/Users/mannybhidya/Movies/kitchendoorjune/junekitchendoor_tiny.mp4",
         "friendly_name": "SideProjector_dlna",
-        "mime_type": "video/mp4"
+        "mime_type": "video/mp4",
+        "loop": true,
+        "priority": 100,
+        "enable_overlay_sync": true,
+        "sync_video_name": "poop"
     },
     {
         "device_name": "Hccast-3ADE76_dlna",
         "type": "dlna",
         "hostname": "10.0.0.154",
         "action_url": "http://10.0.0.154:49595/upnp/control/rendertransport1",
-        "video_file": "/Users/mannybhidya/Desktop/junedoor.mp4",
+        "video_file": "/Users/mannybhidya/PycharmProjects/nano-dlna/web/backend/static/black_video.mp4",
         "friendly_name": "Hccast-3ADE76_dlna",
-        "mime_type": "video/mp4"
+        "mime_type": "video/mp4",
+        "airplay_mode": true,
+        "airplay_url": "http://localhost:8000/static/overlay_window.html?controls=hidden",
+        "priority": 100
     },
     {
         "device_name": "AS-Projector[DMR]",

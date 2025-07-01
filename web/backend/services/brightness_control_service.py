@@ -107,40 +107,45 @@ class BrightnessControlService:
         
         for device in devices:
             try:
-                # Only affect devices that are currently playing
-                if device.is_playing and device.current_video:
-                    # Backup current state
-                    # Get the actual file path (not the streaming URL)
+                # Affect all connected DLNA devices (playing or idle)
+                if device.status == "connected":
+                    # Backup current state (even for idle devices)
+                    # Get the actual file path (not the streaming URL) if device was playing
                     actual_video_path = None
+                    was_playing = device.is_playing
                     
-                    # First try to get the original file path from current_video_path
-                    if hasattr(device, 'current_video_path') and device.current_video_path:
-                        actual_video_path = device.current_video_path
-                        logger.info(f"Using current_video_path for backup: {actual_video_path}")
-                    else:
-                        # Fallback to assigned_videos
-                        with self.device_manager.assigned_videos_lock:
-                            assigned_path = self.device_manager.assigned_videos.get(device.name)
-                            if assigned_path and os.path.exists(assigned_path):
-                                actual_video_path = assigned_path
-                                logger.info(f"Using assigned_videos for backup: {actual_video_path}")
-                            else:
-                                # Last resort - use current_video (which is the URL)
-                                actual_video_path = device.current_video
-                                logger.warning(f"Using current_video URL for backup: {actual_video_path}")
+                    if was_playing and device.current_video:
+                        # Device was playing - backup the video info
+                        # First try to get the original file path from current_video_path
+                        if hasattr(device, 'current_video_path') and device.current_video_path:
+                            actual_video_path = device.current_video_path
+                            logger.info(f"Using current_video_path for backup: {actual_video_path}")
+                        else:
+                            # Fallback to assigned_videos
+                            with self.device_manager.assigned_videos_lock:
+                                assigned_path = self.device_manager.assigned_videos.get(device.name)
+                                if assigned_path and os.path.exists(assigned_path):
+                                    actual_video_path = assigned_path
+                                    logger.info(f"Using assigned_videos for backup: {actual_video_path}")
+                                else:
+                                    # Last resort - use current_video (which is the URL)
+                                    actual_video_path = device.current_video
+                                    logger.warning(f"Using current_video URL for backup: {actual_video_path}")
                     
                     self.device_state_backup[device.name] = {
+                        "was_playing": was_playing,
                         "video_path": actual_video_path,
                         "video_url": getattr(device, 'streaming_url', None),
                         "is_looping": getattr(device, '_loop_enabled', False),
                         "timestamp": datetime.utcnow()
                     }
                     
-                    logger.info(f"Backing up state for {device.name}: {self.device_state_backup[device.name]}")
+                    logger.info(f"Backing up state for {device.name} (was_playing={was_playing}): {self.device_state_backup[device.name]}")
                     
-                    # Stop current playback
-                    device.stop()
-                    time.sleep(0.5)  # Brief pause
+                    # Stop current playback (if any)
+                    if was_playing:
+                        device.stop()
+                        time.sleep(0.5)  # Brief pause
                     
                     # Display black video
                     # We'll use the auto_play_video method to play the black video
@@ -152,8 +157,9 @@ class BrightnessControlService:
                     )
                     
                     if success:
-                        affected_devices.append(device.name)
-                        logger.info(f"Successfully activated blackout on {device.name}")
+                        device_info = f"{device.name} ({'was playing' if was_playing else 'was idle'})"
+                        affected_devices.append(device_info)
+                        logger.info(f"Successfully activated blackout on {device.name} (was_playing={was_playing})")
                     else:
                         errors.append(f"Failed to display black video on {device.name}")
                         logger.error(f"Failed to activate blackout on {device.name}")
@@ -196,7 +202,18 @@ class BrightnessControlService:
                     device.stop()
                     time.sleep(0.5)  # Brief pause
                     
-                    # Restore original video
+                    # Check if device was playing before blackout
+                    was_playing = backup.get("was_playing", False)
+                    
+                    if not was_playing:
+                        # Device was idle before blackout - just leave it stopped
+                        restored_devices.append(f"{device.name} (returned to idle)")
+                        logger.info(f"Device {device.name} was idle before blackout, leaving in stopped state")
+                        # Remove from backup after successful restore
+                        del self.device_state_backup[device.name]
+                        continue
+                    
+                    # Device was playing - restore original video
                     video_path = backup["video_path"]
                     
                     # Check if it's a URL or local file path
@@ -245,7 +262,7 @@ class BrightnessControlService:
                         )
                         
                         if success:
-                            restored_devices.append(device.name)
+                            restored_devices.append(f"{device.name} (restored video)")
                             logger.info(f"Successfully restored video on {device.name}")
                             # Remove from backup after successful restore
                             del self.device_state_backup[device.name]

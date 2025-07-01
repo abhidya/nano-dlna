@@ -89,17 +89,20 @@ class TestDLNADevice:
     def test_loop_monitoring_v2_reaches_end_and_restarts(self, mock_dlna_device):
         """Test v2 loop monitoring restarts video when it reaches the end."""
         test_video_url = "http://example.com/short_video.mp4"
-        mock_dlna_device.current_video_duration = 5 # 5 seconds duration
+        mock_dlna_device.current_video_duration = 20 # 20 seconds duration
         
         # Simulate video playing and then reaching near end
         mock_dlna_device._get_transport_info = MagicMock(return_value={"CurrentTransportState": "PLAYING"})
         # First call to get_position_info, video is playing
-        # Second call, video is near end (e.g., 99% progress)
-        mock_dlna_device._get_position_info = MagicMock(side_effect=[
-            {"RelTime": "00:00:01", "TrackDuration": "00:00:05"}, # Playing
-            {"RelTime": "00:00:04.9", "TrackDuration": "00:00:05"}, # Near end
-            {"RelTime": "00:00:01", "TrackDuration": "00:00:05"}, # After restart
+        # Second call, video is near end (e.g., 95% progress)
+        # Use cycle to repeat values for multiple monitoring iterations
+        from itertools import cycle
+        position_values = cycle([
+            {"RelTime": "00:00:10", "TrackDuration": "00:00:20"}, # Playing at 50%
+            {"RelTime": "00:00:19", "TrackDuration": "00:00:20"}, # At 95% (19/20 = 95%)
+            {"RelTime": "00:00:01", "TrackDuration": "00:00:20"}, # After restart
         ])
+        mock_dlna_device._get_position_info = MagicMock(side_effect=position_values)
         mock_dlna_device._try_restart_video = MagicMock(return_value=True)
         mock_dlna_device.device_manager = MagicMock()
 

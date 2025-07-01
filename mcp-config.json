@@ -1,0 +1,135 @@
+{
+  "name": "nano-dlna-logs",
+  "description": "MCP server for nano-dlna log streaming and aggregation",
+  "version": "1.0.0",
+  "server": {
+    "command": "python",
+    "args": [
+      "/Users/mannybhidya/PycharmProjects/nano-dlna/run_mcp_server.py"
+    ],
+    "env": {
+      "PYTHONPATH": "/Users/mannybhidya/PycharmProjects/nano-dlna"
+    }
+  },
+  "capabilities": {
+    "tools": [
+      {
+        "name": "get_backend_logs",
+        "description": "Get backend Python logs from dashboard_run.log or errors.log",
+        "parameters": {
+          "lines": {
+            "type": "integer", 
+            "description": "Number of lines to retrieve",
+            "default": 100
+          },
+          "log_type": {
+            "type": "string",
+            "description": "Type of log file",
+            "enum": ["dashboard", "errors", "root_dashboard", "root_errors"],
+            "default": "dashboard"
+          }
+        }
+      },
+      {
+        "name": "get_frontend_logs", 
+        "description": "Get frontend React console logs",
+        "parameters": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of log entries to return",
+            "default": 50
+          }
+        }
+      },
+      {
+        "name": "get_database_logs",
+        "description": "Get database operation logs", 
+        "parameters": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of log entries to return",
+            "default": 50
+          }
+        }
+      },
+      {
+        "name": "get_aggregated_logs",
+        "description": "Get aggregated logs from all sources with filtering",
+        "parameters": {
+          "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of sources to include",
+            "optional": true
+          },
+          "levels": {
+            "type": "array", 
+            "items": {"type": "string"},
+            "description": "List of log levels to include",
+            "optional": true
+          },
+          "minutes_back": {
+            "type": "integer",
+            "description": "How many minutes back to search",
+            "default": 60
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of log entries to return", 
+            "default": 200
+          }
+        }
+      },
+      {
+        "name": "search_logs",
+        "description": "Search through all logs for specific text patterns",
+        "parameters": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for in log messages",
+            "required": true
+          },
+          "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of sources to search in",
+            "optional": true
+          },
+          "case_sensitive": {
+            "type": "boolean",
+            "description": "Whether search should be case sensitive",
+            "default": false
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum number of results to return",
+            "default": 100
+          }
+        }
+      },
+      {
+        "name": "tail_logs_realtime",
+        "description": "Tail logs in real-time for a specified duration",
+        "parameters": {
+          "sources": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "List of sources to monitor",
+            "optional": true
+          },
+          "levels": {
+            "type": "array",
+            "items": {"type": "string"}, 
+            "description": "List of log levels to show",
+            "optional": true
+          },
+          "duration_seconds": {
+            "type": "integer",
+            "description": "How long to monitor",
+            "default": 30
+          }
+        }
+      }
+    ]
+  }
+}

@@ -944,7 +944,8 @@ class DLNADevice(Device):
                         # Device doesn't report position - use time-based tracking
                         progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Device doesn't report position (RelTime={rel_time_str})")
                         
-                        if transport_state == "PLAYING" and self.current_video_duration:
+                        # Allow time-based tracking for devices that report UNKNOWN state
+                        if (transport_state in ["PLAYING", "UNKNOWN"]) and self.current_video_duration:
                             use_time_based_tracking = True
                             elapsed_time = current_time - monitoring_start_time
                             
@@ -952,16 +953,15 @@ class DLNADevice(Device):
                             position_seconds = int(elapsed_time) % int(self.current_video_duration)
                             self.current_position = self._format_time(position_seconds)
                             
-                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Using TIME-BASED tracking: elapsed={elapsed_time:.1f}s, position={self.current_position}")
-                            logger.info(f"[{self.name}] Time-based tracking: elapsed={elapsed_time:.1f}s, position={self.current_position}")
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Using TIME-BASED tracking (state={transport_state}): elapsed={elapsed_time:.1f}s, position={self.current_position}")
+                            logger.info(f"[{self.name}] Time-based tracking (state={transport_state}): elapsed={elapsed_time:.1f}s, position={self.current_position}")
                     
                     # Calculate progress
                     if self.current_video_duration and self.current_video_duration > 0:
                         if use_time_based_tracking:
-                            # For time-based tracking, use elapsed time for progress
-                            elapsed_time = current_time - monitoring_start_time
-                            progress = min(100, int((elapsed_time / self.current_video_duration) * 100))
-                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] TIME-BASED progress: {progress}% (elapsed={elapsed_time:.1f}s / duration={self.current_video_duration}s)")
+                            # For time-based tracking, use position_seconds (which wraps at duration) for progress
+                            progress = min(100, int((position_seconds / self.current_video_duration) * 100))
+                            progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] TIME-BASED progress: {progress}% (pos={position_seconds}s / duration={self.current_video_duration}s)")
                         else:
                             # For position-based tracking
                             progress = min(100, int((position_seconds / self.current_video_duration) * 100))
@@ -991,8 +991,8 @@ class DLNADevice(Device):
                         logger.debug(f"[{self.name}] Could not update session activity: {e}")
                     
                     # Seek-based looping logic
-                    # Try to seek at 95% to avoid gap, fall back to restart if needed
-                    if progress >= 95 and not seeking_triggered and transport_state == "PLAYING":
+                    # Try to seek at 90% to avoid gap, fall back to restart if needed
+                    if progress >= 90 and not seeking_triggered and transport_state in ["PLAYING", "UNKNOWN"]:
                         logger.info(f"[{self.name}] Approaching end (progress {progress}%), attempting seek to beginning")
                         
                         if self.seek("00:00:00"):

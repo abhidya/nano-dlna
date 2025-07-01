@@ -765,6 +765,13 @@ class DeviceManager:
             return
             
         logger.info(f"Found configuration for {device_name}")
+        
+        # Check if this device is configured for airplay mode
+        if config.get("airplay_mode"):
+            logger.info(f"Device {device_name} is configured for airplay mode")
+            self._process_airplay_casting(device_name, config)
+            return
+            
         video_path = config.get("video_file")
         if not video_path or not os.path.exists(video_path):
             logger.error(f"Video file {video_path} not found or not specified in config")
@@ -862,9 +869,13 @@ class DeviceManager:
         with self.video_assignment_lock:
             self.video_assignment_retries[device_name] = 0
             
+        # Get device config to check for loop setting
+        config = self.config_service.get_device_config(device_name) if self.config_service else {}
+        loop_enabled = config.get("loop", True) if config else True
+        
         # Play the video
-        logger.info(f"Auto-playing {video_path} on {device_name}")
-        result = self.auto_play_video(device, video_path, loop=True)
+        logger.info(f"Auto-playing {video_path} on {device_name} with loop={loop_enabled}")
+        result = self.auto_play_video(device, video_path, loop=loop_enabled, config=config)
         
         # Start health check if successful
         if result:
@@ -1023,7 +1034,7 @@ class DeviceManager:
                 self.playback_health_threads[device_name]["active"] = False
                 logger.info(f"Stopped playback health check for {device_name}")
     
-    def auto_play_video(self, device: Device, video_path: str, loop: bool = True) -> bool:
+    def auto_play_video(self, device: Device, video_path: str, loop: bool = True, config: Optional[Dict[str, Any]] = None) -> bool:
         """
         Play a video on a device with improved error handling
         
@@ -1031,6 +1042,7 @@ class DeviceManager:
             device: Device to play the video on
             video_path: Path to the video to play
             loop: Whether to loop the video
+            config: Optional device configuration
             
         Returns:
             bool: True if successful, False otherwise
@@ -1142,6 +1154,11 @@ class DeviceManager:
             
             # Start health monitoring
             self._start_playback_health_check(device.name, video_path)
+            
+            # Trigger overlay sync if configured
+            if config and config.get("enable_overlay_sync"):
+                sync_video_name = config.get("sync_video_name", os.path.basename(video_path))
+                self._trigger_overlay_sync(sync_video_name)
             
             return True
             
@@ -1687,6 +1704,105 @@ class DeviceManager:
         except Exception as e:
             logger.error(f"Error starting streaming server: {e}")
             raise
+    
+    def _trigger_overlay_sync(self, video_name: str):
+        """
+        Trigger overlay sync for the given video name
+        
+        Args:
+            video_name: Name of the video to sync
+        """
+        try:
+            import requests
+            response = requests.post(
+                "http://localhost:8000/api/overlay/sync",
+                params={
+                    "triggered_by": "dlna_auto_play",
+                    "video_name": video_name
+                },
+                timeout=2  # Short timeout to not block
+            )
+            if response.status_code == 200:
+                logger.info(f"Triggered overlay sync for video: {video_name}")
+            else:
+                logger.warning(f"Failed to trigger overlay sync: {response.status_code}")
+        except Exception as e:
+            logger.error(f"Failed to sync overlays: {e}")
+            # Don't fail the operation if sync fails
+    
+    def _process_airplay_casting(self, device_name: str, config: Dict[str, Any]):
+        """
+        Process airplay casting for a device configured in airplay mode
+        Since the device is DLNA, we'll stream the overlay page directly
+        
+        Args:
+            device_name: Name of the device
+            config: Device configuration
+        """
+        try:
+            airplay_url = config.get("airplay_url")
+            if not airplay_url:
+                logger.error(f"Device {device_name} configured for airplay but no airplay_url provided")
+                return
+            
+            # Get the device
+            device = self.get_device(device_name)
+            if not device:
+                logger.error(f"Device {device_name} not found")
+                return
+            
+            # For DLNA devices, we'll play the URL directly
+            # The overlay page at the URL will be displayed
+            logger.info(f"Starting overlay display on {device_name} via DLNA: {airplay_url}")
+            
+            # Use auto_play_video with the URL
+            # Note: This assumes the DLNA device can render web content
+            # If it can't, we may need to use a video stream instead
+            success = self.auto_play_video(device, airplay_url, loop=True)
+            
+            if success:
+                logger.info(f"Successfully started overlay display on {device_name}")
+                self.update_device_status(
+                    device_name=device_name,
+                    status="playing",
+                    current_uri=airplay_url,
+                    playback_mode="airplay"
+                )
+            else:
+                # If direct URL doesn't work, try using a black video as fallback
+                logger.warning(f"Direct URL playback failed, trying fallback video")
+                fallback_video = config.get("video_file")
+                if fallback_video and os.path.exists(fallback_video):
+                    success = self.auto_play_video(device, fallback_video, loop=True)
+                    if success:
+                        logger.info(f"Started fallback video on {device_name}")
+                        self.update_device_status(
+                            device_name=device_name,
+                            status="playing",
+                            current_uri=fallback_video,
+                            playback_mode="video"
+                        )
+                    else:
+                        logger.error(f"Failed to play fallback video on {device_name}")
+                        self.update_device_status(
+                            device_name=device_name,
+                            status="error",
+                            error="Failed to start playback"
+                        )
+                else:
+                    logger.error(f"No fallback video available for {device_name}")
+                    self.update_device_status(
+                        device_name=device_name,
+                        status="error",
+                        error="Failed to display overlay"
+                    )
+        except Exception as e:
+            logger.error(f"Error processing airplay casting for {device_name}: {e}")
+            self.update_device_status(
+                device_name=device_name,
+                status="error",
+                error=str(e)
+            )
 
     def get_serve_ip(self):
         """

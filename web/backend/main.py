@@ -12,7 +12,7 @@ from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
 from database.database import init_db, get_db
-from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router
+from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router, log_router
 from core.device_manager import get_device_manager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
@@ -105,6 +105,7 @@ app.include_router(streaming_router, prefix="/api")
 app.include_router(renderer_router, prefix="/api")  # Add the renderer router
 app.include_router(overlay_router)  # Overlay router already has /api prefix
 app.include_router(projection_router)  # Projection router already has /api prefix
+app.include_router(log_router.router)  # Log streaming router
 
 # Try to include depth_router if dependencies are available
 try:
@@ -143,6 +144,16 @@ async def startup_event():
     global device_manager, streaming_service, streaming_registry, renderer_service
     
     logger.info("Starting nano-dlna Dashboard API")
+    
+    # Initialize log aggregation service
+    try:
+        from log_aggregation_service import get_log_aggregation_service, setup_log_collectors
+        log_service = get_log_aggregation_service()
+        setup_log_collectors()
+        await log_service.start()
+        logger.info("Log aggregation service started")
+    except Exception as e:
+        logger.error(f"Failed to start log aggregation service: {e}")
     
     # Initialize services here to prevent multiple executions during imports  
     device_manager = get_device_manager()  # Use singleton
@@ -220,6 +231,52 @@ async def startup_event():
         if not loaded:
             logger.warning("No configuration files found or loaded. Using sample data.")
         
+        # Initialize all devices from database into device_manager memory
+        # This ensures devices are immediately available even before discovery
+        logger.info("Initializing devices from database into device_manager")
+        try:
+            db_devices = device_service.get_devices()
+            logger.info(f"Found {len(db_devices)} devices in database")
+            
+            for device_dict in db_devices:
+                device_name = device_dict.get("name")
+                if not device_name:
+                    continue
+                    
+                # Create device_info for registration
+                device_info = {
+                    "device_name": device_name,
+                    "type": device_dict.get("type", "dlna"),
+                    "hostname": device_dict.get("hostname", ""),
+                    "action_url": device_dict.get("action_url", ""),
+                    "friendly_name": device_dict.get("friendly_name", device_name),
+                    "manufacturer": device_dict.get("manufacturer", ""),
+                    "location": device_dict.get("location", ""),
+                }
+                
+                # Add any additional config from the database
+                if device_dict.get("config"):
+                    device_info.update(device_dict["config"])
+                
+                # Register the device with device_manager
+                registered_device = device_manager.register_device(device_info)
+                if registered_device:
+                    logger.info(f"Initialized device {device_name} from database")
+                    
+                    # Initialize device status as disconnected until discovery confirms
+                    device_manager.update_device_status(
+                        device_name=device_name,
+                        status="disconnected",  # Will be updated by discovery if online
+                        is_playing=device_dict.get("is_playing", False),
+                        current_video=device_dict.get("current_video")
+                    )
+                else:
+                    logger.warning(f"Failed to initialize device {device_name} from database")
+                    
+        except Exception as e:
+            logger.error(f"Error initializing devices from database: {e}")
+            logger.error(f"Exception details: {traceback.format_exc()}")
+        
         # Start device discovery to find devices on the network
         # This will automatically play videos on devices when they are discovered
         # based on the configuration files loaded above
@@ -229,18 +286,9 @@ async def startup_event():
         # Log the number of devices in the device manager
         logger.info(f"Device manager has {len(device_manager.devices)} devices")
         
-        # Log all devices in the device manager and ensure their status is initialized
+        # Log all devices in the device manager
         for device_name, device in device_manager.devices.items():
             logger.info(f"Device in manager: {device_name}, type: {device.type}, hostname: {device.hostname}, action_url: {device.action_url}")
-            # Ensure device_status is initialized for all devices
-            with device_manager.status_lock:
-                if device_name not in device_manager.device_status:
-                    device_manager.device_status[device_name] = {
-                        "status": "disconnected",  # Start as disconnected until discovery confirms
-                        "last_updated": time.time(),
-                        "is_playing": False
-                    }
-                    logger.info(f"Initialized device_status for {device_name} on startup")
 
         # Start the renderer service's streaming server
         if renderer_service:
@@ -257,6 +305,15 @@ async def startup_event():
 @app.on_event("shutdown")
 async def shutdown_event():
     logger.info("Shutting down nano-dlna Dashboard API")
+    
+    # Stop log aggregation service
+    try:
+        from log_aggregation_service import get_log_aggregation_service
+        log_service = get_log_aggregation_service()
+        await log_service.stop()
+        logger.info("Log aggregation service stopped")
+    except Exception as e:
+        logger.error(f"Failed to stop log aggregation service: {e}")
     
     # Stop streaming session monitoring
     if streaming_registry:
