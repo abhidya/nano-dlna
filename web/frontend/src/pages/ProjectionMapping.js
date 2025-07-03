@@ -17,7 +17,16 @@ function ProjectionMapping() {
     const [isProcessingAutoLayers, setIsProcessingAutoLayers] = useState(false);
     const [processingProgress, setProcessingProgress] = useState(0);
     const [processingStep, setProcessingStep] = useState('');
-    const [baseTransform, setBaseTransform] = useState({ x: 0, y: 0, scale: 1, rotation: 0 });
+    const [baseTransform, setBaseTransform] = useState({ 
+        mode: 'basic', // 'basic' or 'corners'
+        x: 0, y: 0, scale: 1, rotation: 0,
+        corners: {
+            topLeft: { x: 0, y: 0 },
+            topRight: { x: 1000, y: 0 },
+            bottomLeft: { x: 0, y: 600 },
+            bottomRight: { x: 1000, y: 600 }
+        }
+    });
     const [edgeProcessing, setEdgeProcessing] = useState(false);
     const [brushMode, setBrushMode] = useState('solid'); // 'solid' or 'spray'
     const [brushShape, setBrushShape] = useState('circle'); // 'circle' or 'square'
@@ -89,6 +98,81 @@ function ProjectionMapping() {
                 return 'crosshair';
         }
     }, [currentTool]);
+    
+    // Helper function to calculate perspective transform matrix
+    const calculatePerspectiveTransform = useCallback((src, dst) => {
+        // This is a simplified version - for production use, consider a library like gl-matrix
+        // Calculate the transformation matrix that maps src points to dst points
+        
+        const A = [];
+        const b = [];
+        
+        for (let i = 0; i < 4; i++) {
+            const [sx, sy] = src[i];
+            const [dx, dy] = dst[i];
+            
+            A.push([sx, sy, 1, 0, 0, 0, -dx * sx, -dx * sy]);
+            A.push([0, 0, 0, sx, sy, 1, -dy * sx, -dy * sy]);
+            
+            b.push(dx);
+            b.push(dy);
+        }
+        
+        // Solve the linear system Ax = b to get the transformation matrix
+        // For simplicity, we'll use a basic matrix solution
+        // In production, use a proper matrix library
+        
+        // For now, return a CSS transform matrix string
+        // This is a simplified approach that works for basic perspective
+        const matrix3d = `matrix3d(
+            ${(dst[1][0] - dst[0][0]) / src[1][0]}, ${(dst[1][1] - dst[0][1]) / src[1][0]}, 0, 0,
+            ${(dst[2][0] - dst[0][0]) / src[2][1]}, ${(dst[2][1] - dst[0][1]) / src[2][1]}, 0, 0,
+            0, 0, 1, 0,
+            ${dst[0][0]}, ${dst[0][1]}, 0, 1
+        )`;
+        
+        return matrix3d;
+    }, []);
+    
+    // Calculate perspective matrix based on corner coordinates
+    const calculatePerspectiveMatrix = useCallback((corners, sourceWidth, sourceHeight) => {
+        // Source points (original rectangle corners)
+        const src = [
+            [0, 0],                    // top-left
+            [sourceWidth, 0],          // top-right
+            [0, sourceHeight],         // bottom-left
+            [sourceWidth, sourceHeight] // bottom-right
+        ];
+        
+        // Destination points (user-defined corners)
+        const dst = [
+            [corners.topLeft.x, corners.topLeft.y],
+            [corners.topRight.x, corners.topRight.y],
+            [corners.bottomLeft.x, corners.bottomLeft.y],
+            [corners.bottomRight.x, corners.bottomRight.y]
+        ];
+        
+        // Calculate perspective transformation matrix
+        // This implements the math for mapping a rectangle to an arbitrary quadrilateral
+        const matrix = calculatePerspectiveTransform(src, dst);
+        
+        return matrix;
+    }, [calculatePerspectiveTransform]);
+    
+    // Apply perspective transform to canvas element
+    const applyPerspectiveTransform = useCallback((canvasElement, corners, sourceWidth, sourceHeight) => {
+        if (!canvasElement || !corners) return;
+        
+        if (baseTransform.mode === 'corners') {
+            const matrix = calculatePerspectiveMatrix(corners, sourceWidth, sourceHeight);
+            canvasElement.style.transform = matrix;
+            canvasElement.style.transformOrigin = '0 0';
+        } else {
+            // Clear perspective transform in basic mode
+            canvasElement.style.transform = '';
+            canvasElement.style.transformOrigin = '';
+        }
+    }, [baseTransform.mode, calculatePerspectiveMatrix]);
     
     // Transform mouse coordinates to layer space accounting for all transformations
     const transformMouseToLayer = useCallback((mouseX, mouseY, layer) => {
@@ -504,7 +588,7 @@ function ProjectionMapping() {
         setStatus(`Created ${newLayer.name}`);
     };
     
-    const saveLayerState = (layerId) => {
+    const saveLayerState = useCallback((layerId) => {
         const layer = layers.find(l => l.id === layerId);
         if (!layer) return;
         
@@ -531,18 +615,125 @@ function ProjectionMapping() {
         } else {
             history.currentIndex++;
         }
-    };
+    }, [layers]);
+    
+    // Helper to count non-transparent pixels
+    const countMaskPixels = useCallback((mask) => {
+        let count = 0;
+        for (let i = 3; i < mask.data.length; i += 4) {
+            if (mask.data[i] > 128) count++;
+        }
+        return count;
+    }, []);
+    
+    const getTransformedBounds = useCallback((layer, transformMode = 'combined') => {
+        let w = layer.mask.width;
+        let h = layer.mask.height;
+        let totalRotation = 0;
+        
+        // Apply base transform if needed
+        if (transformMode === 'base' || transformMode === 'combined') {
+            w *= baseTransform.scale;
+            h *= baseTransform.scale;
+            totalRotation += baseTransform.rotation;
+        }
+        
+        // Apply layer transform if needed
+        if (transformMode === 'layer' || transformMode === 'combined') {
+            w *= layer.transform.scale;
+            h *= layer.transform.scale;
+            totalRotation += layer.transform.rotation;
+        }
+        
+        const angle = totalRotation * Math.PI / 180;
+        
+        // Calculate rotated bounds
+        const cos = Math.abs(Math.cos(angle));
+        const sin = Math.abs(Math.sin(angle));
+        const width = Math.ceil(w * cos + h * sin);
+        const height = Math.ceil(w * sin + h * cos);
+        
+        return { width, height };
+    }, [baseTransform]);
+    
+    // Calculate required canvas bounds for preview to fit all transformed content
+    const calculatePreviewBounds = useCallback((includeCurrentLayer = true, paddingBuffer = 100) => {
+        if (!originalImage) return { width: 800, height: 600, offsetX: 0, offsetY: 0 };
+        
+        const originalWidth = originalImage.width;
+        const originalHeight = originalImage.height;
+        let minX = 0, minY = 0, maxX = originalWidth, maxY = originalHeight;
+        
+        // Get layers to process
+        const layersToProcess = includeCurrentLayer && currentLayerIndex >= 0 
+            ? [layers[currentLayerIndex]] 
+            : layers.filter(layer => layer.visible);
+        
+        // Calculate bounds for each visible layer
+        layersToProcess.forEach(layer => {
+            // Calculate transformed dimensions
+            const bounds = getTransformedBounds(layer, 'combined');
+            
+            // Calculate center position with all transforms
+            let centerX = originalWidth / 2;
+            let centerY = originalHeight / 2;
+            
+            // Apply base transform position
+            centerX += baseTransform.x;
+            centerY += baseTransform.y;
+            
+            // Apply layer transform position  
+            centerX += layer.transform.x;
+            centerY += layer.transform.y;
+            
+            // Calculate actual bounds with position
+            const left = centerX - bounds.width / 2;
+            const right = centerX + bounds.width / 2;
+            const top = centerY - bounds.height / 2;
+            const bottom = centerY + bounds.height / 2;
+            
+            // Update overall bounds
+            minX = Math.min(minX, left);
+            minY = Math.min(minY, top);
+            maxX = Math.max(maxX, right);
+            maxY = Math.max(maxY, bottom);
+        });
+        
+        // Add padding buffer to keep corners visible
+        minX -= paddingBuffer;
+        minY -= paddingBuffer;
+        maxX += paddingBuffer;
+        maxY += paddingBuffer;
+        
+        const width = Math.ceil(maxX - minX);
+        const height = Math.ceil(maxY - minY);
+        const offsetX = -minX;  // Offset to translate content into positive space
+        const offsetY = -minY;
+        
+        return { width, height, offsetX, offsetY };
+    }, [originalImage, currentLayerIndex, layers, baseTransform, getTransformedBounds]);
     
     const updateCurrentCanvas = useCallback(() => {
         if (!currentCanvasRef.current || currentLayerIndex < 0) return;
         
         const ctx = getContext(currentCanvasRef, 'current');
         if (!ctx) return;
-        ctx.clearRect(0, 0, currentCanvasRef.current.width, currentCanvasRef.current.height);
         
-        if (originalCanvasRef.current) {
+        // Calculate required canvas bounds for transformed content
+        const bounds = calculatePreviewBounds(true, 50); // Include current layer with padding
+        
+        // Resize canvas if needed
+        if (currentCanvasRef.current.width !== bounds.width || currentCanvasRef.current.height !== bounds.height) {
+            currentCanvasRef.current.width = bounds.width;
+            currentCanvasRef.current.height = bounds.height;
+        }
+        
+        ctx.clearRect(0, 0, bounds.width, bounds.height);
+        
+        // Draw original image as background with offset
+        if (originalCanvasRef.current && originalImage) {
             ctx.globalAlpha = 0.3;
-            ctx.drawImage(originalCanvasRef.current, 0, 0);
+            ctx.drawImage(originalCanvasRef.current, bounds.offsetX, bounds.offsetY);
         }
         
         const currentLayer = layers[currentLayerIndex];
@@ -574,7 +765,8 @@ function ProjectionMapping() {
             
             // Apply base transform first, then layer transform
             ctx.save();
-            ctx.translate(currentCanvasRef.current.width/2, currentCanvasRef.current.height/2);
+            // Translate to canvas center plus offset
+            ctx.translate(bounds.width/2, bounds.height/2);
             
             // Apply base transform
             ctx.translate(baseTransform.x, baseTransform.y);
@@ -590,18 +782,34 @@ function ProjectionMapping() {
             ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
             ctx.restore();
         }
-    }, [currentLayerIndex, layers, getContext, baseTransform]);
+        
+        // Apply perspective transform to the canvas element if in corner mode
+        if (originalImage) {
+            applyPerspectiveTransform(currentCanvasRef.current, baseTransform.corners, originalImage.width, originalImage.height);
+        }
+    }, [currentLayerIndex, layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform]);
     
     const updateCombinedCanvas = useCallback(() => {
         if (!combinedCanvasRef.current) return;
         
         const ctx = getContext(combinedCanvasRef, 'combined');
         if (!ctx) return;
-        ctx.clearRect(0, 0, combinedCanvasRef.current.width, combinedCanvasRef.current.height);
         
-        if (originalCanvasRef.current) {
+        // Calculate required canvas bounds for all visible layers
+        const bounds = calculatePreviewBounds(false, 50); // Include all visible layers with padding
+        
+        // Resize canvas if needed
+        if (combinedCanvasRef.current.width !== bounds.width || combinedCanvasRef.current.height !== bounds.height) {
+            combinedCanvasRef.current.width = bounds.width;
+            combinedCanvasRef.current.height = bounds.height;
+        }
+        
+        ctx.clearRect(0, 0, bounds.width, bounds.height);
+        
+        // Draw original image as background with offset
+        if (originalCanvasRef.current && originalImage) {
             ctx.globalAlpha = 0.5;
-            ctx.drawImage(originalCanvasRef.current, 0, 0);
+            ctx.drawImage(originalCanvasRef.current, bounds.offsetX, bounds.offsetY);
         }
         
         ctx.globalAlpha = 0.7;
@@ -633,7 +841,8 @@ function ProjectionMapping() {
                 
                 // Apply transforms with base transform
                 ctx.save();
-                ctx.translate(combinedCanvasRef.current.width/2, combinedCanvasRef.current.height/2);
+                // Translate to canvas center plus offset
+                ctx.translate(bounds.width/2, bounds.height/2);
                 
                 // Apply base transform
                 ctx.translate(baseTransform.x, baseTransform.y);
@@ -650,9 +859,14 @@ function ProjectionMapping() {
                 ctx.restore();
             }
         });
-    }, [layers, getContext, baseTransform]);
+        
+        // Apply perspective transform to the canvas element if in corner mode
+        if (originalImage) {
+            applyPerspectiveTransform(combinedCanvasRef.current, baseTransform.corners, originalImage.width, originalImage.height);
+        }
+    }, [layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform]);
     
-    const drawBezierMarkers = (points) => {
+    const drawBezierMarkers = useCallback((points) => {
         const ctx = getContext(currentCanvasRef, 'current');
         if (!ctx) return;
         
@@ -702,7 +916,7 @@ function ProjectionMapping() {
         }
         
         ctx.restore();
-    };
+    }, [getContext, updateCurrentCanvas]);
 
     useEffect(() => {
         updateCurrentCanvas();
@@ -975,35 +1189,6 @@ function ProjectionMapping() {
         setStatus(`Downloaded ${layer.name}`);
     };
     
-    const getTransformedBounds = (layer, transformMode = 'combined') => {
-        let w = layer.mask.width;
-        let h = layer.mask.height;
-        let totalRotation = 0;
-        
-        // Apply base transform if needed
-        if (transformMode === 'base' || transformMode === 'combined') {
-            w *= baseTransform.scale;
-            h *= baseTransform.scale;
-            totalRotation += baseTransform.rotation;
-        }
-        
-        // Apply layer transform if needed
-        if (transformMode === 'layer' || transformMode === 'combined') {
-            w *= layer.transform.scale;
-            h *= layer.transform.scale;
-            totalRotation += layer.transform.rotation;
-        }
-        
-        const angle = totalRotation * Math.PI / 180;
-        
-        // Calculate rotated bounds
-        const cos = Math.abs(Math.cos(angle));
-        const sin = Math.abs(Math.sin(angle));
-        const width = Math.ceil(w * cos + h * sin);
-        const height = Math.ceil(w * sin + h * cos);
-        
-        return { width, height };
-    };
     
     const downloadAllLayers = () => {
         let downloadIndex = 0;
@@ -1051,7 +1236,11 @@ function ProjectionMapping() {
                 layerIndex: -1, // Special index for base transform
                 baseTransform: baseTransform,
                 isBaseTransformMode: true,
-                showAsImage: true // Tell projection window to show as image, not mask
+                showAsImage: true, // Tell projection window to show as image, not mask
+                originalImageDimensions: {
+                    width: originalImage.width,
+                    height: originalImage.height
+                }
             }, '*');
         };
         
@@ -1059,7 +1248,23 @@ function ProjectionMapping() {
     };
     
     const resetBaseTransform = () => {
-        setBaseTransform({ x: 0, y: 0, scale: 1, rotation: 0 });
+        const defaultCorners = originalImage ? {
+            topLeft: { x: 0, y: 0 },
+            topRight: { x: originalImage.width, y: 0 },
+            bottomLeft: { x: 0, y: originalImage.height },
+            bottomRight: { x: originalImage.width, y: originalImage.height }
+        } : {
+            topLeft: { x: 0, y: 0 },
+            topRight: { x: 1000, y: 0 },
+            bottomLeft: { x: 0, y: 600 },
+            bottomRight: { x: 1000, y: 600 }
+        };
+        
+        setBaseTransform({ 
+            mode: 'basic',
+            x: 0, y: 0, scale: 1, rotation: 0,
+            corners: defaultCorners
+        });
         setStatus('Reset base transform');
     };
     
@@ -1673,7 +1878,7 @@ function ProjectionMapping() {
     };
     
     // Copy selection to clipboard
-    const copySelection = () => {
+    const copySelection = useCallback(() => {
         if (!selection || !selection.data) {
             setStatus('No selection to copy');
             return;
@@ -1686,21 +1891,10 @@ function ProjectionMapping() {
         });
         
         setStatus('Selection copied');
-    };
-    
-    // Cut selection (copy and delete)
-    const cutSelection = () => {
-        if (!selection || !selection.data || currentLayerIndex < 0) {
-            setStatus('No selection to cut');
-            return;
-        }
-        
-        copySelection();
-        deleteSelection();
-    };
+    }, [selection]);
     
     // Delete selection content
-    const deleteSelection = () => {
+    const deleteSelection = useCallback(() => {
         if (!selection || currentLayerIndex < 0) {
             setStatus('No selection to delete');
             return;
@@ -1741,24 +1935,21 @@ function ProjectionMapping() {
         
         setSelection(null);
         setStatus('Selection deleted');
-    };
+    }, [selection, currentLayerIndex, layers, originalImage, flushPendingUpdates, saveLayerState, updateCurrentCanvas, countMaskPixels]);
     
-    // Paste selection (wrapper for keyboard shortcut)
-    const pasteSelection = () => {
-        if (!clipboard) {
-            setStatus('Nothing to paste');
+    // Cut selection (copy and delete)
+    const cutSelection = useCallback(() => {
+        if (!selection || !selection.data || currentLayerIndex < 0) {
+            setStatus('No selection to cut');
             return;
         }
         
-        // Paste at center of canvas
-        const centerX = Math.floor((originalImage.width - clipboard.width) / 2);
-        const centerY = Math.floor((originalImage.height - clipboard.height) / 2);
-        
-        pasteFromClipboard(centerX, centerY);
-    };
+        copySelection();
+        deleteSelection();
+    }, [selection, currentLayerIndex, copySelection, deleteSelection]);
     
     // Paste from clipboard
-    const pasteFromClipboard = (x = 0, y = 0) => {
+    const pasteFromClipboard = useCallback((x = 0, y = 0) => {
         if (!clipboard || currentLayerIndex < 0) {
             setStatus('Nothing to paste');
             return;
@@ -1809,7 +2000,21 @@ function ProjectionMapping() {
         saveLayerState(layer.id);
         
         setStatus('Pasted from clipboard');
-    };
+    }, [clipboard, currentLayerIndex, layers, originalImage, flushPendingUpdates, updateCurrentCanvas, saveLayerState, countMaskPixels]);
+    
+    // Paste selection (wrapper for keyboard shortcut)
+    const pasteSelection = useCallback(() => {
+        if (!clipboard) {
+            setStatus('Nothing to paste');
+            return;
+        }
+        
+        // Paste at center of canvas
+        const centerX = Math.floor((originalImage.width - clipboard.width) / 2);
+        const centerY = Math.floor((originalImage.height - clipboard.height) / 2);
+        
+        pasteFromClipboard(centerX, centerY);
+    }, [clipboard, originalImage, pasteFromClipboard]);
     
     const smartFloodFill = (startX, startY, fromEdgeCanvas = false) => {
         const layer = layers[currentLayerIndex];
@@ -2102,7 +2307,6 @@ function ProjectionMapping() {
     const drawBrush = (x, y) => {
         if (currentLayerIndex < 0 || !brushCtxRef.current) return;
         
-        const layer = layers[currentLayerIndex];
         const width = originalImage.width;
         const height = originalImage.height;
         
@@ -2237,15 +2441,6 @@ function ProjectionMapping() {
         requestAnimationFrame(() => {
             updateCurrentCanvas();
         });
-    };
-    
-    // Helper to count non-transparent pixels
-    const countMaskPixels = (mask) => {
-        let count = 0;
-        for (let i = 3; i < mask.data.length; i += 4) {
-            if (mask.data[i] > 128) count++;
-        }
-        return count;
     };
     
     const drawBezier = (points) => {
@@ -2445,7 +2640,8 @@ function ProjectionMapping() {
             document.removeEventListener('keydown', handleKeyDown);
             window.removeEventListener('message', handleMessage);
         };
-    }, [layers, undo, redo, selection, currentTool, cutSelection, copySelection, pasteSelection, deleteSelection]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [layers, undo, redo, selection, currentTool, cutSelection, copySelection, pasteSelection, deleteSelection, originalImage]);
     
     // Cleanup projection windows on unmount
     useEffect(() => {
@@ -2846,44 +3042,318 @@ function ProjectionMapping() {
                 
                 <h3>Base Transform (All Layers)</h3>
                 <div className="control-group" style={{ backgroundColor: '#2a2a2a', padding: '15px', borderRadius: '8px', marginBottom: '20px' }}>
-                    <label>Position X: <span>{baseTransform.x}</span></label>
-                    <input 
-                        type="range" 
-                        min="-200" 
-                        max="200" 
-                        value={baseTransform.x}
-                        onChange={(e) => setBaseTransform({...baseTransform, x: parseInt(e.target.value)})}
-                    />
                     
-                    <label>Position Y: <span>{baseTransform.y}</span></label>
-                    <input 
-                        type="range" 
-                        min="-200" 
-                        max="200" 
-                        value={baseTransform.y}
-                        onChange={(e) => setBaseTransform({...baseTransform, y: parseInt(e.target.value)})}
-                    />
+                    {/* Transform Mode Toggle */}
+                    <div style={{ marginBottom: '15px' }}>
+                        <label style={{ display: 'block', marginBottom: '5px' }}>Transform Mode:</label>
+                        <div style={{ display: 'flex', gap: '10px' }}>
+                            <button 
+                                onClick={() => setBaseTransform({...baseTransform, mode: 'basic'})}
+                                style={{ 
+                                    padding: '5px 15px', 
+                                    backgroundColor: baseTransform.mode === 'basic' ? '#4CAF50' : '#444',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Basic
+                            </button>
+                            <button 
+                                onClick={() => setBaseTransform({...baseTransform, mode: 'corners'})}
+                                style={{ 
+                                    padding: '5px 15px', 
+                                    backgroundColor: baseTransform.mode === 'corners' ? '#4CAF50' : '#444',
+                                    color: 'white',
+                                    border: 'none',
+                                    borderRadius: '4px',
+                                    cursor: 'pointer'
+                                }}
+                            >
+                                Corner Alignment
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Basic Transform Controls */}
+                    {baseTransform.mode === 'basic' && (
+                        <>
+                            <label>Position X: <span>{baseTransform.x}</span></label>
+                            <input 
+                                type="range" 
+                                min="-1000" 
+                                max="1000" 
+                                value={baseTransform.x}
+                                onChange={(e) => setBaseTransform({...baseTransform, x: parseInt(e.target.value)})}
+                            />
+                            
+                            <label>Position Y: <span>{baseTransform.y}</span></label>
+                            <input 
+                                type="range" 
+                                min="-1000" 
+                                max="1000" 
+                                value={baseTransform.y}
+                                onChange={(e) => setBaseTransform({...baseTransform, y: parseInt(e.target.value)})}
+                            />
+                            
+                            <label>Scale: <span>{baseTransform.scale.toFixed(1)}</span></label>
+                            <input 
+                                type="range" 
+                                min="0.1" 
+                                max="10" 
+                                step="0.01"
+                                value={baseTransform.scale}
+                                onChange={(e) => setBaseTransform({...baseTransform, scale: parseFloat(e.target.value)})}
+                            />
+                            
+                            <label>Rotation: <span>{baseTransform.rotation}°</span></label>
+                            <input 
+                                type="range" 
+                                min="-180" 
+                                max="180" 
+                                step="0.1"
+                                value={baseTransform.rotation}
+                                onChange={(e) => setBaseTransform({...baseTransform, rotation: parseFloat(e.target.value)})}
+                            />
+                        </>
+                    )}
+
+                    {/* Corner-Based Transform Controls */}
+                    {baseTransform.mode === 'corners' && (
+                        <>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                            {/* Top Left */}
+                            <div style={{ padding: '10px', backgroundColor: '#333', borderRadius: '4px' }}>
+                                <label style={{ fontSize: '12px', color: '#ccc' }}>Top Left</label>
+                                <div>
+                                    <input 
+                                        type="number" 
+                                        placeholder="X"
+                                        value={baseTransform.corners.topLeft.x}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                topLeft: { ...baseTransform.corners.topLeft, x: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', marginBottom: '5px', padding: '2px' }}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Y"
+                                        value={baseTransform.corners.topLeft.y}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                topLeft: { ...baseTransform.corners.topLeft, y: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', padding: '2px' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Top Right */}
+                            <div style={{ padding: '10px', backgroundColor: '#333', borderRadius: '4px' }}>
+                                <label style={{ fontSize: '12px', color: '#ccc' }}>Top Right</label>
+                                <div>
+                                    <input 
+                                        type="number" 
+                                        placeholder="X"
+                                        value={baseTransform.corners.topRight.x}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                topRight: { ...baseTransform.corners.topRight, x: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', marginBottom: '5px', padding: '2px' }}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Y"
+                                        value={baseTransform.corners.topRight.y}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                topRight: { ...baseTransform.corners.topRight, y: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', padding: '2px' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Bottom Left */}
+                            <div style={{ padding: '10px', backgroundColor: '#333', borderRadius: '4px' }}>
+                                <label style={{ fontSize: '12px', color: '#ccc' }}>Bottom Left</label>
+                                <div>
+                                    <input 
+                                        type="number" 
+                                        placeholder="X"
+                                        value={baseTransform.corners.bottomLeft.x}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                bottomLeft: { ...baseTransform.corners.bottomLeft, x: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', marginBottom: '5px', padding: '2px' }}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Y"
+                                        value={baseTransform.corners.bottomLeft.y}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                bottomLeft: { ...baseTransform.corners.bottomLeft, y: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', padding: '2px' }}
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Bottom Right */}
+                            <div style={{ padding: '10px', backgroundColor: '#333', borderRadius: '4px' }}>
+                                <label style={{ fontSize: '12px', color: '#ccc' }}>Bottom Right</label>
+                                <div>
+                                    <input 
+                                        type="number" 
+                                        placeholder="X"
+                                        value={baseTransform.corners.bottomRight.x}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                bottomRight: { ...baseTransform.corners.bottomRight, x: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', marginBottom: '5px', padding: '2px' }}
+                                    />
+                                    <input 
+                                        type="number" 
+                                        placeholder="Y"
+                                        value={baseTransform.corners.bottomRight.y}
+                                        onChange={(e) => setBaseTransform({
+                                            ...baseTransform,
+                                            corners: {
+                                                ...baseTransform.corners,
+                                                bottomRight: { ...baseTransform.corners.bottomRight, y: parseInt(e.target.value) || 0 }
+                                            }
+                                        })}
+                                        style={{ width: '100%', padding: '2px' }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                        
+                        {/* Corner Alignment Presets */}
+                        <div style={{ marginTop: '15px' }}>
+                            <label style={{ fontSize: '12px', color: '#ccc', marginBottom: '8px', display: 'block' }}>Alignment Presets:</label>
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '5px', marginBottom: '10px' }}>
+                                <button 
+                                    onClick={() => setBaseTransform({
+                                        ...baseTransform,
+                                        corners: {
+                                            topLeft: { x: 0, y: 0 },
+                                            topRight: { x: originalImage?.width || 1000, y: 0 },
+                                            bottomLeft: { x: 0, y: originalImage?.height || 600 },
+                                            bottomRight: { x: originalImage?.width || 1000, y: originalImage?.height || 600 }
+                                        }
+                                    })}
+                                    style={{ 
+                                        padding: '4px 8px', 
+                                        fontSize: '11px',
+                                        backgroundColor: '#555',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Reset Corners
+                                </button>
+                                <button 
+                                    onClick={() => setBaseTransform({
+                                        ...baseTransform,
+                                        corners: {
+                                            topLeft: { x: 100, y: 100 },
+                                            topRight: { x: (originalImage?.width || 1000) - 100, y: 100 },
+                                            bottomLeft: { x: 100, y: (originalImage?.height || 600) - 100 },
+                                            bottomRight: { x: (originalImage?.width || 1000) - 100, y: (originalImage?.height || 600) - 100 }
+                                        }
+                                    })}
+                                    style={{ 
+                                        padding: '4px 8px', 
+                                        fontSize: '11px',
+                                        backgroundColor: '#555',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Inset 100px
+                                </button>
+                                <button 
+                                    onClick={() => setBaseTransform({
+                                        ...baseTransform,
+                                        corners: {
+                                            topLeft: { x: -50, y: 0 },
+                                            topRight: { x: (originalImage?.width || 1000) + 50, y: 0 },
+                                            bottomLeft: { x: 0, y: originalImage?.height || 600 },
+                                            bottomRight: { x: originalImage?.width || 1000, y: originalImage?.height || 600 }
+                                        }
+                                    })}
+                                    style={{ 
+                                        padding: '4px 8px', 
+                                        fontSize: '11px',
+                                        backgroundColor: '#555',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Keystone Top
+                                </button>
+                                <button 
+                                    onClick={() => setBaseTransform({
+                                        ...baseTransform,
+                                        corners: {
+                                            topLeft: { x: 0, y: 0 },
+                                            topRight: { x: originalImage?.width || 1000, y: 0 },
+                                            bottomLeft: { x: -50, y: originalImage?.height || 600 },
+                                            bottomRight: { x: (originalImage?.width || 1000) + 50, y: originalImage?.height || 600 }
+                                        }
+                                    })}
+                                    style={{ 
+                                        padding: '4px 8px', 
+                                        fontSize: '11px',
+                                        backgroundColor: '#555',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '3px',
+                                        cursor: 'pointer'
+                                    }}
+                                >
+                                    Keystone Bottom
+                                </button>
+                            </div>
+                        </div>
+                        </>
+                    )}
                     
-                    <label>Scale: <span>{baseTransform.scale.toFixed(1)}</span></label>
-                    <input 
-                        type="range" 
-                        min="0.1" 
-                        max="3" 
-                        step="0.1"
-                        value={baseTransform.scale}
-                        onChange={(e) => setBaseTransform({...baseTransform, scale: parseFloat(e.target.value)})}
-                    />
-                    
-                    <label>Rotation: <span>{baseTransform.rotation}°</span></label>
-                    <input 
-                        type="range" 
-                        min="-180" 
-                        max="180" 
-                        value={baseTransform.rotation}
-                        onChange={(e) => setBaseTransform({...baseTransform, rotation: parseInt(e.target.value)})}
-                    />
-                    
-                    <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
+                    <div style={{ display: 'flex', gap: '10px', marginTop: '15px' }}>
                         <button onClick={openBaseTransformWindow} style={{ flex: 1 }}>📺 Preview</button>
                         <button onClick={resetBaseTransform} style={{ flex: 1 }}>Reset</button>
                     </div>
@@ -3145,6 +3615,7 @@ function ProjectionMapping() {
                                                 case 'download': downloadLayer(index, 'none'); break;
                                                 case 'download-layer': downloadLayer(index, 'layer'); break;
                                                 case 'download-combined': downloadLayer(index, 'combined'); break;
+                                                default: break;
                                             }
                                         }}
                                         title="More actions"

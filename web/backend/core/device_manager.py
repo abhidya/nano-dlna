@@ -51,32 +51,42 @@ class DeviceManager:
     and video playback coordination.
     """
     def __init__(self):
-        """Initialize the device manager"""
-        # Core device tracking
-        self.devices = {}  # name -> Device
-        self.device_lock = threading.Lock()
+        """Initialize the device manager with consolidated locks for deadlock prevention"""
+        # SECURITY FIX: Consolidated lock architecture (8 locks → 4 locks)
+        # Hierarchical lock ordering: device_state_lock → assignment_lock → monitoring_lock → statistics_lock
+        
+        # Level 1: Core device and status state (consolidates device_lock + status_lock + assigned_videos_lock)
+        self.device_state_lock = threading.RLock()  # RLock allows reentrant access for same thread
         self.device_lock_timeout = 5.0  # seconds
         
-        # Status tracking
+        # Level 2: Assignment coordination (consolidates video_assignment_lock + scheduled_assignments_lock)
+        self.assignment_lock = threading.Lock()
+        
+        # Level 3: Monitoring and health checks (consolidates playback_history_lock + playback_health_threads_lock)
+        self.monitoring_lock = threading.Lock()
+        
+        # Level 4: Statistics collection (separate for performance - read-heavy operations)
+        self.statistics_lock = threading.Lock()
+        
+        # Core device tracking - protected by device_state_lock
+        self.devices = {}  # name -> Device
         self.device_status = {}  # name -> status dict
-        self.status_lock = threading.Lock()
         self.last_seen = {}  # name -> timestamp
         self.device_connected_at = {}  # name -> timestamp
-        
-        # Video assignment tracking
         self.assigned_videos = {}  # name -> video path
-        self.assigned_videos_lock = threading.Lock()
+        
+        # Assignment tracking - protected by assignment_lock
         self.video_assignment_priority = {}  # name -> priority
         self.video_assignment_retries = {}  # name -> retry count
-        self.video_assignment_lock = threading.Lock()
+        self.scheduled_assignments = {}  # name -> scheduled assignment info
+        self.device_assignment_queue = {}  # name -> assignment info
         
-        # Playback monitoring
+        # Monitoring data - protected by monitoring_lock
         self.playback_health_threads = {}  # name -> thread info
         self.video_playback_history = {}  # name -> playback stats
-        self.playback_history_lock = threading.Lock()
-        self.scheduled_assignments = {}  # name -> scheduled assignment info
-        self.scheduled_assignments_lock = threading.Lock()
-        self.device_assignment_queue = {}  # name -> assignment info (FIX: was missing)
+        
+        # Statistics - protected by statistics_lock
+        self.playback_stats = {}  # Dictionary for tracking playback stats
         
         # Get config service and streaming registry
         self.config_service = ConfigService.get_instance()
@@ -90,9 +100,6 @@ class DeviceManager:
         
         # Additional attributes
         self.device_service = None
-        self.playback_health_threads_lock = threading.Lock()
-        self.playback_stats = {}  # Dictionary for tracking playback stats
-        self.playback_stats_lock = threading.Lock()
         self.connectivity_timeout = 30  # Seconds to wait before considering a device offline
 
     def set_device_service(self, device_service):
@@ -105,20 +112,29 @@ class DeviceManager:
         self.device_service = device_service
         logger.info("Device service reference set in DeviceManager")
 
-    def _acquire_device_lock(self):
-        """Acquire the device lock with timeout to prevent deadlock"""
-        acquired = self.device_lock.acquire(blocking=True, timeout=self.device_lock_timeout)
+    def _acquire_device_state_lock(self):
+        """Acquire the device state lock with timeout to prevent deadlock"""
+        acquired = self.device_state_lock.acquire(blocking=True, timeout=self.device_lock_timeout)
         if not acquired:
-            logger.warning(f"Failed to acquire device lock within {self.device_lock_timeout}s timeout")
+            logger.warning(f"Failed to acquire device_state_lock within {self.device_lock_timeout}s timeout")
         return acquired
 
-    def _release_device_lock(self):
-        """Release the device lock"""
+    def _release_device_state_lock(self):
+        """Release the device state lock"""
         try:
-            self.device_lock.release()
+            self.device_state_lock.release()
         except RuntimeError:
             # Lock wasn't held
             pass
+
+    # SECURITY: Legacy compatibility methods (deprecated)
+    def _acquire_device_lock(self):
+        """DEPRECATED: Use _acquire_device_state_lock instead"""
+        return self._acquire_device_state_lock()
+
+    def _release_device_lock(self):
+        """DEPRECATED: Use _release_device_state_lock instead"""
+        self._release_device_state_lock()
 
     def _handle_streaming_issue(self, session):
         """Handle streaming issues and attempt recovery"""
@@ -137,8 +153,8 @@ class DeviceManager:
                 # Add debug info to understand why device not found
                 logger.warning(f"Device {device_name} not found for streaming issue handling - attempting recovery")
                 logger.debug(f"Current devices in manager: {list(self.devices.keys())}")
-                logger.debug(f"Device lock held: {self.device_lock.locked()}")
-                with self.status_lock:
+                logger.debug(f"Device state lock held: {self.device_state_lock.locked()}")
+                with self.device_state_lock:
                     last_seen_time = self.last_seen.get(device_name, 0)
                     time_since_seen = time.time() - last_seen_time if last_seen_time else float('inf')
                     logger.debug(f"Device {device_name} last seen {time_since_seen:.1f}s ago")
@@ -254,8 +270,8 @@ class DeviceManager:
                 # Sleep between checks
                 time.sleep(check_interval)
                 
-                # Check if thread should exit
-                with self.playback_history_lock:
+                # SECURITY FIX: Check if thread should exit using monitoring_lock
+                with self.monitoring_lock:
                     if (device_name not in self.playback_health_threads or 
                             not self.playback_health_threads.get(device_name, {}).get("active", False)):
                         logger.info(f"Stopping playback health monitoring for {device_name}")
@@ -287,7 +303,7 @@ class DeviceManager:
                                 logger.warning(f"Could not check user control mode for {device_name}: {e}")
                         
                         # Check current video assignment
-                        with self.assigned_videos_lock:
+                        with self.device_state_lock:
                             current_video = self.assigned_videos.get(device_name)
                             
                         if current_video and os.path.exists(current_video):
@@ -308,7 +324,7 @@ class DeviceManager:
                     logger.warning(f"Device {device_name} is playing but has no active streaming sessions")
                     
                     # Check if we need to restart the stream
-                    with self.assigned_videos_lock:
+                    with self.device_state_lock:
                         if device_name in self.assigned_videos and device.current_video != self.assigned_videos[device_name]:
                             logger.info(f"Restarting video {self.assigned_videos[device_name]} on device {device_name}")
                             self.auto_play_video(device, self.assigned_videos[device_name], loop=True)
@@ -321,7 +337,7 @@ class DeviceManager:
                         streaming_issues = True
                         
                 # Update device status with streaming information
-                with self.status_lock:
+                with self.device_state_lock:
                     if device_name in self.device_status:
                         self.device_status[device_name]["active_streaming_sessions"] = len(active_sessions)
                         self.device_status[device_name]["streaming_issues"] = streaming_issues
@@ -340,8 +356,8 @@ class DeviceManager:
         
         logger.info(f"Playback health monitoring stopped for {device_name}")
         
-        # Clean up thread tracking
-        with self.playback_history_lock:
+        # SECURITY FIX: Clean up thread tracking using monitoring_lock
+        with self.monitoring_lock:
             if device_name in self.playback_health_threads:
                 del self.playback_health_threads[device_name]
     
@@ -436,7 +452,7 @@ class DeviceManager:
                 self._release_device_lock()
             
             # Initialize device status if not already present
-            with self.status_lock:
+            with self.device_state_lock:
                 if device_name not in self.device_status:
                     self.device_status[device_name] = {
                         "status": "connected",
@@ -463,7 +479,7 @@ class DeviceManager:
         self._stop_playback_health_check(device_name)
         
         # Clear assignments
-        with self.assigned_videos_lock:
+        with self.device_state_lock:
             if device_name in self.assigned_videos:
                 logger.info(f"Clearing assigned video for device {device_name}")
                 self.assigned_videos.pop(device_name, None)
@@ -480,7 +496,7 @@ class DeviceManager:
     
     def unregister_device(self, device_name: str) -> bool:
         """
-        Unregister a device
+        Unregister a device with secure hierarchical lock ordering
         
         Args:
             device_name: Name of the device to unregister
@@ -488,55 +504,56 @@ class DeviceManager:
         Returns:
             bool: True if successful, False otherwise
         """
-        if not self._acquire_device_lock():
+        # SECURITY FIX: Hierarchical lock acquisition to prevent deadlock
+        # Order: device_state_lock → assignment_lock → monitoring_lock
+        
+        if not self._acquire_device_state_lock():
             return False
         
         try:
-            if device_name in self.devices:
-                # Get the device
-                device = self.devices[device_name]
-                
-                # Remove from devices dictionary
-                del self.devices[device_name]
-                
-                # Clean up other dictionaries
-                with self.status_lock:
-                    if device_name in self.device_status:
-                        del self.device_status[device_name]
-                    if device_name in self.last_seen:
-                        del self.last_seen[device_name]
-                    if device_name in self.device_connected_at:
-                        del self.device_connected_at[device_name]
-                
-                with self.assigned_videos_lock:
-                    if device_name in self.assigned_videos:
-                        del self.assigned_videos[device_name]
-                
-                # Clean up new tracking dictionaries
-                with self.video_assignment_lock:
-                    if device_name in self.video_assignment_priority:
-                        del self.video_assignment_priority[device_name]
-                    if device_name in self.video_assignment_retries:
-                        del self.video_assignment_retries[device_name]
-                
-                with self.playback_history_lock:
-                    if device_name in self.video_playback_history:
-                        del self.video_playback_history[device_name]
-                
-                with self.scheduled_assignments_lock:
-                    if device_name in self.scheduled_assignments:
-                        del self.scheduled_assignments[device_name]
-                
-                # Stop any running health check threads
-                self._stop_playback_health_check(device_name)
-                
-                logger.info(f"Unregistered device: {device_name}")
-                return True
-            else:
+            if device_name not in self.devices:
                 logger.warning(f"Device not found: {device_name}")
                 return False
+                
+            # Get the device before cleanup
+            device = self.devices[device_name]
+            
+            # Level 1: Clean device state data (already have device_state_lock)
+            del self.devices[device_name]
+            if device_name in self.device_status:
+                del self.device_status[device_name]
+            if device_name in self.last_seen:
+                del self.last_seen[device_name]
+            if device_name in self.device_connected_at:
+                del self.device_connected_at[device_name]
+            if device_name in self.assigned_videos:
+                del self.assigned_videos[device_name]
+            
+            # Level 2: Clean assignment data
+            with self.assignment_lock:
+                if device_name in self.video_assignment_priority:
+                    del self.video_assignment_priority[device_name]
+                if device_name in self.video_assignment_retries:
+                    del self.video_assignment_retries[device_name]
+                if device_name in self.scheduled_assignments:
+                    del self.scheduled_assignments[device_name]
+                if device_name in self.device_assignment_queue:
+                    del self.device_assignment_queue[device_name]
+            
+            # Level 3: Clean monitoring data and stop health checks
+            with self.monitoring_lock:
+                if device_name in self.video_playback_history:
+                    del self.video_playback_history[device_name]
+                # Stop health check thread safely
+                if device_name in self.playback_health_threads:
+                    self.playback_health_threads[device_name]["active"] = False
+                    del self.playback_health_threads[device_name]
+            
+            logger.info(f"Unregistered device: {device_name}")
+            return True
+            
         finally:
-            self._release_device_lock()
+            self._release_device_state_lock()
     
     def load_devices_from_config(self, config_file: str) -> List[Device]:
         """
@@ -559,7 +576,7 @@ class DeviceManager:
             
             # Return the devices that were loaded and registered
             loaded_devices = []
-            with self.device_lock:
+            with self.device_state_lock:
                 for device_name in loaded_devices_names:
                     if device_name in self.devices:
                         loaded_devices.append(self.devices[device_name])
@@ -581,7 +598,7 @@ class DeviceManager:
         """
         try:
             # Get device information with thread safety
-            with self.device_lock:
+            with self.device_state_lock:
                 # Create deep copies to avoid modification during saving
                 devices_config = [device.device_info.copy() for device in self.devices.values()]
             
@@ -697,7 +714,7 @@ class DeviceManager:
                         if device:
                             logger.info(f"Successfully registered device: {device_name}")
                             self.update_device_status(device_name, "connected")
-                            with self.status_lock:
+                            with self.device_state_lock:
                                 self.last_seen[device_name] = time.time()
                                 self.device_connected_at[device_name] = time.time()
                         else:
@@ -705,7 +722,7 @@ class DeviceManager:
                             continue
                     else:
                         # Update last seen time for existing device
-                        with self.status_lock:
+                        with self.device_state_lock:
                             self.last_seen[device_name] = time.time()
                             # Only update status if device was previously disconnected
                             if self.device_status.get(device_name, {}).get("status") != "connected":
@@ -779,7 +796,7 @@ class DeviceManager:
         
         # Get the current video assignment
         current_video = None
-        with self.assigned_videos_lock:
+        with self.device_state_lock:
             current_video = self.assigned_videos.get(device_name)
         
         # Only assign if:
@@ -826,7 +843,7 @@ class DeviceManager:
             
         # Handle scheduled assignments
         if schedule_time is not None:
-            with self.scheduled_assignments_lock:
+            with self.assignment_lock:
                 self.scheduled_assignments[device_name] = {
                     "video_path": video_path,
                     "priority": priority,
@@ -839,7 +856,7 @@ class DeviceManager:
         should_override = False
         current_priority = 0
         
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             current_priority = self.video_assignment_priority.get(device_name, 0)
             if priority >= current_priority:
                 should_override = True
@@ -850,8 +867,8 @@ class DeviceManager:
             logger.info(f"Not overriding current video assignment for {device_name} due to priority: {priority} < {current_priority}")
             return False
             
-        # Proceed with assignment
-        with self.assigned_videos_lock:
+        # Proceed with assignment using device_state_lock for assigned videos
+        with self.device_state_lock:
             current_video = self.assigned_videos.get(device_name)
             if current_video == video_path and device.is_playing:
                 logger.info(f"Device {device_name} is already playing {video_path}")
@@ -866,7 +883,7 @@ class DeviceManager:
             self.assigned_videos[device_name] = video_path
             
         # Reset retry counter when assigning a new video
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             self.video_assignment_retries[device_name] = 0
             
         # Get device config to check for loop setting
@@ -899,7 +916,7 @@ class DeviceManager:
             video_path: Path to the video
             priority: Priority of the assignment
         """
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             # Get current retry count
             retry_count = self.video_assignment_retries.get(device_name, 0)
             
@@ -934,7 +951,7 @@ class DeviceManager:
             video_path: Path to the video
             success: Whether playback was successful
         """
-        with self.playback_history_lock:
+        with self.monitoring_lock:
             if device_name not in self.video_playback_history:
                 self.video_playback_history[device_name] = {
                     "attempts": 0,
@@ -972,7 +989,7 @@ class DeviceManager:
         Returns:
             Optional[str]: Video path if a scheduled assignment is due, None otherwise
         """
-        with self.scheduled_assignments_lock:
+        with self.assignment_lock:
             if device_name not in self.scheduled_assignments:
                 return None
                 
@@ -993,7 +1010,7 @@ class DeviceManager:
     
     def _start_playback_health_check(self, device_name: str, video_path: str) -> None:
         """
-        Start a health check thread for playback monitoring
+        Start a health check thread for playback monitoring with secure lock ordering
         
         Args:
             device_name: Name of the device to monitor
@@ -1009,8 +1026,8 @@ class DeviceManager:
             daemon=True
         )
         
-        # Store the thread reference
-        with self.video_assignment_lock:
+        # SECURITY FIX: Use monitoring_lock for health thread management (was video_assignment_lock)
+        with self.monitoring_lock:
             self.playback_health_threads[device_name] = {
                 "thread": health_thread,
                 "active": True,
@@ -1023,12 +1040,13 @@ class DeviceManager:
     
     def _stop_playback_health_check(self, device_name: str) -> None:
         """
-        Stop the health check thread for a device
+        Stop the health check thread for a device with secure lock ordering
         
         Args:
             device_name: Name of the device
         """
-        with self.video_assignment_lock:
+        # SECURITY FIX: Use monitoring_lock consistently (was video_assignment_lock)
+        with self.monitoring_lock:
             if device_name in self.playback_health_threads:
                 # Mark thread as not active
                 self.playback_health_threads[device_name]["active"] = False
@@ -1181,7 +1199,7 @@ class DeviceManager:
         Returns:
             Dict[str, Any]: Playback statistics
         """
-        with self.playback_history_lock:
+        with self.monitoring_lock:
             if device_name not in self.video_playback_history:
                 return {
                     "attempts": 0,
@@ -1209,7 +1227,7 @@ class DeviceManager:
         Returns:
             Dict[str, Dict[str, Any]]: Dictionary of scheduled assignments
         """
-        with self.scheduled_assignments_lock:
+        with self.assignment_lock:
             return {k: v.copy() for k, v in self.scheduled_assignments.items()}
     
     def _check_disconnected_devices(self, current_devices: set) -> None:
@@ -1219,10 +1237,10 @@ class DeviceManager:
         Args:
             current_devices: Set of currently discovered device names
         """
-        with self.device_lock:
+        with self.device_state_lock:
             for device_name in list(self.devices.keys()):
                 if device_name not in current_devices:
-                    with self.status_lock:
+                    with self.device_state_lock:
                         last_seen = self.last_seen.get(device_name, 0)
                         time_since_last_seen = time.time() - last_seen
                     
@@ -1325,7 +1343,7 @@ class DeviceManager:
             current_video: Current video path (optional)
             error: Error message if any (optional)
         """
-        with self.status_lock:
+        with self.device_state_lock:
             if device_name not in self.device_status:
                 self.device_status[device_name] = {}
             
@@ -1371,7 +1389,7 @@ class DeviceManager:
             progress = 0
         
         # First update in-memory status
-        with self.status_lock:
+        with self.device_state_lock:
             if device_name not in self.device_status:
                 self.device_status[device_name] = {}
             
@@ -1469,7 +1487,7 @@ class DeviceManager:
         if not device:
             return
             
-        with self.status_lock:
+        with self.device_state_lock:
             # Update device status
             device.update_playing(is_playing)
             if video_path:

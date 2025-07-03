@@ -251,7 +251,7 @@ class TestDeviceManager(unittest.TestCase):
             # Simulate device already playing a video
             device.is_playing = True
             video1_path = "/tmp/test_video1.mp4"
-            with self.device_manager.assigned_videos_lock:
+            with self.device_manager.device_state_lock:
                 self.device_manager.assigned_videos["TestDevice1"] = video1_path
             
             # Auto-play a different video

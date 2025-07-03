@@ -95,30 +95,33 @@ class MockDeviceManager:
     def __init__(self):
         self.devices: Dict[str, MockDevice] = {}
         self.device_status: Dict[str, str] = {}
-        self.device_lock = threading.RLock()
-        self.status_lock = threading.RLock()
+        # UPDATED: Use consolidated lock architecture matching DeviceManager
+        self.device_state_lock = threading.RLock()
+        self.assignment_lock = threading.Lock()
+        self.monitoring_lock = threading.Lock()
+        self.statistics_lock = threading.Lock()
         self.discovery_running = False
         
     def add_device(self, device: MockDevice):
         """Add a device to the manager"""
-        with self.device_lock:
+        with self.device_state_lock:
             self.devices[device.name] = device
-        with self.status_lock:
+        with self.device_state_lock:
             self.device_status[device.name] = device.status
             
     def get_device(self, device_name: str) -> Optional[MockDevice]:
         """Get a device by name"""
-        with self.device_lock:
+        with self.device_state_lock:
             return self.devices.get(device_name)
             
     def get_all_devices(self) -> List[MockDevice]:
         """Get all devices"""
-        with self.device_lock:
+        with self.device_state_lock:
             return list(self.devices.values())
             
     def update_device_status(self, device_name: str, status: str):
         """Update device status"""
-        with self.status_lock:
+        with self.device_state_lock:
             self.device_status[device_name] = status
             
     def update_device_playback_progress(self, device_name: str, progress: Dict[str, Any]):

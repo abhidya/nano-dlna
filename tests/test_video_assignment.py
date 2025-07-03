@@ -39,23 +39,23 @@ class TestDevice:
 class TestDeviceManager:
     def __init__(self):
         self.devices = {}
-        self.device_lock = threading.Lock()
-        self.status_lock = threading.Lock()
+        # UPDATED: Use consolidated lock architecture matching DeviceManager
+        self.device_state_lock = threading.RLock()
+        self.assignment_lock = threading.Lock()
+        self.monitoring_lock = threading.Lock()
+        self.statistics_lock = threading.Lock()
+        
         self.assigned_videos = {}
-        self.assigned_videos_lock = threading.Lock()
         self.video_assignment_priority = {}
         self.video_assignment_retries = {}
         self.video_playback_history = {}
         self.playback_health_threads = {}
         self.scheduled_assignments = {}
-        self.video_assignment_lock = threading.Lock()
-        self.playback_history_lock = threading.Lock()
-        self.scheduled_assignments_lock = threading.Lock()
         self.last_seen = {}
         self.device_connected_at = {}
     
     def get_device(self, device_name):
-        with self.device_lock:
+        with self.device_state_lock:
             return self.devices.get(device_name)
     
     def register_device(self, device_info):
@@ -66,7 +66,7 @@ class TestDeviceManager:
         device = TestDevice(device_name)
         device.device_info = device_info
         
-        with self.device_lock:
+        with self.device_state_lock:
             self.devices[device_name] = device
         
         return device
@@ -87,7 +87,7 @@ class TestDeviceManager:
             return True
         
         # Check against assigned videos
-        with self.assigned_videos_lock:
+        with self.device_state_lock:
             # If no video assigned yet
             if device_name not in self.assigned_videos:
                 return True
@@ -113,7 +113,7 @@ class TestDeviceManager:
         
         # Handle scheduled assignments
         if schedule_time is not None:
-            with self.scheduled_assignments_lock:
+            with self.assignment_lock:
                 self.scheduled_assignments[device_name] = {
                     "video_path": video_path,
                     "priority": priority,
@@ -125,7 +125,7 @@ class TestDeviceManager:
         should_override = False
         current_priority = 0
         
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             current_priority = self.video_assignment_priority.get(device_name, 0)
             if priority >= current_priority:
                 should_override = True
@@ -136,7 +136,7 @@ class TestDeviceManager:
             return False
         
         # Proceed with assignment
-        with self.assigned_videos_lock:
+        with self.device_state_lock:
             current_video = self.assigned_videos.get(device_name)
             if current_video and current_video != video_path and device.is_playing:
                 device.stop()
@@ -145,7 +145,7 @@ class TestDeviceManager:
             self.assigned_videos[device_name] = video_path
         
         # Reset retry counter when assigning a new video
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             self.video_assignment_retries[device_name] = 0
         
         # Play the video
@@ -160,13 +160,13 @@ class TestDeviceManager:
         
         # If failed, schedule a retry
         if not result:
-            with self.video_assignment_lock:
+            with self.assignment_lock:
                 self.video_assignment_retries[device_name] = 1
         
         return result
     
     def _track_playback_result(self, device_name, video_path, success):
-        with self.playback_history_lock:
+        with self.monitoring_lock:
             if device_name not in self.video_playback_history:
                 self.video_playback_history[device_name] = {
                     "attempts": 0,
@@ -195,7 +195,7 @@ class TestDeviceManager:
                 video_stats["successes"] += 1
     
     def _check_scheduled_assignments(self, device_name):
-        with self.scheduled_assignments_lock:
+        with self.assignment_lock:
             if device_name not in self.scheduled_assignments:
                 return None
             
@@ -215,7 +215,7 @@ class TestDeviceManager:
         return None
     
     def get_device_playback_stats(self, device_name):
-        with self.playback_history_lock:
+        with self.monitoring_lock:
             if device_name not in self.video_playback_history:
                 return {
                     "attempts": 0,
@@ -241,7 +241,7 @@ class TestDeviceManager:
         self._stop_playback_health_check(device_name)
         
         # Store the thread data
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             self.playback_health_threads[device_name] = {
                 "thread": None,  # No actual thread created in test
                 "running": True,
@@ -249,7 +249,7 @@ class TestDeviceManager:
             }
     
     def _stop_playback_health_check(self, device_name):
-        with self.video_assignment_lock:
+        with self.assignment_lock:
             if device_name in self.playback_health_threads:
                 # Mark thread as not running
                 self.playback_health_threads[device_name]["running"] = False
@@ -332,7 +332,7 @@ class TestVideoAssignment(unittest.TestCase):
     def test_should_assign_video_different_video(self):
         """Test that a video should be assigned if different from currently assigned video"""
         # Assign initial video
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.device_manager.assigned_videos["TestDevice1"] = self.test_videos["video2"]
         
         # Test with a different video
@@ -348,7 +348,7 @@ class TestVideoAssignment(unittest.TestCase):
         device.update_playing(True)
         
         # Assign the video
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.device_manager.assigned_videos["TestDevice1"] = self.test_videos["video1"]
         
         # Test with the same video
@@ -369,14 +369,14 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertTrue(result)
         
         # Verify the video was assigned
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.assertEqual(self.device_manager.assigned_videos["TestDevice1"], self.test_videos["video1"])
         
         # Verify play was called
         device.play.assert_called_once()
         
         # Verify health check was started
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertIn("TestDevice1", self.device_manager.playback_health_threads)
             self.assertTrue(self.device_manager.playback_health_threads["TestDevice1"]["running"])
     
@@ -393,11 +393,11 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertFalse(result)
         
         # Verify the video was still assigned
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.assertEqual(self.device_manager.assigned_videos["TestDevice1"], self.test_videos["video1"])
         
         # Verify retry was scheduled
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertEqual(self.device_manager.video_assignment_retries["TestDevice1"], 1)
     
     def test_priority_higher_overrides_lower(self):
@@ -410,7 +410,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.device_manager.assign_video_to_device("TestDevice1", self.test_videos["video1"], priority=30)
         
         # Verify initial priority
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertEqual(self.device_manager.video_assignment_priority["TestDevice1"], 30)
         
         # Assign a higher priority video
@@ -420,11 +420,11 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertTrue(result)
         
         # Verify the new video was assigned
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.assertEqual(self.device_manager.assigned_videos["TestDevice1"], self.test_videos["video2"])
         
         # Verify priority was updated
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertEqual(self.device_manager.video_assignment_priority["TestDevice1"], 50)
     
     def test_priority_lower_does_not_override_higher(self):
@@ -437,7 +437,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.device_manager.assign_video_to_device("TestDevice1", self.test_videos["video1"], priority=70)
         
         # Verify initial priority
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertEqual(self.device_manager.video_assignment_priority["TestDevice1"], 70)
         
         # Assign a lower priority video
@@ -447,11 +447,11 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertFalse(result)
         
         # Verify the original video was kept
-        with self.device_manager.assigned_videos_lock:
+        with self.device_manager.device_state_lock:
             self.assertEqual(self.device_manager.assigned_videos["TestDevice1"], self.test_videos["video1"])
         
         # Verify priority was not updated
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertEqual(self.device_manager.video_assignment_priority["TestDevice1"], 70)
     
     def test_scheduled_assignment(self):
@@ -468,7 +468,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertTrue(result)
         
         # Verify the assignment was scheduled
-        with self.device_manager.scheduled_assignments_lock:
+        with self.device_manager.assignment_lock:
             self.assertIn("TestDevice1", self.device_manager.scheduled_assignments)
             self.assertEqual(self.device_manager.scheduled_assignments["TestDevice1"]["video_path"], self.test_videos["video3"])
             self.assertEqual(self.device_manager.scheduled_assignments["TestDevice1"]["scheduled_time"], future_time)
@@ -478,7 +478,7 @@ class TestVideoAssignment(unittest.TestCase):
         # Schedule a video for the past
         past_time = datetime.now(timezone.utc) - timedelta(minutes=5)
         
-        with self.device_manager.scheduled_assignments_lock:
+        with self.device_manager.assignment_lock:
             self.device_manager.scheduled_assignments["TestDevice1"] = {
                 "video_path": self.test_videos["video3"],
                 "priority": 80,
@@ -492,7 +492,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.assertEqual(video_path, self.test_videos["video3"])
         
         # Verify the scheduled assignment was removed
-        with self.device_manager.scheduled_assignments_lock:
+        with self.device_manager.assignment_lock:
             self.assertNotIn("TestDevice1", self.device_manager.scheduled_assignments)
     
     def test_playback_health_check(self):
@@ -505,7 +505,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.device_manager.assign_video_to_device("TestDevice1", self.test_videos["video1"])
         
         # Verify health check was started
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertIn("TestDevice1", self.device_manager.playback_health_threads)
             self.assertTrue(self.device_manager.playback_health_threads["TestDevice1"]["running"])
         
@@ -513,7 +513,7 @@ class TestVideoAssignment(unittest.TestCase):
         self.device_manager._stop_playback_health_check("TestDevice1")
         
         # Verify health check was stopped
-        with self.device_manager.video_assignment_lock:
+        with self.device_manager.assignment_lock:
             self.assertIn("TestDevice1", self.device_manager.playback_health_threads)
             self.assertFalse(self.device_manager.playback_health_threads["TestDevice1"]["running"])
     

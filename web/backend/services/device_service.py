@@ -68,7 +68,7 @@ class DeviceService:
             device_dict["current_video"] = core_device.current_video
         
         # Get device status
-        with self.device_manager.status_lock:
+        with self.device_manager.device_state_lock:
             if device.name in self.device_manager.device_status:
                 status_info = self.device_manager.device_status[device.name]
                 device_dict["status"] = status_info.get("status", "unknown") # Keep this part
@@ -1123,7 +1123,7 @@ class DeviceService:
         logger.debug(f"_device_to_dict for device.name='{device.name}'")
         logger.debug(f"_device_to_dict: self.device_manager.device_status keys: {list(self.device_manager.device_status.keys())}")
         
-        with self.device_manager.status_lock:
+        with self.device_manager.device_state_lock:
             if device.name in self.device_manager.device_status:
                 logger.debug(f"_device_to_dict: Found '{device.name}' in device_manager.device_status")
                 status_info = self.device_manager.device_status[device.name]

@@ -148,6 +148,42 @@
             <input type="range" id="rotation" min="-180" max="180" value="0">
             <input type="number" id="rotationNum" min="-180" max="180" value="0">
         </div>
+        
+        <!-- Transform Mode Toggle -->
+        <div class="control-row" id="modeToggle" style="margin-top: 15px;">
+            <button id="basicModeBtn" onclick="setTransformMode('basic')" style="margin-right: 5px;">Basic</button>
+            <button id="cornerModeBtn" onclick="setTransformMode('corners')">Corner Alignment</button>
+        </div>
+        
+        <!-- Corner Controls -->
+        <div id="cornerControls" style="display: none; margin-top: 15px;">
+            <div style="font-size: 12px; margin-bottom: 10px; color: #ccc;">Corner Coordinates:</div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+                <div>
+                    <label style="font-size: 11px;">Top Left</label>
+                    <div><input type="number" id="tlX" placeholder="X" style="width: 45%; margin-right: 5%;"><input type="number" id="tlY" placeholder="Y" style="width: 45%;"></div>
+                </div>
+                <div>
+                    <label style="font-size: 11px;">Top Right</label>
+                    <div><input type="number" id="trX" placeholder="X" style="width: 45%; margin-right: 5%;"><input type="number" id="trY" placeholder="Y" style="width: 45%;"></div>
+                </div>
+                <div>
+                    <label style="font-size: 11px;">Bottom Left</label>
+                    <div><input type="number" id="blX" placeholder="X" style="width: 45%; margin-right: 5%;"><input type="number" id="blY" placeholder="Y" style="width: 45%;"></div>
+                </div>
+                <div>
+                    <label style="font-size: 11px;">Bottom Right</label>
+                    <div><input type="number" id="brX" placeholder="X" style="width: 45%; margin-right: 5%;"><input type="number" id="brY" placeholder="Y" style="width: 45%;"></div>
+                </div>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px; margin-bottom: 10px;">
+                <button onclick="resetCorners()" style="font-size: 10px; padding: 4px;">Reset Corners</button>
+                <button onclick="keystoneTop()" style="font-size: 10px; padding: 4px;">Keystone Top</button>
+                <button onclick="keystoneBottom()" style="font-size: 10px; padding: 4px;">Keystone Bottom</button>
+                <button onclick="insetCorners()" style="font-size: 10px; padding: 4px;">Inset 100px</button>
+            </div>
+        </div>
+        
         <div class="control-row">
             <button onclick="resetTransform()">Reset</button>
             <button onclick="centerTransform()">Center</button>
@@ -178,13 +214,21 @@
             rotation: 0
         };
         let baseTransform = {
+            mode: 'basic',
             x: 0,
             y: 0,
             scale: 1,
-            rotation: 0
+            rotation: 0,
+            corners: {
+                topLeft: { x: 0, y: 0 },
+                topRight: { x: 1000, y: 0 },
+                bottomLeft: { x: 0, y: 600 },
+                bottomRight: { x: 1000, y: 600 }
+            }
         };
         let isBaseTransformMode = false;
         let showAsImage = false;
+        let originalImageDimensions = { width: 1000, height: 600 };
         
         // Dragging state
         let isDragging = false;
@@ -211,6 +255,7 @@
                 baseTransform = { ...event.data.baseTransform };
                 isBaseTransformMode = event.data.isBaseTransformMode || false;
                 showAsImage = event.data.showAsImage || false;
+                originalImageDimensions = event.data.originalImageDimensions || { width: 1000, height: 600 };
                 
                 if (isBaseTransformMode) {
                     // In base transform mode, we edit the base transform
@@ -246,12 +291,144 @@
                     document.getElementById('modeIndicator').style.display = 'block';
                 }
                 
+                // Update transform mode UI
+                updateTransformModeUI();
+                
                 render();
             } else if (event.data.type === 'updateMask') {
                 layerData = event.data.layer;
                 render();
             }
         });
+        
+        // Perspective transform functions (same as in main application)
+        function calculatePerspectiveTransform(src, dst) {
+            // Simplified perspective transform - returns CSS matrix3d string
+            const matrix3d = `matrix3d(
+                ${(dst[1][0] - dst[0][0]) / src[1][0]}, ${(dst[1][1] - dst[0][1]) / src[1][0]}, 0, 0,
+                ${(dst[2][0] - dst[0][0]) / src[2][1]}, ${(dst[2][1] - dst[0][1]) / src[2][1]}, 0, 0,
+                0, 0, 1, 0,
+                ${dst[0][0]}, ${dst[0][1]}, 0, 1
+            )`;
+            return matrix3d;
+        }
+        
+        function calculatePerspectiveMatrix(corners, sourceWidth, sourceHeight) {
+            const src = [
+                [0, 0],
+                [sourceWidth, 0],
+                [0, sourceHeight],
+                [sourceWidth, sourceHeight]
+            ];
+            
+            const dst = [
+                [corners.topLeft.x, corners.topLeft.y],
+                [corners.topRight.x, corners.topRight.y],
+                [corners.bottomLeft.x, corners.bottomLeft.y],
+                [corners.bottomRight.x, corners.bottomRight.y]
+            ];
+            
+            return calculatePerspectiveTransform(src, dst);
+        }
+        
+        function applyPerspectiveTransform() {
+            if (baseTransform.mode === 'corners') {
+                const matrix = calculatePerspectiveMatrix(
+                    baseTransform.corners, 
+                    originalImageDimensions.width, 
+                    originalImageDimensions.height
+                );
+                canvas.style.transform = matrix;
+                canvas.style.transformOrigin = '0 0';
+            } else {
+                canvas.style.transform = '';
+                canvas.style.transformOrigin = '';
+            }
+        }
+        
+        function updateTransformModeUI() {
+            const mode = baseTransform.mode || 'basic';
+            
+            // Update button states
+            document.getElementById('basicModeBtn').style.backgroundColor = mode === 'basic' ? '#4CAF50' : '#666';
+            document.getElementById('cornerModeBtn').style.backgroundColor = mode === 'corners' ? '#4CAF50' : '#666';
+            
+            // Show/hide corner controls
+            const cornerControls = document.getElementById('cornerControls');
+            if (mode === 'corners') {
+                cornerControls.style.display = 'block';
+                updateCornerInputs();
+            } else {
+                cornerControls.style.display = 'none';
+            }
+        }
+        
+        function updateCornerInputs() {
+            const corners = baseTransform.corners;
+            document.getElementById('tlX').value = corners.topLeft.x;
+            document.getElementById('tlY').value = corners.topLeft.y;
+            document.getElementById('trX').value = corners.topRight.x;
+            document.getElementById('trY').value = corners.topRight.y;
+            document.getElementById('blX').value = corners.bottomLeft.x;
+            document.getElementById('blY').value = corners.bottomLeft.y;
+            document.getElementById('brX').value = corners.bottomRight.x;
+            document.getElementById('brY').value = corners.bottomRight.y;
+        }
+        
+        function setTransformMode(mode) {
+            baseTransform.mode = mode;
+            updateTransformModeUI();
+            updateTransform();
+            render();
+        }
+        
+        function resetCorners() {
+            baseTransform.corners = {
+                topLeft: { x: 0, y: 0 },
+                topRight: { x: originalImageDimensions.width, y: 0 },
+                bottomLeft: { x: 0, y: originalImageDimensions.height },
+                bottomRight: { x: originalImageDimensions.width, y: originalImageDimensions.height }
+            };
+            updateCornerInputs();
+            updateTransform();
+            render();
+        }
+        
+        function keystoneTop() {
+            baseTransform.corners = {
+                topLeft: { x: -50, y: 0 },
+                topRight: { x: originalImageDimensions.width + 50, y: 0 },
+                bottomLeft: { x: 0, y: originalImageDimensions.height },
+                bottomRight: { x: originalImageDimensions.width, y: originalImageDimensions.height }
+            };
+            updateCornerInputs();
+            updateTransform();
+            render();
+        }
+        
+        function keystoneBottom() {
+            baseTransform.corners = {
+                topLeft: { x: 0, y: 0 },
+                topRight: { x: originalImageDimensions.width, y: 0 },
+                bottomLeft: { x: -50, y: originalImageDimensions.height },
+                bottomRight: { x: originalImageDimensions.width + 50, y: originalImageDimensions.height }
+            };
+            updateCornerInputs();
+            updateTransform();
+            render();
+        }
+        
+        function insetCorners() {
+            baseTransform.corners = {
+                topLeft: { x: 100, y: 100 },
+                topRight: { x: originalImageDimensions.width - 100, y: 100 },
+                bottomLeft: { x: 100, y: originalImageDimensions.height - 100 },
+                bottomRight: { x: originalImageDimensions.width - 100, y: originalImageDimensions.height - 100 }
+            };
+            updateCornerInputs();
+            updateTransform();
+            render();
+        }
         
         function render() {
             ctx.fillStyle = 'black';
@@ -326,6 +503,9 @@
             
             ctx.drawImage(tempCanvas, -tempCanvas.width/2, -tempCanvas.height/2);
             ctx.restore();
+            
+            // Apply perspective transform to canvas element if in corner mode
+            applyPerspectiveTransform();
             
             // Update transform handles
             updateHandles();
@@ -559,6 +739,45 @@
             document.getElementById('rotation').value = this.value;
             updateTransform();
         };
+        
+        // Corner input handlers
+        function bindCornerInputs() {
+            document.getElementById('tlX').oninput = function() {
+                baseTransform.corners.topLeft.x = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('tlY').oninput = function() {
+                baseTransform.corners.topLeft.y = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('trX').oninput = function() {
+                baseTransform.corners.topRight.x = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('trY').oninput = function() {
+                baseTransform.corners.topRight.y = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('blX').oninput = function() {
+                baseTransform.corners.bottomLeft.x = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('blY').oninput = function() {
+                baseTransform.corners.bottomLeft.y = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('brX').oninput = function() {
+                baseTransform.corners.bottomRight.x = parseInt(this.value) || 0;
+                updateTransform();
+            };
+            document.getElementById('brY').oninput = function() {
+                baseTransform.corners.bottomRight.y = parseInt(this.value) || 0;
+                updateTransform();
+            };
+        }
+        
+        // Bind corner inputs on load
+        window.addEventListener('load', bindCornerInputs);
         
         function resetTransform() {
             transform = { x: 0, y: 0, scale: 1, rotation: 0 };

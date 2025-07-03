@@ -122,7 +122,7 @@ class BrightnessControlService:
                             logger.info(f"Using current_video_path for backup: {actual_video_path}")
                         else:
                             # Fallback to assigned_videos
-                            with self.device_manager.assigned_videos_lock:
+                            with self.device_manager.device_state_lock:
                                 assigned_path = self.device_manager.assigned_videos.get(device.name)
                                 if assigned_path and os.path.exists(assigned_path):
                                     actual_video_path = assigned_path
