@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import {
   AppBar,
@@ -15,6 +15,7 @@ import {
   Toolbar,
   Typography,
   Button,
+  Tooltip,
 } from '@mui/material';
 import {
   Menu as MenuIcon,
@@ -27,9 +28,12 @@ import {
   CameraAlt as ProjectionIcon,
   GridOn as OverlayIcon,
   Animation as AnimationIcon,
+  ChevronLeft as ChevronLeftIcon,
+  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
 
 const drawerWidth = 240;
+const collapsedDrawerWidth = 64;
 
 const menuItems = [
   { text: 'Dashboard', icon: <DashboardIcon />, path: '/' },
@@ -45,11 +49,25 @@ const menuItems = [
 
 function Layout({ children }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [drawerCollapsed, setDrawerCollapsed] = useState(() => {
+    // Initialize from localStorage
+    const saved = localStorage.getItem('drawerCollapsed');
+    return saved === 'true';
+  });
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Save collapsed state to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem('drawerCollapsed', drawerCollapsed.toString());
+  }, [drawerCollapsed]);
+
   const handleDrawerToggle = () => {
     setMobileOpen(!mobileOpen);
+  };
+
+  const handleDrawerCollapse = () => {
+    setDrawerCollapsed(!drawerCollapsed);
   };
 
   const handleNavigation = (path) => {
@@ -59,22 +77,38 @@ function Layout({ children }) {
 
   const drawer = (
     <div>
-      <Toolbar>
-        <Typography variant="h6" noWrap component="div">
-          nano-dlna
-        </Typography>
+      <Toolbar sx={{ justifyContent: drawerCollapsed ? 'center' : 'space-between' }}>
+        {!drawerCollapsed && (
+          <Typography variant="h6" noWrap component="div">
+            nano-dlna
+          </Typography>
+        )}
+        <IconButton onClick={handleDrawerCollapse} sx={{ ml: drawerCollapsed ? 0 : 'auto' }}>
+          {drawerCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+        </IconButton>
       </Toolbar>
       <Divider />
       <List>
         {menuItems.map((item) => (
           <ListItem key={item.text} disablePadding>
-            <ListItemButton
-              selected={location.pathname === item.path}
-              onClick={() => handleNavigation(item.path)}
-            >
-              <ListItemIcon>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
+            <Tooltip title={drawerCollapsed ? item.text : ''} placement="right">
+              <ListItemButton
+                selected={location.pathname === item.path}
+                onClick={() => handleNavigation(item.path)}
+                sx={{
+                  justifyContent: drawerCollapsed ? 'center' : 'flex-start',
+                  px: drawerCollapsed ? 1 : 2,
+                }}
+              >
+                <ListItemIcon sx={{ 
+                  minWidth: drawerCollapsed ? 0 : 56,
+                  justifyContent: 'center' 
+                }}>
+                  {item.icon}
+                </ListItemIcon>
+                {!drawerCollapsed && <ListItemText primary={item.text} />}
+              </ListItemButton>
+            </Tooltip>
           </ListItem>
         ))}
       </List>
@@ -87,8 +121,12 @@ function Layout({ children }) {
       <AppBar
         position="fixed"
         sx={{
-          width: { sm: `calc(100% - ${drawerWidth}px)` },
-          ml: { sm: `${drawerWidth}px` },
+          width: { sm: `calc(100% - ${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px)` },
+          ml: { sm: `${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px` },
+          transition: theme => theme.transitions.create(['margin', 'width'], {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.leavingScreen,
+          }),
         }}
       >
         <Toolbar>
@@ -109,7 +147,14 @@ function Layout({ children }) {
       </AppBar>
       <Box
         component="nav"
-        sx={{ width: { sm: drawerWidth }, flexShrink: { sm: 0 } }}
+        sx={{ 
+          width: { sm: drawerCollapsed ? collapsedDrawerWidth : drawerWidth }, 
+          flexShrink: { sm: 0 },
+          transition: theme => theme.transitions.create('width', {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.leavingScreen,
+          }),
+        }}
         aria-label="mailbox folders"
       >
         {/* The implementation can be swapped with js to avoid SEO duplication of links. */}
@@ -131,7 +176,15 @@ function Layout({ children }) {
           variant="permanent"
           sx={{
             display: { xs: 'none', sm: 'block' },
-            '& .MuiDrawer-paper': { boxSizing: 'border-box', width: drawerWidth },
+            '& .MuiDrawer-paper': { 
+              boxSizing: 'border-box', 
+              width: drawerCollapsed ? collapsedDrawerWidth : drawerWidth,
+              transition: theme => theme.transitions.create('width', {
+                easing: theme.transitions.easing.sharp,
+                duration: theme.transitions.duration.leavingScreen,
+              }),
+              overflowX: 'hidden',
+            },
           }}
           open
         >
@@ -140,7 +193,16 @@ function Layout({ children }) {
       </Box>
       <Box
         component="main"
-        sx={{ flexGrow: 1, p: 3, width: { sm: `calc(100% - ${drawerWidth}px)` } }}
+        sx={{ 
+          flexGrow: 1, 
+          p: 3, 
+          width: { sm: `calc(100% - ${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px)` },
+          ml: { sm: `${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px` },
+          transition: theme => theme.transitions.create(['margin', 'width'], {
+            easing: theme.transitions.easing.sharp,
+            duration: theme.transitions.duration.leavingScreen,
+          }),
+        }}
       >
         <Toolbar />
         {children}

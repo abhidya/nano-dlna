@@ -123,7 +123,12 @@ function DeviceDetail() {
   // Calculate current playback position
   const calculateCurrentPosition = (device) => {
     try {
-      // If we have a start time, calculate position
+      // Always prefer the backend-provided position if available
+      if (device.playback_position) {
+        return device.playback_position;
+      }
+      
+      // Fallback to time-based calculation only if no backend position
       if (device.is_playing && device.playback_started_at) {
         // Backend sends timezone-naive timestamp, treat it as UTC
         // Add 'Z' to indicate UTC if not present
@@ -163,11 +168,6 @@ function DeviceDetail() {
         return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
       }
       
-      // If we have a position from backend, use it
-      if (device.playback_position) {
-        return device.playback_position;
-      }
-      
       return "00:00:00";
     } catch (error) {
       console.error('Error calculating playback position:', error, device);
@@ -177,8 +177,13 @@ function DeviceDetail() {
 
   // Calculate progress percentage
   const calculateProgress = (device) => {
-    // Calculate based on position if we have start time
-    if (device.is_playing && device.playback_started_at && device.playback_duration) {
+    // Always prefer the backend-provided progress if available
+    if (device.playback_progress !== null && device.playback_progress !== undefined) {
+      return device.playback_progress;
+    }
+    
+    // Fallback to calculating based on position
+    if (device.is_playing && device.playback_duration) {
       const currentPos = calculateCurrentPosition(device);
       const posParts = currentPos.split(':');
       const durationParts = device.playback_duration.split(':');
@@ -189,11 +194,6 @@ function DeviceDetail() {
       if (durationSeconds === 0) return 0;
       
       return Math.min(100, Math.floor((posSeconds / durationSeconds) * 100));
-    }
-    
-    // Use the progress from backend if available
-    if (device.playback_progress !== null && device.playback_progress !== undefined) {
-      return device.playback_progress;
     }
     
     return 0;
@@ -344,11 +344,6 @@ function DeviceDetail() {
                           sx={{ height: 8, borderRadius: 4 }}
                         />
                       </Box>
-                      {!device.playback_started_at && (
-                        <Typography variant="caption" color="textSecondary" sx={{ mt: 0.5, display: 'block' }}>
-                          Timer requires restart (Stop → Play)
-                        </Typography>
-                      )}
                     </Box>
                   </ListItem>
                 )}

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useCallback } from 'react';
+import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import './ProjectionMapping.css';
 
 function ProjectionMapping() {
@@ -38,6 +38,8 @@ function ProjectionMapping() {
     const [isSelecting, setIsSelecting] = useState(false);
     const [clipboard, setClipboard] = useState(null); // { width, height, data: ImageData }
     const [selectedLayers, setSelectedLayers] = useState(new Set()); // For multi-layer selection
+    const [isFullscreenMode, setIsFullscreenMode] = useState(false); // For fullscreen editing mode
+    const [canvasZoom, setCanvasZoom] = useState(1); // Zoom level for canvas (0.1 to 5)
     
     const originalCanvasRef = useRef(null);
     const edgeCanvasRef = useRef(null);
@@ -50,6 +52,7 @@ function ProjectionMapping() {
     const cachedEdgeDataRef = useRef(null);
     const precomputedEdgesRef = useRef(null); // Store all edge magnitudes
     const edgeUpdateTimerRef = useRef(null);
+    const layersRef = useRef(layers); // Keep current layers state for event handlers
     
     // Brush optimization refs
     const brushCanvasRef = useRef(null);
@@ -71,8 +74,60 @@ function ProjectionMapping() {
         isProcessing: false,
         pendingUpdates: [],
         maskCache: new Map(), // Cache mask data for direct manipulation
-        updateTimer: null
+        updateTimer: null,
+        contentScale: 1, // Scale factor for fullscreen content
+        contentOffset: { x: 0, y: 0 } // Offset for centered content
     });
+    
+    // Cache for preview bounds to prevent unnecessary recalculations
+    const boundsCache = useRef({
+        lastLayersHash: '',
+        lastBaseTransform: null,
+        currentBounds: null,
+        combinedBounds: null
+    });
+    
+    // Canvas pool for performance optimization
+    const canvasPool = useRef([]);
+    const getPooledCanvas = useCallback((width, height) => {
+        // Find an available canvas with matching dimensions
+        let canvas = canvasPool.current.find(c => 
+            !c.inUse && c.width === width && c.height === height
+        );
+        
+        if (!canvas) {
+            // Create new canvas if none available
+            canvas = document.createElement('canvas');
+            canvas.width = width;
+            canvas.height = height;
+            canvasPool.current.push(canvas);
+        }
+        
+        canvas.inUse = true;
+        return canvas;
+    }, []);
+    
+    const releasePooledCanvas = useCallback((canvas) => {
+        if (canvas && canvas.inUse) {
+            canvas.inUse = false;
+            // Clear the canvas for reuse
+            const ctx = canvas.getContext('2d');
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+        }
+    }, []);
+    
+    // Simple debounce implementation
+    const debounce = useCallback((func, wait) => {
+        let timeout;
+        return function executedFunction(...args) {
+            const later = () => {
+                clearTimeout(timeout);
+                func(...args);
+            };
+            clearTimeout(timeout);
+            timeout = setTimeout(later, wait);
+        };
+    }, []);
     
     // Helper function to get cached context
     const getContext = useCallback((canvasRef, contextKey) => {
@@ -94,6 +149,8 @@ function ProjectionMapping() {
                 return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><circle cx=\'16\' cy=\'16\' r=\'8\' fill=\'none\' stroke=\'white\' stroke-width=\'2\'/><circle cx=\'16\' cy=\'16\' r=\'8\' fill=\'none\' stroke=\'black\' stroke-width=\'1\'/><line x1=\'16\' y1=\'4\' x2=\'16\' y2=\'8\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'16\' y1=\'24\' x2=\'16\' y2=\'28\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'4\' y1=\'16\' x2=\'8\' y2=\'16\' stroke=\'white\' stroke-width=\'2\'/><line x1=\'24\' y1=\'16\' x2=\'28\' y2=\'16\' stroke=\'white\' stroke-width=\'2\'/></svg>") 16 16, auto';
             case 'bezier':
                 return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><circle cx=\'16\' cy=\'16\' r=\'4\' fill=\'white\' stroke=\'black\'/><path d=\'M8 24 Q 16 8, 24 24\' fill=\'none\' stroke=\'white\' stroke-width=\'2\'/><path d=\'M8 24 Q 16 8, 24 24\' fill=\'none\' stroke=\'black\' stroke-width=\'1\'/></svg>") 16 16, auto';
+            case 'despeckle':
+                return 'url("data:image/svg+xml;utf8,<svg xmlns=\'http://www.w3.org/2000/svg\' width=\'32\' height=\'32\' viewBox=\'0 0 32 32\'><circle cx=\'8\' cy=\'8\' r=\'2\' fill=\'white\' stroke=\'black\'/><circle cx=\'24\' cy=\'8\' r=\'2\' fill=\'white\' stroke=\'black\'/><circle cx=\'16\' cy=\'16\' r=\'2\' fill=\'white\' stroke=\'black\'/><circle cx=\'8\' cy=\'24\' r=\'2\' fill=\'white\' stroke=\'black\'/><circle cx=\'24\' cy=\'24\' r=\'2\' fill=\'white\' stroke=\'black\'/><path d=\'M16 10 L16 14 M16 18 L16 22 M10 16 L14 16 M18 16 L22 16\' stroke=\'white\' stroke-width=\'2\'/></svg>") 16 16, auto';
             default:
                 return 'crosshair';
         }
@@ -306,7 +363,7 @@ function ProjectionMapping() {
                             const canvas = document.createElement('canvas');
                             canvas.width = originalImage.width;
                             canvas.height = originalImage.height;
-                            const ctx = canvas.getContext('2d');
+                            const ctx = canvas.getContext('2d', { willReadFrequently: true });
                             
                             // Fill with black background
                             ctx.fillStyle = 'black';
@@ -660,6 +717,29 @@ function ProjectionMapping() {
     const calculatePreviewBounds = useCallback((includeCurrentLayer = true, paddingBuffer = 100) => {
         if (!originalImage) return { width: 800, height: 600, offsetX: 0, offsetY: 0 };
         
+        // Create a hash of current state for caching
+        const layersHash = JSON.stringify(layers.map(l => ({
+            id: l.id,
+            visible: l.visible,
+            transform: l.transform
+        })));
+        const transformHash = JSON.stringify(baseTransform);
+        
+        // Check cache
+        if (includeCurrentLayer && 
+            boundsCache.current.lastLayersHash === layersHash && 
+            boundsCache.current.lastBaseTransform === transformHash &&
+            boundsCache.current.currentBounds) {
+            return boundsCache.current.currentBounds;
+        }
+        
+        if (!includeCurrentLayer && 
+            boundsCache.current.lastLayersHash === layersHash && 
+            boundsCache.current.lastBaseTransform === transformHash &&
+            boundsCache.current.combinedBounds) {
+            return boundsCache.current.combinedBounds;
+        }
+        
         const originalWidth = originalImage.width;
         const originalHeight = originalImage.height;
         let minX = 0, minY = 0, maxX = originalWidth, maxY = originalHeight;
@@ -710,7 +790,18 @@ function ProjectionMapping() {
         const offsetX = -minX;  // Offset to translate content into positive space
         const offsetY = -minY;
         
-        return { width, height, offsetX, offsetY };
+        const result = { width, height, offsetX, offsetY };
+        
+        // Update cache
+        boundsCache.current.lastLayersHash = layersHash;
+        boundsCache.current.lastBaseTransform = transformHash;
+        if (includeCurrentLayer) {
+            boundsCache.current.currentBounds = result;
+        } else {
+            boundsCache.current.combinedBounds = result;
+        }
+        
+        return result;
     }, [originalImage, currentLayerIndex, layers, baseTransform, getTransformedBounds]);
     
     const updateCurrentCanvas = useCallback(() => {
@@ -719,21 +810,89 @@ function ProjectionMapping() {
         const ctx = getContext(currentCanvasRef, 'current');
         if (!ctx) return;
         
-        // Calculate required canvas bounds for transformed content
-        const bounds = calculatePreviewBounds(true, 50); // Include current layer with padding
+        let canvasWidth, canvasHeight, contentScale = 1, offsetX = 0, offsetY = 0;
         
-        // Resize canvas if needed
-        if (currentCanvasRef.current.width !== bounds.width || currentCanvasRef.current.height !== bounds.height) {
-            currentCanvasRef.current.width = bounds.width;
-            currentCanvasRef.current.height = bounds.height;
+        if (isFullscreenMode && currentCanvasRef.current.parentElement) {
+            // In fullscreen mode, size canvas to fill container
+            const container = currentCanvasRef.current.parentElement;
+            const containerRect = container.getBoundingClientRect();
+            
+            // Account for padding and labels
+            const padding = 40;
+            canvasWidth = Math.floor(containerRect.width - padding);
+            canvasHeight = Math.floor(containerRect.height - padding * 2); // Extra padding for label
+            
+            // Calculate scale to fit content within the large canvas
+            const bounds = calculatePreviewBounds(true, 50);
+            const scaleX = canvasWidth / bounds.width;
+            const scaleY = canvasHeight / bounds.height;
+            contentScale = Math.min(scaleX, scaleY);
+            
+            // Center the content
+            offsetX = (canvasWidth - bounds.width * contentScale) / 2;
+            offsetY = (canvasHeight - bounds.height * contentScale) / 2;
+            
+            // Store for mouse coordinate calculations
+            canvasWorkRef.current.contentScale = contentScale;
+            canvasWorkRef.current.contentOffset = { x: offsetX, y: offsetY };
+            
+            // Apply CSS zoom transform for additional user-controlled zoom
+            currentCanvasRef.current.style.transform = `scale(${canvasZoom})`;
+            currentCanvasRef.current.style.transformOrigin = 'center';
+        } else {
+            // Normal mode - size based on content
+            const bounds = calculatePreviewBounds(true, 50);
+            canvasWidth = bounds.width;
+            canvasHeight = bounds.height;
+            offsetX = bounds.offsetX;
+            offsetY = bounds.offsetY;
+            
+            // Reset transform in normal mode
+            currentCanvasRef.current.style.transform = '';
+            currentCanvasRef.current.style.transformOrigin = '';
+            
+            // Reset content scale
+            canvasWorkRef.current.contentScale = 1;
+            canvasWorkRef.current.contentOffset = { x: 0, y: 0 };
         }
         
-        ctx.clearRect(0, 0, bounds.width, bounds.height);
+        // Only resize if dimensions actually changed
+        const needsResize = currentCanvasRef.current.width !== canvasWidth || 
+                          currentCanvasRef.current.height !== canvasHeight;
         
-        // Draw original image as background with offset
+        if (needsResize) {
+            // Save current canvas content before resizing
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = currentCanvasRef.current.width;
+            tempCanvas.height = currentCanvasRef.current.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(currentCanvasRef.current, 0, 0);
+            
+            // Resize the canvas (this clears it)
+            currentCanvasRef.current.width = canvasWidth;
+            currentCanvasRef.current.height = canvasHeight;
+            
+            // Don't restore old content - we'll redraw everything fresh
+        }
+        
+        ctx.clearRect(0, 0, canvasWidth, canvasHeight);
+        
+        // Draw original image as background
         if (originalCanvasRef.current && originalImage) {
+            ctx.save();
             ctx.globalAlpha = 0.3;
-            ctx.drawImage(originalCanvasRef.current, bounds.offsetX, bounds.offsetY);
+            
+            if (isFullscreenMode) {
+                // Apply content scaling in fullscreen mode
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(contentScale, contentScale);
+                ctx.drawImage(originalCanvasRef.current, 0, 0);
+            } else {
+                // Normal mode - use offset directly
+                ctx.drawImage(originalCanvasRef.current, offsetX, offsetY);
+            }
+            
+            ctx.restore();
         }
         
         const currentLayer = layers[currentLayerIndex];
@@ -763,10 +922,22 @@ function ProjectionMapping() {
             
             tempCtx.putImageData(coloredMask, 0, 0);
             
-            // Apply base transform first, then layer transform
+            // Apply transforms
             ctx.save();
-            // Translate to canvas center plus offset
-            ctx.translate(bounds.width/2, bounds.height/2);
+            
+            if (isFullscreenMode) {
+                // In fullscreen, apply content scaling first
+                ctx.translate(offsetX, offsetY);
+                ctx.scale(contentScale, contentScale);
+                
+                // Then translate to center of scaled content
+                const bounds = calculatePreviewBounds(true, 50);
+                ctx.translate(bounds.width/2, bounds.height/2);
+            } else {
+                // Normal mode - translate to canvas center
+                const bounds = calculatePreviewBounds(true, 50);
+                ctx.translate(bounds.width/2, bounds.height/2);
+            }
             
             // Apply base transform
             ctx.translate(baseTransform.x, baseTransform.y);
@@ -787,7 +958,7 @@ function ProjectionMapping() {
         if (originalImage) {
             applyPerspectiveTransform(currentCanvasRef.current, baseTransform.corners, originalImage.width, originalImage.height);
         }
-    }, [currentLayerIndex, layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform]);
+    }, [currentLayerIndex, layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform, isFullscreenMode, canvasZoom]);
     
     const updateCombinedCanvas = useCallback(() => {
         if (!combinedCanvasRef.current) return;
@@ -798,10 +969,23 @@ function ProjectionMapping() {
         // Calculate required canvas bounds for all visible layers
         const bounds = calculatePreviewBounds(false, 50); // Include all visible layers with padding
         
-        // Resize canvas if needed
-        if (combinedCanvasRef.current.width !== bounds.width || combinedCanvasRef.current.height !== bounds.height) {
+        // Only resize if dimensions actually changed
+        const needsResize = combinedCanvasRef.current.width !== bounds.width || 
+                          combinedCanvasRef.current.height !== bounds.height;
+        
+        if (needsResize) {
+            // Save current canvas content before resizing
+            const tempCanvas = document.createElement('canvas');
+            tempCanvas.width = combinedCanvasRef.current.width;
+            tempCanvas.height = combinedCanvasRef.current.height;
+            const tempCtx = tempCanvas.getContext('2d');
+            tempCtx.drawImage(combinedCanvasRef.current, 0, 0);
+            
+            // Resize the canvas (this clears it)
             combinedCanvasRef.current.width = bounds.width;
             combinedCanvasRef.current.height = bounds.height;
+            
+            // Don't restore old content - we'll redraw everything fresh
         }
         
         ctx.clearRect(0, 0, bounds.width, bounds.height);
@@ -813,11 +997,15 @@ function ProjectionMapping() {
         }
         
         ctx.globalAlpha = 0.7;
+        
+        // Collect used canvases to release after rendering
+        const usedCanvases = [];
+        
         layers.forEach(layer => {
             if (layer.visible) {
-                const tempCanvas = document.createElement('canvas');
-                tempCanvas.width = layer.mask.width;
-                tempCanvas.height = layer.mask.height;
+                // Use pooled canvas instead of creating new one
+                const tempCanvas = getPooledCanvas(layer.mask.width, layer.mask.height);
+                usedCanvases.push(tempCanvas);
                 const tempCtx = tempCanvas.getContext('2d');
                 
                 const coloredMask = new ImageData(layer.mask.width, layer.mask.height);
@@ -860,11 +1048,20 @@ function ProjectionMapping() {
             }
         });
         
+        // Release all used canvases back to the pool
+        usedCanvases.forEach(canvas => releasePooledCanvas(canvas));
+        
         // Apply perspective transform to the canvas element if in corner mode
         if (originalImage) {
             applyPerspectiveTransform(combinedCanvasRef.current, baseTransform.corners, originalImage.width, originalImage.height);
         }
-    }, [layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform]);
+    }, [layers, getContext, calculatePreviewBounds, baseTransform, originalImage, applyPerspectiveTransform, getPooledCanvas, releasePooledCanvas]);
+    
+    // Debounced version of updateCombinedCanvas for brush operations
+    const updateCombinedCanvasDebounced = useMemo(
+        () => debounce(updateCombinedCanvas, 100), // Update at most 10 times per second
+        [updateCombinedCanvas, debounce]
+    );
     
     const drawBezierMarkers = useCallback((points) => {
         const ctx = getContext(currentCanvasRef, 'current');
@@ -920,12 +1117,17 @@ function ProjectionMapping() {
 
     useEffect(() => {
         updateCurrentCanvas();
-        updateCombinedCanvas();
+        // Use debounced version when drawing to improve performance
+        if (isDrawing) {
+            updateCombinedCanvasDebounced();
+        } else {
+            updateCombinedCanvas();
+        }
         // Redraw bezier markers if we have points
         if (bezierPoints.length > 0) {
             drawBezierMarkers(bezierPoints);
         }
-    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, bezierPoints, drawBezierMarkers]);
+    }, [layers, currentLayerIndex, updateCurrentCanvas, updateCombinedCanvas, updateCombinedCanvasDebounced, bezierPoints, drawBezierMarkers, isDrawing]);
     
     useEffect(() => {
         // Debounce edge updates for smoother slider experience
@@ -943,6 +1145,13 @@ function ProjectionMapping() {
             }
         };
     }, [edgeSensitivity, updateEdgeDetection]);
+    
+    // Update canvas when fullscreen mode or zoom changes
+    useEffect(() => {
+        if (currentLayerIndex >= 0) {
+            updateCurrentCanvas();
+        }
+    }, [isFullscreenMode, canvasZoom, updateCurrentCanvas, currentLayerIndex]);
     
     const toggleLayerVisibility = (index) => {
         const newLayers = [...layers];
@@ -1010,7 +1219,7 @@ function ProjectionMapping() {
         const canvas = document.createElement('canvas');
         canvas.width = originalImage.width;
         canvas.height = originalImage.height;
-        const ctx = canvas.getContext('2d');
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
         
         // Clear canvas
         ctx.clearRect(0, 0, canvas.width, canvas.height);
@@ -1218,7 +1427,7 @@ function ProjectionMapping() {
             const tempCanvas = document.createElement('canvas');
             tempCanvas.width = originalImage.width;
             tempCanvas.height = originalImage.height;
-            const tempCtx = tempCanvas.getContext('2d');
+            const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
             tempCtx.drawImage(originalImage, 0, 0);
             const imageData = tempCtx.getImageData(0, 0, originalImage.width, originalImage.height);
             
@@ -1644,12 +1853,25 @@ function ProjectionMapping() {
         const rect = canvas.getBoundingClientRect();
         
         // Calculate scale factors between displayed size and internal resolution
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+        let scaleX = canvas.width / rect.width;
+        let scaleY = canvas.height / rect.height;
+        
+        // In fullscreen mode, we need to account for the CSS transform scale
+        if (isFullscreenMode && canvas === currentCanvasRef.current && canvasZoom !== 1) {
+            scaleX = scaleX / canvasZoom;
+            scaleY = scaleY / canvasZoom;
+        }
         
         // Apply scaling to get correct canvas coordinates
         let x = Math.floor((e.clientX - rect.left) * scaleX);
         let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // In fullscreen mode with content scaling, adjust coordinates
+        if (isFullscreenMode && canvas === currentCanvasRef.current && canvasWorkRef.current.contentScale !== 1) {
+            // Remove the content offset and scale to get coordinates in original image space
+            x = (x - canvasWorkRef.current.contentOffset.x) / canvasWorkRef.current.contentScale;
+            y = (y - canvasWorkRef.current.contentOffset.y) / canvasWorkRef.current.contentScale;
+        }
         
         // Handle selection tool
         if (currentTool === 'select') {
@@ -1685,6 +1907,8 @@ function ProjectionMapping() {
             smartFloodFill(x, y, isEdgeCanvas);
         } else if (currentTool === 'magicWand') {
             magicWandFloodFill(x, y, isEdgeCanvas);
+        } else if (currentTool === 'despeckle') {
+            despeckleLayer();
         } else if (currentTool === 'brush' || currentTool === 'eraser') {
             setIsDrawing(true);
             lastBrushPosRef.current = null; // Reset for new stroke
@@ -1708,12 +1932,25 @@ function ProjectionMapping() {
         const rect = canvas.getBoundingClientRect();
         
         // Calculate scale factors between displayed size and internal resolution
-        const scaleX = canvas.width / rect.width;
-        const scaleY = canvas.height / rect.height;
+        let scaleX = canvas.width / rect.width;
+        let scaleY = canvas.height / rect.height;
+        
+        // In fullscreen mode, we need to account for the CSS transform scale
+        if (isFullscreenMode && canvas === currentCanvasRef.current && canvasZoom !== 1) {
+            scaleX = scaleX / canvasZoom;
+            scaleY = scaleY / canvasZoom;
+        }
         
         // Apply scaling to get correct canvas coordinates
         let x = Math.floor((e.clientX - rect.left) * scaleX);
         let y = Math.floor((e.clientY - rect.top) * scaleY);
+        
+        // In fullscreen mode with content scaling, adjust coordinates
+        if (isFullscreenMode && canvas === currentCanvasRef.current && canvasWorkRef.current.contentScale !== 1) {
+            // Remove the content offset and scale to get coordinates in original image space
+            x = (x - canvasWorkRef.current.contentOffset.x) / canvasWorkRef.current.contentScale;
+            y = (y - canvasWorkRef.current.contentOffset.y) / canvasWorkRef.current.contentScale;
+        }
         
         // Handle selection drawing
         if (isSelecting && selectionStart) {
@@ -2271,6 +2508,183 @@ function ProjectionMapping() {
         }, 16);
     };
     
+    const despeckleLayer = () => {
+        if (currentLayerIndex < 0 || !layers[currentLayerIndex]) {
+            setStatus('No layer selected');
+            return;
+        }
+        
+        const layer = layers[currentLayerIndex];
+        const width = originalImage.width;
+        const height = originalImage.height;
+        const thresholdSize = tolerance; // Use tolerance slider for maximum speckle size
+        
+        // Mark as processing
+        canvasWorkRef.current.isProcessing = true;
+        setStatus('Finding speckles...');
+        
+        // Work on a copy of the mask
+        const maskData = layer.mask.data.slice();
+        
+        // First, find the bounding box of painted pixels
+        let minX = width, minY = height, maxX = 0, maxY = 0;
+        let hasPaintedPixels = false;
+        
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const pixelIdx = (y * width + x) * 4;
+                if (maskData[pixelIdx + 3] > 0) {
+                    hasPaintedPixels = true;
+                    minX = Math.min(minX, x);
+                    minY = Math.min(minY, y);
+                    maxX = Math.max(maxX, x);
+                    maxY = Math.max(maxY, y);
+                }
+            }
+        }
+        
+        if (!hasPaintedPixels) {
+            setStatus('No painted areas found');
+            canvasWorkRef.current.isProcessing = false;
+            return;
+        }
+        
+        // Store original boundaries before padding
+        const originalMinX = minX;
+        const originalMinY = minY;
+        const originalMaxX = maxX;
+        const originalMaxY = maxY;
+        
+        // Add padding to ensure we catch holes at edges
+        minX = Math.max(0, minX - 1);
+        minY = Math.max(0, minY - 1);
+        maxX = Math.min(width - 1, maxX + 1);
+        maxY = Math.min(height - 1, maxY + 1);
+        
+        const visited = new Uint8Array(width * height);
+        let specklesFilled = 0;
+        let totalPixelsFilled = 0;
+        
+        // Helper function to check if a hole is completely surrounded by painted pixels
+        const isHoleSurrounded = (pixels) => {
+            // More lenient margin - holes must be at least 1 pixel inside the boundary
+            const margin = 1;
+            for (const {x, y} of pixels) {
+                if (x <= originalMinX + margin || x >= originalMaxX - margin || 
+                    y <= originalMinY + margin || y >= originalMaxY - margin) {
+                    return false;
+                }
+            }
+            
+            // Count painted neighbors for edge pixels of the hole only
+            const edgePixels = new Set();
+            for (const {x, y} of pixels) {
+                // Check if this pixel is on the edge of the hole
+                const neighbors = [
+                    {x: x + 1, y}, {x: x - 1, y},
+                    {x, y: y + 1}, {x, y: y - 1}
+                ];
+                
+                for (const {x: nx, y: ny} of neighbors) {
+                    if (nx >= 0 && nx < width && ny >= 0 && ny < height) {
+                        const nIdx = (ny * width + nx) * 4;
+                        if (maskData[nIdx + 3] > 0) {
+                            // This pixel touches a painted pixel, so it's an edge
+                            edgePixels.add(`${x},${y}`);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            // If at least 25% of the hole pixels are edge pixels touching painted areas, it's likely a hole
+            return edgePixels.size >= pixels.length * 0.25;
+        };
+        
+        // Find all unpainted regions within the bounding box
+        for (let y = minY; y <= maxY; y++) {
+            for (let x = minX; x <= maxX; x++) {
+                const idx = y * width + x;
+                const pixelIdx = idx * 4;
+                
+                // Skip if already visited or already painted
+                if (visited[idx] || maskData[pixelIdx + 3] > 0) continue;
+                
+                // Found an unpainted pixel - flood fill to find the region size
+                const regionPixels = [];
+                const stack = [{x, y}];
+                let regionSize = 0;
+                
+                // Allow larger regions - multiply threshold by 10 for more aggressive filling
+                while (stack.length > 0 && regionSize < thresholdSize * 10 + 1) {
+                    const {x: cx, y: cy} = stack.pop();
+                    
+                    if (cx < 0 || cx >= width || cy < 0 || cy >= height) continue;
+                    
+                    const currentIdx = cy * width + cx;
+                    if (visited[currentIdx]) continue;
+                    
+                    const currentPixelIdx = currentIdx * 4;
+                    if (maskData[currentPixelIdx + 3] > 0) continue;
+                    
+                    visited[currentIdx] = 1;
+                    regionPixels.push({x: cx, y: cy});
+                    regionSize++;
+                    
+                    // Add neighbors
+                    stack.push({x: cx + 1, y: cy});
+                    stack.push({x: cx - 1, y: cy});
+                    stack.push({x: cx, y: cy + 1});
+                    stack.push({x: cx, y: cy - 1});
+                }
+                
+                // If region is small enough and doesn't touch boundary, fill it
+                // Allow up to 10x the threshold size for more aggressive filling
+                if (regionSize <= thresholdSize * 10 && regionSize > 0 && isHoleSurrounded(regionPixels)) {
+                    regionPixels.forEach(({x: px, y: py}) => {
+                        const pIdx = (py * width + px) * 4;
+                        maskData[pIdx] = 255;
+                        maskData[pIdx + 1] = 255;
+                        maskData[pIdx + 2] = 255;
+                        maskData[pIdx + 3] = 255;
+                    });
+                    specklesFilled++;
+                    totalPixelsFilled += regionSize;
+                }
+            }
+        }
+        
+        // Update the layer mask
+        const newMask = new ImageData(maskData, width, height);
+        canvasWorkRef.current.maskCache.set(layer.id, newMask);
+        
+        // Update the canvas immediately for visual feedback
+        requestAnimationFrame(() => {
+            updateCurrentCanvas();
+        });
+        
+        // Queue the state update
+        canvasWorkRef.current.pendingUpdates.push({
+            layerId: layer.id,
+            changes: {
+                mask: newMask,
+                pixelCount: layer.pixelCount + totalPixelsFilled
+            }
+        });
+        
+        // Defer the React state update
+        if (canvasWorkRef.current.updateTimer) {
+            clearTimeout(canvasWorkRef.current.updateTimer);
+        }
+        
+        canvasWorkRef.current.updateTimer = setTimeout(() => {
+            canvasWorkRef.current.isProcessing = false;
+            flushPendingUpdates();
+            saveLayerState(layer.id);
+            setStatus(`Filled ${specklesFilled} speckles`);
+        }, 16);
+    };
+    
     // Initialize brush canvas when image loads
     const initBrushCanvas = useCallback((img) => {
         const imageToUse = img || originalImage;
@@ -2279,7 +2693,7 @@ function ProjectionMapping() {
         brushCanvasRef.current = document.createElement('canvas');
         brushCanvasRef.current.width = imageToUse.width;
         brushCanvasRef.current.height = imageToUse.height;
-        brushCtxRef.current = brushCanvasRef.current.getContext('2d');
+        brushCtxRef.current = brushCanvasRef.current.getContext('2d', { willReadFrequently: true });
         brushCtxRef.current.lineCap = 'round';
         brushCtxRef.current.lineJoin = 'round';
     }, [originalImage]);
@@ -2451,7 +2865,7 @@ function ProjectionMapping() {
         const tempCanvas = document.createElement('canvas');
         tempCanvas.width = width;
         tempCanvas.height = height;
-        const tempCtx = tempCanvas.getContext('2d');
+        const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true });
         
         tempCtx.strokeStyle = 'white';
         tempCtx.lineWidth = brushSize;
@@ -2574,6 +2988,14 @@ function ProjectionMapping() {
         setStatus('Redo');
     }, [currentLayerIndex, layers]);
     
+    // Keep layersRef in sync with layers state
+    useEffect(() => {
+        layersRef.current = layers;
+    }, [layers]);
+    
+    // No longer need to update canvases when fullscreen mode changes
+    // since we're using CSS display:none instead of conditional rendering
+    
     useEffect(() => {
         const handleKeyDown = (e) => {
             if (e.ctrlKey && e.key === 'z') {
@@ -2582,6 +3004,11 @@ function ProjectionMapping() {
             } else if (e.ctrlKey && e.key === 'y') {
                 e.preventDefault();
                 redo();
+            } else if (e.key === 'F11') {
+                e.preventDefault();
+                if (currentLayerIndex >= 0) {
+                    setIsFullscreenMode(prev => !prev);
+                }
             } else if (selection && currentTool === 'selection') {
                 // Selection tool keyboard shortcuts
                 if (e.ctrlKey || e.metaKey) {
@@ -2609,27 +3036,34 @@ function ProjectionMapping() {
         };
         
         const handleMessage = (event) => {
-            if (event.data.type === 'updateTransform') {
-                const newLayers = [...layers];
-                if (newLayers[event.data.layerIndex]) {
-                    newLayers[event.data.layerIndex].transform = event.data.transform;
-                    setLayers(newLayers);
+            try {
+                if (event.data.type === 'updateTransform') {
+                    const currentLayers = layersRef.current;
+                    const newLayers = [...currentLayers];
+                    if (newLayers[event.data.layerIndex]) {
+                        newLayers[event.data.layerIndex].transform = event.data.transform;
+                        setLayers(newLayers);
+                    }
+                } else if (event.data.type === 'updateBaseTransform') {
+                    setBaseTransform(event.data.transform);
+                } else if (event.data.type === 'updateLayerMask') {
+                    const { layerIndex, maskData, width, height } = event.data;
+                    const currentLayers = layersRef.current;
+                    if (layerIndex >= 0 && layerIndex < currentLayers.length && 
+                        width === originalImage.width && height === originalImage.height) {
+                        const updatedLayers = [...currentLayers];
+                        updatedLayers[layerIndex] = {
+                            ...updatedLayers[layerIndex],
+                            mask: new Uint8Array(maskData)
+                        };
+                        setLayers(updatedLayers);
+                        canvasWorkRef.current.maskCache.set(updatedLayers[layerIndex].id, new Uint8Array(maskData));
+                        setStatus(`Updated ${updatedLayers[layerIndex].name} from editor`);
+                    }
                 }
-            } else if (event.data.type === 'updateBaseTransform') {
-                setBaseTransform(event.data.transform);
-            } else if (event.data.type === 'updateLayerMask') {
-                const { layerIndex, maskData, width, height } = event.data;
-                if (layerIndex >= 0 && layerIndex < layers.length && 
-                    width === originalImage.width && height === originalImage.height) {
-                    const updatedLayers = [...layers];
-                    updatedLayers[layerIndex] = {
-                        ...updatedLayers[layerIndex],
-                        mask: new Uint8Array(maskData)
-                    };
-                    setLayers(updatedLayers);
-                    canvasWorkRef.current.maskCache.set(updatedLayers[layerIndex].id, new Uint8Array(maskData));
-                    setStatus(`Updated ${updatedLayers[layerIndex].name} from editor`);
-                }
+            } catch (error) {
+                console.error('Error handling message:', error);
+                setStatus('Error updating layer from editor');
             }
         };
         
@@ -2641,7 +3075,7 @@ function ProjectionMapping() {
             window.removeEventListener('message', handleMessage);
         };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [layers, undo, redo, selection, currentTool, cutSelection, copySelection, pasteSelection, deleteSelection, originalImage]);
+    }, [undo, redo, selection, currentTool, cutSelection, copySelection, pasteSelection, deleteSelection, originalImage, currentLayerIndex]);
     
     // Cleanup projection windows on unmount
     useEffect(() => {
@@ -3365,9 +3799,21 @@ function ProjectionMapping() {
                     <input 
                         type="range" 
                         min="5" 
-                        max="100" 
+                        max="500" 
                         value={edgeSensitivity}
                         onChange={(e) => setEdgeSensitivity(parseInt(e.target.value))}
+                        disabled={edgeProcessing}
+                    />
+                    <input
+                        type="number"
+                        min="1"
+                        max="2000"
+                        value={edgeSensitivity}
+                        onChange={(e) => {
+                            const val = parseInt(e.target.value) || 5;
+                            setEdgeSensitivity(Math.max(1, Math.min(2000, val)));
+                        }}
+                        style={{ width: '60px', marginLeft: '10px' }}
                         disabled={edgeProcessing}
                     />
                     {edgeProcessing && <small style={{display: 'block', marginTop: '5px'}}>Processing edges...</small>}
@@ -3438,25 +3884,53 @@ function ProjectionMapping() {
                     >
                         📐 Bezier
                     </button>
+                    <button 
+                        className={`tool-button ${currentTool === 'despeckle' ? 'active' : ''}`}
+                        onClick={() => { setCurrentTool('despeckle'); setBezierPoints([]); }}
+                    >
+                        ✨ Despeckle
+                    </button>
                 </div>
                 
                 <div className="control-group">
-                    <label>Tolerance: <span>{tolerance}</span></label>
+                    <label>{currentTool === 'despeckle' ? 'Speckle Size' : 'Tolerance'}: <span>{tolerance}</span></label>
                     <input 
                         type="range" 
                         min="5" 
-                        max="100" 
+                        max="500" 
                         value={tolerance}
                         onChange={(e) => setTolerance(parseInt(e.target.value))}
+                    />
+                    <input
+                        type="number"
+                        min="1"
+                        max="2000"
+                        value={tolerance}
+                        onChange={(e) => {
+                            const val = parseInt(e.target.value) || 5;
+                            setTolerance(Math.max(1, Math.min(2000, val)));
+                        }}
+                        style={{ width: '60px', marginLeft: '10px' }}
                     />
                     
                     <label>Brush Size: <span>{brushSize}</span></label>
                     <input 
                         type="range" 
                         min="1" 
-                        max="200" 
+                        max="500" 
                         value={brushSize}
                         onChange={(e) => setBrushSize(parseInt(e.target.value))}
+                    />
+                    <input
+                        type="number"
+                        min="1"
+                        max="2000"
+                        value={brushSize}
+                        onChange={(e) => {
+                            const val = parseInt(e.target.value) || 1;
+                            setBrushSize(Math.max(1, Math.min(2000, val)));
+                        }}
+                        style={{ width: '60px', marginLeft: '10px' }}
                     />
                     
                     <label>Brush Mode:</label>
@@ -3604,7 +4078,7 @@ function ProjectionMapping() {
                                 <div className="layer-controls">
                                     <button onClick={() => selectLayer(index)} title="Select for editing">✏️</button>
                                     <button onClick={() => copyLayer(index)} title="Copy layer">📋</button>
-                                    <button onClick={() => openFullscreenEditor(index)} title="Edit in fullscreen">🔍</button>
+                                    <button onClick={() => { selectLayer(index); setIsFullscreenMode(true); }} title="Edit in fullscreen">🔍</button>
                                     <button onClick={() => openProjectionWindow(index)} title="Projection window">📺</button>
                                     <button onClick={() => deleteLayer(index)} title="Delete layer">🗑️</button>
                                     <select 
@@ -3649,12 +4123,12 @@ function ProjectionMapping() {
                 </div>
             </div>
             
-            <div className="canvas-area">
-                <div className="canvas-container">
+            <div className={`canvas-area ${isFullscreenMode ? 'fullscreen-mode' : ''}`}>
+                <div className="canvas-container" style={{ display: isFullscreenMode ? 'none' : 'flex' }}>
                     <div className="canvas-label">Original</div>
                     <canvas ref={originalCanvasRef}></canvas>
                 </div>
-                <div className="canvas-container">
+                <div className="canvas-container" style={{ display: isFullscreenMode ? 'none' : 'flex' }}>
                     <div className="canvas-label">Edge Detection</div>
                     <canvas 
                         ref={edgeCanvasRef}
@@ -3678,13 +4152,56 @@ function ProjectionMapping() {
                         />
                     )}
                 </div>
-                <div className="canvas-container">
+                <div className="canvas-container" style={{ display: isFullscreenMode ? 'none' : 'flex' }}>
                     <div className="canvas-label">All Layers Combined</div>
                     <canvas ref={combinedCanvasRef}></canvas>
                 </div>
-                <div className="canvas-container">
+                <div className={`canvas-container ${isFullscreenMode ? 'fullscreen-canvas' : ''}`}>
                     <div className="canvas-label">
                         Current Layer: <span>{layers[currentLayerIndex]?.name || 'None'}</span>
+                        {currentLayerIndex >= 0 && (
+                            <button 
+                                className="fullscreen-toggle"
+                                onClick={() => setIsFullscreenMode(!isFullscreenMode)}
+                                title={isFullscreenMode ? "Exit fullscreen" : "Enter fullscreen"}
+                            >
+                                {isFullscreenMode ? '⊞' : '⊡'}
+                            </button>
+                        )}
+                        {isFullscreenMode && (
+                            <div style={{ display: 'inline-flex', alignItems: 'center', marginLeft: '20px', gap: '10px' }}>
+                                <button 
+                                    onClick={() => setCanvasZoom(Math.max(0.1, canvasZoom - 0.1))}
+                                    style={{ padding: '2px 8px', fontSize: '14px' }}
+                                >
+                                    -
+                                </button>
+                                <span style={{ minWidth: '60px', textAlign: 'center' }}>
+                                    {Math.round(canvasZoom * 100)}%
+                                </span>
+                                <input 
+                                    type="range"
+                                    min="0.1"
+                                    max="5"
+                                    step="0.1"
+                                    value={canvasZoom}
+                                    onChange={(e) => setCanvasZoom(parseFloat(e.target.value))}
+                                    style={{ width: '150px' }}
+                                />
+                                <button 
+                                    onClick={() => setCanvasZoom(Math.min(5, canvasZoom + 0.1))}
+                                    style={{ padding: '2px 8px', fontSize: '14px' }}
+                                >
+                                    +
+                                </button>
+                                <button 
+                                    onClick={() => setCanvasZoom(1)}
+                                    style={{ padding: '2px 8px', fontSize: '14px' }}
+                                >
+                                    Reset
+                                </button>
+                            </div>
+                        )}
                     </div>
                     <canvas 
                         ref={currentCanvasRef}

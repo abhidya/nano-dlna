@@ -13,6 +13,7 @@ from typing import List, Dict, Any, Optional
 
 from database.database import init_db, get_db
 from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router, log_router
+from api.discovery_router import router as discovery_router
 from core.device_manager import get_device_manager
 from core.streaming_registry import StreamingSessionRegistry
 from core.twisted_streaming import get_instance as get_twisted_streaming
@@ -106,6 +107,7 @@ app.include_router(renderer_router, prefix="/api")  # Add the renderer router
 app.include_router(overlay_router)  # Overlay router already has /api prefix
 app.include_router(projection_router)  # Projection router already has /api prefix
 app.include_router(log_router.router)  # Log streaming router
+app.include_router(discovery_router)  # New unified discovery API (already has /api/v2/discovery prefix)
 
 # Try to include depth_router if dependencies are available
 try:
@@ -137,11 +139,12 @@ device_manager = None
 streaming_service = None
 streaming_registry = None
 renderer_service = None
+migration_adapter = None
 
 # Mount static files for the frontend
 @app.on_event("startup")
 async def startup_event():
-    global device_manager, streaming_service, streaming_registry, renderer_service
+    global device_manager, streaming_service, streaming_registry, renderer_service, migration_adapter
     
     logger.info("Starting nano-dlna Dashboard API")
     
@@ -283,6 +286,14 @@ async def startup_event():
         logger.info("Starting device discovery")
         device_manager.start_discovery()
         
+        # Start the migration adapter to bridge old and new discovery systems
+        try:
+            from discovery.migration import start_discovery_migration
+            migration_adapter = start_discovery_migration(device_manager)
+            logger.info("Started discovery system migration adapter")
+        except Exception as e:
+            logger.error(f"Failed to start discovery migration: {e}")
+        
         # Log the number of devices in the device manager
         logger.info(f"Device manager has {len(device_manager.devices)} devices")
         
@@ -326,6 +337,14 @@ async def shutdown_event():
     # Stop device discovery
     if device_manager:
         device_manager.stop_discovery()
+    
+    # Stop migration adapter
+    if migration_adapter:
+        try:
+            migration_adapter.stop_migration()
+            logger.info("Discovery migration adapter stopped")
+        except Exception as e:
+            logger.error(f"Error stopping migration adapter: {e}")
     
     # Stop renderer service if it's running
     if renderer_service:

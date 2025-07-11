@@ -8,8 +8,8 @@ import time
 from typing import Dict, Optional
 
 from .base import Sender
-from web.backend.core.twisted_streaming import TwistedStreamingServer
-from web.backend.services.device_service import DeviceService
+from core.twisted_streaming import TwistedStreamingServer
+from services.device_service import DeviceService
 
 
 class DLNASender(Sender):

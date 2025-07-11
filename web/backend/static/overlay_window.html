@@ -1370,57 +1370,61 @@
                     const widgetConfig = widgets.find(w => w.id === widget.id);
                     const routeFilter = widgetConfig?.config?.routeFilter?.toLowerCase();
                     
-                    // Collect all predictions with valid times
-                    let allPredictions = [];
+                    // Collect all predictions by route type
+                    const routePredictions = new Map();
                     
                     data.forEach(routeData => {
                         if (routeData.values && routeData.values.length > 0) {
-                            // Add each prediction with route info
+                            const routeKey = routeData.route.title;
+                            const times = [];
+                            
                             routeData.values.forEach(value => {
                                 if (value.minutes !== undefined && value.minutes !== null) {
-                                    allPredictions.push({
-                                        route: routeData.route,
-                                        minutes: value.minutes,
-                                        direction: value.direction,
-                                        vehicleId: value.vehicleId
-                                    });
+                                    times.push(value.minutes);
                                 }
                             });
+                            
+                            if (times.length > 0) {
+                                // Sort times for this route
+                                times.sort((a, b) => a - b);
+                                routePredictions.set(routeKey, {
+                                    route: routeData.route,
+                                    times: times
+                                });
+                            }
                         }
                     });
                     
-                    // Sort by minutes
-                    allPredictions.sort((a, b) => a.minutes - b.minutes);
-                    
                     // Apply route filter if specified
-                    let filteredPredictions = allPredictions;
+                    let filteredRoutes = routePredictions;
                     if (routeFilter) {
-                        // First try exact match
-                        filteredPredictions = allPredictions.filter(p => 
-                            p.route.title.toLowerCase().includes(routeFilter)
-                        );
-                        
-                        // If no exact matches and it's late night, include Night Owl
-                        if (filteredPredictions.length === 0) {
-                            const hour = new Date().getHours();
-                            // Between 11 PM and 5 AM, show Night Owl service
-                            if (hour >= 23 || hour <= 5) {
-                                filteredPredictions = allPredictions.filter(p => 
-                                    p.route.id.includes('NOWL') || p.route.id.includes('OWL')
-                                );
+                        // Filter to matching routes
+                        const filtered = new Map();
+                        for (const [key, value] of routePredictions) {
+                            if (key.toLowerCase().includes(routeFilter)) {
+                                filtered.set(key, value);
                             }
                         }
                         
-                        // If still no predictions, show all available
-                        if (filteredPredictions.length === 0) {
-                            filteredPredictions = allPredictions;
+                        // If no exact matches and it's late night, include Night Owl
+                        if (filtered.size === 0) {
+                            const hour = new Date().getHours();
+                            if (hour >= 23 || hour <= 5) {
+                                for (const [key, value] of routePredictions) {
+                                    if (value.route.id.includes('NOWL') || value.route.id.includes('OWL')) {
+                                        filtered.set(key, value);
+                                    }
+                                }
+                            }
                         }
+                        
+                        filteredRoutes = filtered.size > 0 ? filtered : routePredictions;
                     }
                     
                     const content = widget.querySelector('.transit-content');
                     const widgetEl = document.getElementById(widget.id);
                     
-                    if (filteredPredictions.length === 0) {
+                    if (filteredRoutes.size === 0) {
                         const hour = new Date().getHours();
                         const message = (hour >= 1 && hour <= 5) 
                             ? 'No service until morning' 
@@ -1431,23 +1435,25 @@
                     
                     // Check if this is a split-flap display
                     if (widgetConfig?.displayStyle === 'splitFlap' || content.classList.contains('split-flap-display')) {
-                        // Convert back to original format for split-flap display
-                        const formattedPredictions = filteredPredictions.slice(0, 3).map(p => ({
-                            route: p.route,
-                            values: [{ minutes: p.minutes }]
+                        // Convert to format for split-flap display (show first arrival for each route)
+                        const formattedPredictions = Array.from(filteredRoutes.values()).slice(0, 3).map(routeData => ({
+                            route: routeData.route,
+                            values: [{ minutes: routeData.times[0] }]
                         }));
                         updateSplitFlapDisplay(content, formattedPredictions);
                     } else {
-                        // Show simple display up to 3 predictions
-                        const html = filteredPredictions.slice(0, 3).map(prediction => {
-                            const routeName = prediction.route.title;
-                            const isNightOwl = prediction.route.id.includes('NOWL') || prediction.route.id.includes('OWL');
+                        // Show consolidated display with all times per route
+                        const html = Array.from(filteredRoutes.entries()).slice(0, 3).map(([routeName, routeData]) => {
+                            const isNightOwl = routeData.route.id.includes('NOWL') || routeData.route.id.includes('OWL');
                             const displayName = isNightOwl ? `${routeName} 🌙` : routeName;
+                            
+                            // Show up to 3 arrival times per route
+                            const timesDisplay = routeData.times.slice(0, 3).map(minutes => `${minutes}`).join(', ');
                             
                             return `
                                 <div class="prediction">
                                     <span class="prediction-route">${displayName}</span>
-                                    <span class="prediction-time">${prediction.minutes} min</span>
+                                    <span class="prediction-time">${timesDisplay} min</span>
                                 </div>
                             `;
                         }).join('');

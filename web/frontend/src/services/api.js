@@ -88,6 +88,39 @@ const deviceApi = {
   getControlMode: (deviceId) => api.get(`/devices/${deviceId}/control`),
 };
 
+// Discovery V2 API
+const discoveryV2Api = {
+  // Device Discovery
+  getDevices: (params = {}) => api.get('/v2/discovery/devices', { params }),
+  getDevice: (deviceId) => api.get(`/v2/discovery/devices/${deviceId}`),
+  triggerDiscovery: (backend = null, timeout = 30) => 
+    api.post('/v2/discovery/discover', null, { params: { backend, timeout } }),
+  
+  // Configuration Management
+  getDeviceConfigs: () => api.get('/v2/discovery/config/devices'),
+  getDeviceConfig: (deviceName) => api.get(`/v2/discovery/config/devices/${deviceName}`),
+  updateDeviceConfig: (deviceName, config) => api.put(`/v2/discovery/config/devices/${deviceName}`, config),
+  deleteDeviceConfig: (deviceName) => api.delete(`/v2/discovery/config/devices/${deviceName}`),
+  getGlobalConfig: () => api.get('/v2/discovery/config/global'),
+  updateGlobalConfig: (config) => api.put('/v2/discovery/config/global', config),
+  
+  // Backend Management
+  getBackends: () => api.get('/v2/discovery/backends'),
+  enableBackend: (backendName) => api.post(`/v2/discovery/backends/${backendName}/enable`),
+  disableBackend: (backendName) => api.post(`/v2/discovery/backends/${backendName}/disable`),
+  
+  // Casting Control
+  startCast: (deviceId, mediaUrl, options = {}) => 
+    api.post('/v2/discovery/cast', { device_id: deviceId, media_url: mediaUrl, ...options }),
+  stopCast: (deviceId) => api.post(`/v2/discovery/cast/${deviceId}/stop`),
+  pauseCast: (deviceId) => api.post(`/v2/discovery/cast/${deviceId}/pause`),
+  resumeCast: (deviceId) => api.post(`/v2/discovery/cast/${deviceId}/resume`),
+  getActiveSessions: () => api.get('/v2/discovery/sessions'),
+  
+  // System Status
+  getSystemStatus: () => api.get('/v2/discovery/status'),
+};
+
 // Video API
 const videoApi = {
   getVideos: (params = {}) => api.get('/videos/', { params }),
@@ -199,5 +232,6 @@ export {
   rendererApi, 
   depthApi, 
   streamingApi, 
-  settingsApi 
+  settingsApi,
+  discoveryV2Api 
 };
