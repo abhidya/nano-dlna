@@ -57,6 +57,18 @@ pip install -e .
 
 ## Usage
 
+### Local verification without DLNA hardware
+
+```bash
+python3 -m compileall nanodlna tests
+python3 -m pytest tests -m "not live and not network" --maxfail=1
+```
+
+The compile check is hardware-free. The pytest command is the preferred local
+target when the test dependencies are installed; live device/API tests should be
+run only on a LAN where DLNA devices and any backend services are intentionally
+available.
+
 ### Web Dashboard
 
 The web dashboard provides a user-friendly interface for managing devices and videos.
