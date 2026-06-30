@@ -45,10 +45,16 @@ def init_db():
     """
     # Import models here to ensure they are registered with Base.metadata
     # This avoids circular imports since this function is called after all modules are loaded
-    from models.device import DeviceModel
-    from models.video import VideoModel
-    from models.overlay import OverlayConfig
-    from models.projection import ProjectionConfig
+    try:
+        from ..models.device import DeviceModel
+        from ..models.video import VideoModel
+        from ..models.overlay import OverlayConfig
+        from ..models.projection import ProjectionConfig
+    except ImportError:
+        from models.device import DeviceModel
+        from models.video import VideoModel
+        from models.overlay import OverlayConfig
+        from models.projection import ProjectionConfig
     
     # When running under pytest, skip the actual Base.metadata.create_all(bind=engine) call.
     # The test fixtures will handle creating tables on the temporary test database.

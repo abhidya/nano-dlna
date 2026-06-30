@@ -3,6 +3,12 @@
 # Exit on error
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PYTHONPATH_VALUE="$PROJECT_ROOT:$SCRIPT_DIR/backend"
+
+cd "$SCRIPT_DIR"
+
 # First, make sure any existing instances are stopped
 ./stop_direct.sh
 
@@ -17,7 +23,7 @@ fi
 mkdir -p data uploads
 
 # Set up Python environment for backend
-cd backend
+cd "$SCRIPT_DIR/backend"
 if [ ! -d "venv" ]; then
     echo "Creating Python virtual environment..."
     python3 -m venv venv
@@ -29,7 +35,7 @@ pip install -r requirements.txt
 
 # Check for import errors before running the server
 echo "Checking for import errors..."
-PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
+PYTHONPATH="$PYTHONPATH_VALUE" python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
 if [ $? -ne 0 ]; then
     echo "Import error detected. Check the error log:"
     cat /tmp/import_check.log
@@ -44,7 +50,7 @@ if [ $? -ne 0 ]; then
     fi
     
     # Check again after fix
-    PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
+    PYTHONPATH="$PYTHONPATH_VALUE" python3 -c "import sys; sys.path.insert(0, '.'); import main" 2>/tmp/import_check.log
     if [ $? -ne 0 ]; then
         echo "Import issues persist after attempted fix:"
         cat /tmp/import_check.log
@@ -57,7 +63,7 @@ fi
 
 # Run the backend in the background
 echo "Starting backend server..."
-PYTHONPATH=/Users/mannybhidya/PycharmProjects/nano-dlna python3 run.py &
+PYTHONPATH="$PYTHONPATH_VALUE" python3 run.py &
 BACKEND_PID=$!
 
 # Wait for backend to start and verify it's running
@@ -85,7 +91,7 @@ fi
 echo "Backend is running."
 
 # Set up Node environment for frontend
-cd ../frontend
+cd "$SCRIPT_DIR/frontend"
 if [ ! -d "node_modules" ]; then
     echo "Installing frontend dependencies..."
     npm install
@@ -97,7 +103,7 @@ npm start &
 FRONTEND_PID=$!
 
 # Save PIDs to file for stopping later
-cd ..
+cd "$SCRIPT_DIR"
 echo "$BACKEND_PID $FRONTEND_PID" > .running_pids
 
 echo "Application is running!"

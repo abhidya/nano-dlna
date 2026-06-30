@@ -8,8 +8,12 @@ import time
 from typing import Dict, Optional
 
 from .base import Sender
-from core.twisted_streaming import TwistedStreamingServer
-from services.device_service import DeviceService
+from ...twisted_streaming import TwistedStreamingServer
+
+try:
+    from ....services.device_service import DeviceService
+except ImportError:
+    from services.device_service import DeviceService
 
 
 class DLNASender(Sender):

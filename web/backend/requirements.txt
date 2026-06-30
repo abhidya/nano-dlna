@@ -37,5 +37,6 @@ mypy>=1.6.0
 
 # Image processing dependencies (required for projection animation)
 pillow>=9.0.0
+screeninfo>=0.8.1
 
 streamlit>=1.10.0

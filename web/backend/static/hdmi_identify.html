@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HDMI Projector Identify</title>
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #050505;
+      color: #f7f5ef;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    .frame {
+      position: fixed;
+      inset: 0;
+      display: grid;
+      place-items: center;
+      background:
+        linear-gradient(90deg, rgba(255,255,255,0.13) 1px, transparent 1px),
+        linear-gradient(0deg, rgba(255,255,255,0.13) 1px, transparent 1px),
+        radial-gradient(circle at center, #21242b, #050505 68%);
+      background-size: 80px 80px, 80px 80px, 100% 100%;
+    }
+    .frame::before {
+      content: "";
+      position: fixed;
+      inset: 16px;
+      border: 10px solid #ffffff;
+      box-shadow: inset 0 0 0 4px #0c0c0c;
+    }
+    .label {
+      position: relative;
+      text-align: center;
+      padding: 32px 48px;
+      background: rgba(0, 0, 0, 0.72);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      max-width: min(900px, 82vw);
+    }
+    .eyebrow {
+      font-size: clamp(18px, 2vw, 28px);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: #8bd9ff;
+      margin-bottom: 20px;
+    }
+    h1 {
+      margin: 0;
+      font-size: clamp(48px, 9vw, 128px);
+      line-height: 0.92;
+      font-weight: 800;
+    }
+    .detail {
+      margin-top: 22px;
+      font-size: clamp(18px, 2.3vw, 34px);
+      color: #f7f5ef;
+    }
+    .corners {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+    }
+    .corner {
+      position: absolute;
+      width: 12vw;
+      height: 12vw;
+      max-width: 180px;
+      max-height: 180px;
+      border-color: #fffb8c;
+      border-style: solid;
+    }
+    .tl { left: 28px; top: 28px; border-width: 8px 0 0 8px; }
+    .tr { right: 28px; top: 28px; border-width: 8px 8px 0 0; }
+    .bl { left: 28px; bottom: 28px; border-width: 0 0 8px 8px; }
+    .br { right: 28px; bottom: 28px; border-width: 0 8px 8px 0; }
+  </style>
+</head>
+<body>
+  <main class="frame">
+    <section class="label">
+      <div class="eyebrow">HDMI projector target</div>
+      <h1 id="projector">Projector</h1>
+      <div class="detail" id="detail">If this fills the projector, the HDMI target is correct.</div>
+    </section>
+  </main>
+  <div class="corners">
+    <div class="corner tl"></div>
+    <div class="corner tr"></div>
+    <div class="corner bl"></div>
+    <div class="corner br"></div>
+  </div>
+  <script>
+    const params = new URLSearchParams(window.location.search);
+    const projectorId = params.get('projector_id') || 'projector';
+    document.getElementById('projector').textContent = projectorId;
+
+    async function heartbeat() {
+      try {
+        await fetch(`/api/renderer/heartbeat/${encodeURIComponent(projectorId)}`, { method: 'POST' });
+      } catch (error) {
+        // The visual identify pattern must keep running even if the API is down.
+      }
+    }
+    heartbeat();
+    setInterval(heartbeat, 5000);
+  </script>
+</body>
+</html>

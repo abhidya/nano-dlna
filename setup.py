@@ -1,15 +1,15 @@
 #!/usr/bin/env python
 
-import sys
-
 from setuptools import setup
 
 
 _INSTALL_REQUIRES = [
-    'Twisted>=16.2.0',
+    'Twisted>=23.10.0',
+    'aiohttp>=3.9.0',
+    'ffmpeg-python>=0.2.0',
+    'requests>=2.31.0',
+    'tqdm>=4.65.0',
 ]
-if sys.version_info.major == 2:
-    _INSTALL_REQUIRES.append("service_identity>=16.0.0")
 
 setup(
     name='nanodlna',
@@ -21,6 +21,7 @@ setup(
     author_email='gabrielmagno1@gmail.com',
     url='https://github.com/gabrielmagno/nano-dlna',
     license='MIT',
+    python_requires='>=3.9',
     classifiers=[
         'Development Status :: 3 - Alpha',
         'Environment :: Console',
@@ -30,11 +31,11 @@ setup(
         'Natural Language :: English',
         'Operating System :: OS Independent',
         'Programming Language :: Python',
-        'Programming Language :: Python :: 2',
-        'Programming Language :: Python :: 2.7',
         'Programming Language :: Python :: 3',
-        'Programming Language :: Python :: 3.5',
-        'Programming Language :: Python :: 3.6',
+        'Programming Language :: Python :: 3.9',
+        'Programming Language :: Python :: 3.10',
+        'Programming Language :: Python :: 3.11',
+        'Programming Language :: Python :: 3.12',
         'Topic :: Software Development :: Libraries :: Python Modules',
         'Topic :: Multimedia :: Sound/Audio',
         'Topic :: Multimedia :: Video',

@@ -18,8 +18,17 @@
     "react-scripts": "5.0.1",
     "web-vitals": "^2.1.4"
   },
+  "overrides": {
+    "@tootallnate/once": "^3.0.1",
+    "js-yaml": "^5.2.0",
+    "nth-check": "^3.0.1",
+    "postcss": "^8.5.15",
+    "serialize-javascript": "^7.0.6",
+    "underscore": "^1.13.8",
+    "uuid": "^14.0.1"
+  },
   "scripts": {
-    "start": "DANGEROUSLY_DISABLE_HOST_CHECK=true react-scripts start",
+    "start": "react-scripts start",
     "build": "react-scripts build",
     "test": "react-scripts test",
     "eject": "react-scripts eject"

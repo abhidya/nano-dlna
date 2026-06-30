@@ -24,6 +24,7 @@ from .dlna_device import DLNADevice
 from .transcreen_device import TranscreenDevice
 from .config_service import ConfigService
 from .streaming_registry import StreamingSessionRegistry
+from .playback_session import PlaybackSessionCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +92,7 @@ class DeviceManager:
         # Get config service and streaming registry
         self.config_service = ConfigService.get_instance()
         self.streaming_registry = StreamingSessionRegistry.get_instance()
+        self.playback_session = PlaybackSessionCoordinator(self, self.streaming_registry)
         self.streaming_registry.register_health_check_handler(self._handle_streaming_issue)
         
         # Discovery thread attributes
@@ -1159,16 +1161,14 @@ class DeviceManager:
                 current_video=video_path
             )
             
-            # Register session with StreamingSessionRegistry
-            from .streaming_registry import StreamingSessionRegistry
-            registry = StreamingSessionRegistry.get_instance()
-            session = registry.register_session(
+            session = self.playback_session.register_streaming_session(
                 device_name=device.name,
                 video_path=video_path,
                 server_ip=serve_ip,
                 server_port=streaming_port
             )
-            logger.debug(f"Registered streaming session {session.session_id} for device {device.name}")
+            if session:
+                logger.debug(f"Registered streaming session {session.session_id} for device {device.name}")
             
             # Start health monitoring
             self._start_playback_health_check(device.name, video_path)
@@ -1371,108 +1371,7 @@ class DeviceManager:
             duration: Total video duration (HH:MM:SS)
             progress: Playback progress as a percentage (0-100)
         """
-        # Validate inputs
-        if not device_name:
-            logger.error("Device name is required for updating playback progress")
-            return
-            
-        if not position or not isinstance(position, str):
-            logger.error(f"Invalid position format for {device_name}: {position}")
-            position = "00:00:00"
-            
-        if not duration or not isinstance(duration, str):
-            logger.error(f"Invalid duration format for {device_name}: {duration}")
-            duration = "00:00:00"
-            
-        if not isinstance(progress, int) or progress < 0 or progress > 100:
-            logger.error(f"Invalid progress value for {device_name}: {progress}")
-            progress = 0
-        
-        # First update in-memory status
-        with self.device_state_lock:
-            if device_name not in self.device_status:
-                self.device_status[device_name] = {}
-            
-            status_dict = self.device_status[device_name]
-            status_dict["playback_position"] = position
-            status_dict["playback_duration"] = duration
-            status_dict["playback_progress"] = progress
-            status_dict["last_updated"] = time.time()
-            
-            # Log the update for debugging
-            logger.info(f"Updated in-memory playback progress for {device_name}: {position}/{duration} ({progress}%)")
-        
-        # Update the database outside the status lock to avoid potential deadlocks
-        try:
-            # Import here to avoid circular imports
-            from database.database import get_db
-            from services.device_service import DeviceService
-            
-            # Create a new database session
-            try:
-                # Get a new database session
-                db_generator = get_db()
-                db = next(db_generator)
-                
-                # Get the device from the database
-                device_service = DeviceService(db, self)
-                db_device = device_service.get_device_by_name(device_name)
-                
-                if db_device:
-                    # Update the playback progress fields
-                    db_device.playback_position = position
-                    db_device.playback_duration = duration
-                    db_device.playback_progress = progress
-                    # Commit the changes
-                    db.commit()
-                    logger.info(f"Updated playback progress for {device_name} in database: {position}/{duration} ({progress}%)")
-                else:
-                    logger.warning(f"Device {device_name} not found in database, cannot update playback progress")
-                
-                # Close the database session
-                try:
-                    db_generator.close()
-                except:
-                    pass
-                    
-            except Exception as db_error:
-                logger.error(f"Error creating database session: {db_error}")
-                logger.debug(traceback.format_exc())
-                
-                # Fallback: Try to use device_service if it's already set
-                if hasattr(self, 'device_service') and self.device_service:
-                    try:
-                        # Get the device from the database
-                        db_device = self.device_service.get_device_by_name(device_name)
-                        if db_device:
-                            # Update the playback progress fields
-                            db_device.playback_position = position
-                            db_device.playback_duration = duration
-                            db_device.playback_progress = progress
-                            # Commit the changes
-                            self.device_service.db.commit()
-                            logger.info(f"Updated playback progress for {device_name} using existing device_service: {progress}%")
-                        else:
-                            logger.warning(f"Device {device_name} not found in database via device_service")
-                    except Exception as service_error:
-                        logger.error(f"Error updating via device_service: {service_error}")
-        except ImportError as import_error:
-            logger.error(f"Import error when updating playback progress: {import_error}")
-            logger.debug(traceback.format_exc())
-        except Exception as e:
-            logger.error(f"Error updating device playback progress in database: {e}")
-            logger.debug(traceback.format_exc())
-            
-        # Update the core device object if it exists
-        try:
-            device = self.get_device(device_name)
-            if device and hasattr(device, 'current_position') and hasattr(device, 'duration_formatted') and hasattr(device, 'playback_progress'):
-                device.current_position = position
-                device.duration_formatted = duration
-                device.playback_progress = progress
-                logger.debug(f"Updated core device object playback progress for {device_name}")
-        except Exception as e:
-            logger.error(f"Error updating core device object playback progress: {e}")
+        self.playback_session.update_progress(device_name, position, duration, progress)
 
     def update_device_playing_state(self, device_name: str, is_playing: bool, video_path: str = None) -> None:
         """
@@ -1514,57 +1413,16 @@ class DeviceManager:
         Returns:
             List[Dict[str, Any]]: List of discovered DLNA devices
         """
-        if not host:
-            host = "0.0.0.0"
-        logger.debug(f"Searching for DLNA devices on {host}")
-        
-        # Configure socket for SSDP broadcast
-        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-        ttl = struct.pack("B", 4)
-        s.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
-        s.bind((host, 0))
-        
-        # Send SSDP broadcast message
-        logger.debug("Sending SSDP broadcast message")
-        s.sendto(SSDP_BROADCAST_MSG.encode("UTF-8"), (SSDP_BROADCAST_ADDR, SSDP_BROADCAST_PORT))
-        
-        # Wait for responses
-        logger.debug(f"Waiting for DLNA devices ({timeout} seconds)")
-        s.settimeout(timeout)
-        
-        devices = []
-        while True:
+        try:
             try:
-                data, addr = s.recvfrom(1024)
-            except socket.timeout:
-                break
-            
-            try:
-                info = [a.split(":", 1) for a in data.decode("UTF-8").split("\r\n")[1:]]
-                device = dict([(a[0].strip().lower(), a[1].strip()) for a in info if len(a) >= 2])
-                devices.append(device)
-                logger.debug(f"Received DLNA device broadcast response from {addr}")
-            except Exception as e:
-                logger.error(f"Error parsing DLNA device response: {e}")
-        
-        # Filter devices with AVTransport service
-        devices_urls = [
-            dev["location"]
-            for dev in devices
-            if "st" in dev and "AVTransport" in dev["st"]
-        ]
-        
-        # Register devices
-        registered_devices = []
-        for location_url in devices_urls:
-            device_info = self._register_dlna_device(location_url)
-            if device_info:
-                registered_devices.append(device_info)
-        
-        # Remove duplicates
-        registered_devices = self._remove_duplicates(registered_devices)
-        
-        return registered_devices
+                from ..discovery.dlna_compat import discover_dlna_device_dicts
+            except ImportError:
+                from discovery.dlna_compat import discover_dlna_device_dicts
+
+            return self._remove_duplicates(discover_dlna_device_dicts(timeout=timeout, host=host))
+        except Exception as e:
+            logger.error(f"Error discovering DLNA devices through canonical discovery module: {e}")
+            return []
     
     def _register_dlna_device(self, location_url: str) -> Optional[Dict[str, Any]]:
         """
@@ -1577,72 +1435,12 @@ class DeviceManager:
             Optional[Dict[str, Any]]: Device information if successful, None otherwise
         """
         try:
-            logger.debug(f"Registering DLNA device at {location_url}")
-            
-            # Get device description with timeout
-            xml_raw = urllibreq.urlopen(location_url, timeout=5).read().decode("UTF-8")
-            xml = re.sub(r"""\s(xmlns="[^"]+"|xmlns='[^']+')""", '', xml_raw, count=1)
-            info = ET.fromstring(xml)
-            
-            # Parse location URL
-            location = urllibparse.urlparse(location_url)
-            hostname = location.hostname
-            port = location.port or 80  # Default to port 80 if not specified
-            
-            # Find device root
-            device_root = info.find("./device")
-            if not device_root:
-                device_root = info.find(
-                    "./device/deviceList/device/"
-                    "[deviceType='{0}']".format(UPNP_DEVICE_TYPE)
-                )
-            
-            # Get device information
-            friendly_name = self._get_xml_field_text(device_root, "./friendlyName")
-            manufacturer = self._get_xml_field_text(device_root, "./manufacturer")
-            
-            # Try multiple paths to find the control URL
-            service_paths = [
-                "./serviceList/service/[serviceType='{0}']/controlURL".format(UPNP_SERVICE_TYPE),
-                "./serviceList/service/controlURL",
-                ".//service/[serviceType='{0}']/controlURL".format(UPNP_SERVICE_TYPE),
-                ".//service/controlURL"
-            ]
-            
-            action_url_path = None
-            for path in service_paths:
-                action_url_path = self._get_xml_field_text(device_root, path)
-                if action_url_path:
-                    break
-            
-            # Build action URL
-            if action_url_path is not None:
-                # Make sure action_url_path starts with a slash
-                if not action_url_path.startswith('/'):
-                    action_url_path = '/' + action_url_path
-                
-                # Build the full action URL
-                action_url = f"http://{hostname}:{port}{action_url_path}"
-                logger.debug(f"Found action URL: {action_url}")
-            else:
-                # Fallback: try to construct a default action URL
-                action_url = f"http://{hostname}:{port}/AVTransport/Control"
-                logger.warning(f"No action URL found, using default: {action_url}")
-            
-            # Create device information with device_name set to friendly_name
-            device = {
-                "device_name": friendly_name,
-                "type": "dlna",
-                "location": location_url,
-                "hostname": hostname,
-                "manufacturer": manufacturer,
-                "friendly_name": friendly_name,
-                "action_url": action_url,
-                "st": UPNP_SERVICE_TYPE
-            }
-            
-            logger.info(f"Registered DLNA device: {friendly_name} with action URL: {action_url}")
-            return device
+            try:
+                from ..discovery.dlna_compat import parse_dlna_device_dict
+            except ImportError:
+                from discovery.dlna_compat import parse_dlna_device_dict
+
+            return parse_dlna_device_dict(location_url)
         except Exception as e:
             logger.error(f"Error registering DLNA device at {location_url}: {e}")
             return None

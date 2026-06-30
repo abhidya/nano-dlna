@@ -1,7 +1,10 @@
 from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, JSON
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database.database import Base
+try:
+    from ..database.database import Base
+except ImportError:
+    from database.database import Base
 
 class OverlayConfig(Base):
     __tablename__ = "overlay_configs"

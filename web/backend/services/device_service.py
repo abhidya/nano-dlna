@@ -14,8 +14,17 @@ from core.dlna_device import DLNADevice
 from core.transcreen_device import TranscreenDevice
 from schemas.device import DeviceCreate, DeviceUpdate
 from core.config_service import ConfigService
+try:
+    from database.database import get_db
+except ModuleNotFoundError:
+    from web.backend.database.database import get_db
 
 logger = logging.getLogger(__name__)
+
+
+def get_device_service(db: Session = Depends(get_db)) -> "DeviceService":
+    return DeviceService(db, get_device_manager())
+
 
 class DeviceService:
     """

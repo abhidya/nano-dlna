@@ -3,18 +3,25 @@
 import factory
 from factory import fuzzy
 from datetime import datetime, timezone
+from enum import Enum
 import random
-import json
+from types import SimpleNamespace
 from typing import Dict, List, Any
 
-from web.backend.models.overlay import OverlayConfig, OverlayType
+
+class OverlayType(str, Enum):
+    TEXT = "text"
+    IMAGE = "image"
+    VIDEO = "video"
+    SHAPE = "shape"
+    EFFECT = "effect"
 
 
 class OverlayConfigFactory(factory.Factory):
     """Factory for creating OverlayConfig instances."""
     
     class Meta:
-        model = OverlayConfig
+        model = SimpleNamespace
     
     id = factory.Sequence(lambda n: n)
     video_id = fuzzy.FuzzyInteger(1, 100)
@@ -38,7 +45,7 @@ class OverlayConfigFactory(factory.Factory):
         else:
             return {}
     
-    enabled = fuzzy.FuzzyChoice([True, False], weights=[0.8, 0.2])
+    enabled = fuzzy.FuzzyChoice([True, False])
     created_at = factory.LazyFunction(lambda: datetime.now(timezone.utc))
     
     def _generate_image_config(self) -> Dict[str, Any]:
@@ -196,7 +203,7 @@ class OverlayEventFactory(factory.Factory):
             }
 
 
-def create_overlay_scenarios() -> Dict[str, List[OverlayConfig]]:
+def create_overlay_scenarios() -> Dict[str, List[SimpleNamespace]]:
     """Create various overlay test scenarios."""
     scenarios = {
         "simple_text": [

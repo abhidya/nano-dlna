@@ -1,6 +1,9 @@
 from sqlalchemy import Column, Integer, String, DateTime, JSON
 from sqlalchemy.sql import func
-from database.database import Base
+try:
+    from ..database.database import Base
+except ImportError:
+    from database.database import Base
 
 class ProjectionConfig(Base):
     """

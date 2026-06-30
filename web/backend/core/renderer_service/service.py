@@ -9,11 +9,12 @@ import logging
 import os
 import json
 import threading
+from urllib.parse import urlencode
 from typing import Dict, Any, Optional, List, Tuple
 
 from .renderer import Renderer, ChromeRenderer
+from .sender import AirPlaySender, HDMISender
 from ..dlna_device import DLNADevice
-from ..twisted_streaming import TwistedStreamingServer
 
 
 class RendererService:
@@ -37,9 +38,10 @@ class RendererService:
         self.config = self._load_config()
         self.renderers = {}
         self.active_renderers = {}
-        self.lock = threading.Lock()
-        self.streaming_server = TwistedStreamingServer()
+        self.lock = threading.RLock()
+        self.streaming_server = None
         self._lan_ip = None
+        self.projector_power_states = {}
         
     def start_streaming_server(self):
         """Starts the internal TwistedStreamingServer."""
@@ -56,15 +58,21 @@ class RendererService:
                 self._lan_ip = '127.0.0.1'
             self.logger.info(f"Auto-detected LAN IP for streaming: {self._lan_ip}")
 
-        if self.streaming_server:
-            try:
-                # Pass an empty dict for files initially, can be updated later
-                self.streaming_server.start_server({}, serve_ip=self._lan_ip)
-                self.logger.info(f"Streaming server started on {self._lan_ip} using configured port range.")
-            except Exception as e:
-                self.logger.error(f"Failed to start streaming server in RendererService: {e}")
-                # Potentially re-raise or handle as critical failure
-                raise
+        try:
+            # Pass an empty dict for files initially, can be updated later
+            self._get_streaming_server().start_server({}, serve_ip=self._lan_ip)
+            self.logger.info(f"Streaming server started on {self._lan_ip} using configured port range.")
+        except Exception as e:
+            self.logger.error(f"Failed to start streaming server in RendererService: {e}")
+            # Potentially re-raise or handle as critical failure
+            raise
+
+    def _get_streaming_server(self):
+        if self.streaming_server is None:
+            from ..twisted_streaming import TwistedStreamingServer
+
+            self.streaming_server = TwistedStreamingServer()
+        return self.streaming_server
         
     def _load_config(self) -> Dict[str, Any]:
         """
@@ -174,123 +182,281 @@ class RendererService:
     
     def start_renderer(self, scene_id: str, projector_id: str) -> bool:
         """
-        Start a renderer for a scene on a projector.
-        
-        Args:
-            scene_id: ID of the scene to render
-            projector_id: ID of the projector to use
-            
-        Returns:
-            True if the renderer was started successfully, False otherwise
+        Start a configured scene on a projector.
         """
         with self.lock:
-            # Check if the projector is already in use
             if projector_id in self.active_renderers:
-                self.logger.warning(f"Projector {projector_id} is already in use. Stopping the current renderer.")
+                self.logger.warning("Projector %s already active; restarting", projector_id)
                 self.stop_renderer(projector_id)
-            
-            # Get the projector configuration
+
             projector_config = self.get_projector_config(projector_id)
             if not projector_config:
-                self.logger.error(f"Projector not found: {projector_id}")
+                self.logger.error("Projector not found: %s", projector_id)
                 return False
-            
-            # Get the scene configuration
+
             scene_config = self.get_scene_config(scene_id)
             if not scene_config:
-                self.logger.error(f"Scene not found: {scene_id}")
+                self.logger.error("Scene not found: %s", scene_id)
                 return False
-            
-            # Get the renderer type from the projector configuration or use the default
+
             renderer_type = projector_config.get('renderer', 'chrome')
-            
-            # Render the scene
             rendered_content_url = self.render_scene(scene_id, renderer_type)
             if not rendered_content_url:
-                self.logger.error(f"Failed to render scene {scene_id}")
+                self.logger.error("Failed to render scene %s", scene_id)
                 return False
-            
-            # Get the renderer
+
             renderer = self.get_renderer(renderer_type)
             if not renderer:
-                self.logger.error(f"Renderer not found: {renderer_type}")
+                self.logger.error("Renderer not found: %s", renderer_type)
                 return False
-            
-            # Start the renderer
-            if not renderer.start():
-                self.logger.error(f"Failed to start renderer for scene {scene_id}")
-                return False
-            
-            # Send the rendered content to the projector
+
             sender_type = projector_config.get('sender')
             target_name = projector_config.get('target_name')
-            
-            if sender_type == 'dlna':
-                # Use the DLNA sender
-                success = self._send_to_dlna(target_name, rendered_content_url)
-                if not success:
-                    self.logger.error(f"Failed to send content to DLNA device {target_name}")
-                    renderer.stop()
+            sender = None
+
+            if sender_type == 'hdmi':
+                sender = self._create_sender(sender_type, projector_id)
+                if not sender or not sender.connect(target_name):
+                    self.logger.error("Failed to connect HDMI sender for projector %s", projector_id)
                     return False
-            elif sender_type == 'direct':
-                # Direct output is handled by the renderer itself
-                pass
-            elif sender_type == 'airplay':
-                # Use the AirPlay sender
-                from .sender.airplay import AirPlaySender # Changed to relative
-                
-                # Create AirPlay sender
-                airplay_config = self.config.get('senders', {}).get('airplay', {})
-                airplay_sender = AirPlaySender(airplay_config, self.logger)
-                
-                # Connect to the target device
-                target_name = projector_config.get('target_name')
-                if not target_name:
-                    self.logger.error(f"No target name specified for AirPlay projector {projector_id}")
-                    renderer.stop()
+                if not sender.send_content(rendered_content_url):
+                    self.logger.error("Failed to send rendered scene to HDMI display %s", target_name)
+                    sender.disconnect()
                     return False
-                
-                # Connect to the AirPlay device
-                if not airplay_sender.connect(target_name):
-                    self.logger.error(f"Failed to connect to AirPlay device {target_name}")
-                    renderer.stop()
-                    return False
-                
-                # Send content to the AirPlay device
-                if not airplay_sender.send_content(rendered_content_url):
-                    self.logger.error(f"Failed to send content to AirPlay device {target_name}")
-                    airplay_sender.disconnect()
-                    renderer.stop()
-                    return False
-                
-                # Store the active renderer and sender
-                self.active_renderers[projector_id] = {
-                    'renderer': renderer,
-                    'sender': airplay_sender,
-                    'scene_id': scene_id,
-                    'projector_id': projector_id,
-                    'sender_type': sender_type,
-                    'target_name': target_name
-                }
-                
-                self.logger.info(f"Started renderer for scene {scene_id} on AirPlay projector {projector_id}")
-                return True
             else:
-                self.logger.error(f"Unsupported sender type: {sender_type}")
-                renderer.stop()
-                return False
-            
-            # Store the active renderer
+                if not renderer.start():
+                    self.logger.error("Failed to start renderer for scene %s", scene_id)
+                    return False
+
+                if sender_type == 'dlna':
+                    success = self._send_to_dlna(target_name, rendered_content_url)
+                    if not success:
+                        self.logger.error("Failed to send content to DLNA device %s", target_name)
+                        renderer.stop()
+                        return False
+                elif sender_type == 'direct':
+                    pass
+                elif sender_type == 'airplay':
+                    sender = self._create_sender(sender_type, projector_id)
+                    if not target_name:
+                        self.logger.error("No target name specified for AirPlay projector %s", projector_id)
+                        renderer.stop()
+                        return False
+                    if not sender.connect(target_name):
+                        self.logger.error("Failed to connect to AirPlay device %s", target_name)
+                        renderer.stop()
+                        return False
+                    if not sender.send_content(rendered_content_url):
+                        self.logger.error("Failed to send content to AirPlay device %s", target_name)
+                        sender.disconnect()
+                        renderer.stop()
+                        return False
+                else:
+                    self.logger.error("Unsupported sender type: %s", sender_type)
+                    renderer.stop()
+                    return False
+
             self.active_renderers[projector_id] = {
                 'renderer': renderer,
+                'sender': sender,
                 'scene_id': scene_id,
                 'projector_id': projector_id,
                 'sender_type': sender_type,
-                'target_name': target_name
+                'target_name': target_name,
+                'content_mode': 'scene',
             }
-            
-            self.logger.info(f"Started renderer for scene {scene_id} on projector {projector_id}")
+
+            self.logger.info("Started renderer for scene %s on projector %s", scene_id, projector_id)
             return True
+
+    def list_hdmi_displays(self) -> List[Dict[str, Any]]:
+        """List local displays that can be used as HDMI projector targets."""
+        return HDMISender.discover_displays()
+
+    def list_projectors(self) -> List[Dict[str, Any]]:
+        """List configured projectors with runtime status."""
+        projectors = []
+        with self.lock:
+            for projector_id, projector_data in self.config.get("projectors", {}).items():
+                projector = dict(projector_data)
+                projector["id"] = projector_id
+                projector["runtime_status"] = self.get_renderer_status(projector_id)
+                if projector.get("sender") == "hdmi" and not projector["runtime_status"]:
+                    projector["runtime_status"] = self._idle_hdmi_status(projector_id, projector)
+                projectors.append(projector)
+        return projectors
+
+    def list_scenes(self) -> List[Dict[str, Any]]:
+        """List configured scenes with stable IDs."""
+        scenes = []
+        for scene_id, scene_data in self.config.get("scenes", {}).items():
+            scene = dict(scene_data)
+            scene["id"] = scene_id
+            scene.setdefault("name", scene_id)
+            scenes.append(scene)
+        return scenes
+
+    def start_projector(self, projector_id: str) -> bool:
+        """Start a projector using its configured default scene or content mode."""
+        projector_config = self.get_projector_config(projector_id)
+        if not projector_config:
+            self.logger.error("Projector not found: %s", projector_id)
+            return False
+
+        scene_id = projector_config.get("scene")
+        if scene_id:
+            return self.start_renderer(scene_id, projector_id)
+
+        if projector_config.get("sender") == "hdmi":
+            mode = projector_config.get("content_mode", "identify")
+            return self.start_projector_mode(
+                projector_id,
+                mode,
+                projector_config.get("content_options", {}),
+            )
+
+        self.logger.error("No default scene configured for projector %s", projector_id)
+        return False
+
+    def _idle_hdmi_status(self, projector_id: str, projector: Dict[str, Any]) -> Dict[str, Any]:
+        return {
+            "projector_id": projector_id,
+            "sender_type": "hdmi",
+            "target_name": projector.get("target_name"),
+            "content_mode": None,
+            "status": "idle",
+            "sender_status": {
+                "type": "hdmi",
+                "connection_state": "unknown",
+                "projection_state": "idle",
+                "power_state": self.projector_power_states.get(projector_id, "unknown"),
+            },
+        }
+
+    def start_projector_mode(
+        self,
+        projector_id: str,
+        mode: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """Start a non-scene content mode on an HDMI projector."""
+        options = options or {}
+        if mode == "scene":
+            scene_id = options.get("scene") or options.get("scene_id")
+            if not scene_id:
+                self.logger.error("Scene mode requires scene or scene_id option")
+                return False
+            return self.start_renderer(scene_id, projector_id)
+
+        with self.lock:
+            if projector_id in self.active_renderers:
+                self.stop_renderer(projector_id)
+
+            projector_config = self.get_projector_config(projector_id)
+            if not projector_config:
+                self.logger.error("Projector not found: %s", projector_id)
+                return False
+
+            sender_type = projector_config.get("sender")
+            if sender_type != "hdmi":
+                self.logger.error("Content mode %s requires an HDMI projector, got %s", mode, sender_type)
+                return False
+
+            sender = self._create_sender("hdmi", projector_id)
+            target_name = projector_config.get("target_name")
+            if not sender.connect(target_name):
+                return False
+
+            content_url = self._content_mode_url(mode, projector_id, options)
+            if not content_url:
+                sender.disconnect()
+                return False
+
+            if not sender.send_content(content_url):
+                sender.disconnect()
+                return False
+
+            self.active_renderers[projector_id] = {
+                "renderer": None,
+                "sender": sender,
+                "scene_id": None,
+                "projector_id": projector_id,
+                "sender_type": sender_type,
+                "target_name": target_name,
+                "content_mode": mode,
+                "options": options,
+            }
+            return True
+
+    def identify_projector(self, projector_id: str) -> bool:
+        """Launch an identify pattern on an HDMI projector."""
+        return self.start_projector_mode(projector_id, "identify", {})
+
+    def set_projector_power_state(self, projector_id: str, power_state: str) -> bool:
+        """Set the user-observed projector power state."""
+        if power_state not in HDMISender.VALID_POWER_STATES:
+            self.logger.error("Invalid projector power state: %s", power_state)
+            return False
+        self.projector_power_states[projector_id] = power_state
+        active = self.active_renderers.get(projector_id)
+        sender = active.get("sender") if active else None
+        if hasattr(sender, "set_power_state"):
+            sender.set_power_state(power_state)
+        return True
+
+    def record_projector_heartbeat(self, projector_id: str) -> bool:
+        """Record a heartbeat from a browser-based projector page."""
+        active = self.active_renderers.get(projector_id)
+        sender = active.get("sender") if active else None
+        if hasattr(sender, "record_heartbeat"):
+            sender.record_heartbeat()
+            return True
+        return False
+
+    def _create_sender(self, sender_type: str, projector_id: Optional[str] = None):
+        sender_config = dict(self.config.get("senders", {}).get(sender_type, {}))
+        if sender_type == "hdmi":
+            if projector_id and projector_id in self.projector_power_states:
+                sender_config["power_state"] = self.projector_power_states[projector_id]
+            return HDMISender(sender_config, self.logger)
+        if sender_type == "airplay":
+            return AirPlaySender(sender_config, self.logger)
+        return None
+
+    def _server_base_url(self) -> str:
+        return self.config.get("server_base_url") or os.environ.get("NANO_DLNA_SERVER_BASE_URL", "http://localhost:8000")
+
+    def _content_mode_url(
+        self,
+        mode: str,
+        projector_id: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> Optional[str]:
+        options = options or {}
+        page_by_mode = {
+            "identify": "hdmi_identify.html",
+            "structured_light": "structured_light.html",
+            "overlay": "overlay_window.html",
+            "blank": "blank.html",
+        }
+        page = page_by_mode.get(mode)
+        if not page:
+            self.logger.error("Unsupported projector content mode: %s", mode)
+            return None
+
+        params = {"projector_id": projector_id, "mode": mode}
+        params.update({
+            key: self._url_param_value(value)
+            for key, value in options.items()
+            if value is not None
+        })
+        return f"{self._server_base_url().rstrip('/')}/static/{page}?{urlencode(params)}"
+
+    @staticmethod
+    def _url_param_value(value: Any) -> Any:
+        if isinstance(value, bool):
+            return str(value).lower()
+        return value
     
     def _send_to_dlna(self, device_name: str, content_url: str) -> bool:
         """
@@ -348,14 +514,18 @@ class RendererService:
                 return True
             
             active_renderer = self.active_renderers[projector_id]
-            renderer = active_renderer['renderer']
+            renderer = active_renderer.get('renderer')
+            sender = active_renderer.get('sender')
             sender_type = active_renderer['sender_type']
             target_name = active_renderer['target_name']
             
             # Stop the renderer
-            if not renderer.stop():
+            if renderer and not renderer.stop():
                 self.logger.error(f"Failed to stop renderer for projector {projector_id}")
                 return False
+
+            if sender and hasattr(sender, "disconnect"):
+                sender.disconnect()
             
             # Stop the content on the device
             if sender_type == 'dlna':
@@ -373,7 +543,7 @@ class RendererService:
                     
                 except Exception as e:
                     self.logger.error(f"Error stopping content on DLNA device {target_name}: {str(e)}")
-            elif sender_type == 'airplay':
+            elif sender_type == 'airplay' and not sender:
                 try:
                     # Get the sender from the active renderer
                     sender = active_renderer.get('sender')
@@ -408,7 +578,10 @@ class RendererService:
                 return False
             
             active_renderer = self.active_renderers[projector_id]
-            renderer = active_renderer['renderer']
+            renderer = active_renderer.get('renderer')
+            if not renderer:
+                self.logger.warning("Projector %s has no pausable renderer", projector_id)
+                return False
             
             # Pause the renderer
             success = renderer.pause()
@@ -438,7 +611,10 @@ class RendererService:
                 return False
             
             active_renderer = self.active_renderers[projector_id]
-            renderer = active_renderer['renderer']
+            renderer = active_renderer.get('renderer')
+            if not renderer:
+                self.logger.warning("Projector %s has no resumable renderer", projector_id)
+                return False
             
             # Resume the renderer
             success = renderer.resume()
@@ -467,16 +643,26 @@ class RendererService:
                 return None
             
             active_renderer = self.active_renderers[projector_id]
-            renderer = active_renderer['renderer']
-            
-            status = renderer.get_status()
+            renderer = active_renderer.get('renderer')
+            sender = active_renderer.get('sender')
+
+            status = renderer.get_status() if renderer else {}
+            sender_status = sender.get_status() if sender and hasattr(sender, "get_status") else None
             status.update({
                 'scene_id': active_renderer['scene_id'],
                 'projector_id': active_renderer['projector_id'],
                 'sender_type': active_renderer['sender_type'],
                 'target_name': active_renderer['target_name'],
-                'status': active_renderer.get('status', 'running' if not renderer.is_paused else 'paused')
+                'content_mode': active_renderer.get('content_mode', 'scene'),
+                'options': active_renderer.get('options', {}),
+                'sender_status': sender_status,
+                'status': active_renderer.get(
+                    'status',
+                    'running' if not renderer or not getattr(renderer, 'is_paused', False) else 'paused',
+                )
             })
+            if sender_status and sender_status.get("projection_state"):
+                status["status"] = sender_status["projection_state"]
             
             return status
     

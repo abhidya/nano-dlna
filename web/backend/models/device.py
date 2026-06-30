@@ -1,6 +1,9 @@
 from sqlalchemy import Column, Integer, String, Boolean, DateTime, JSON
 from sqlalchemy.sql import func
-from database.database import Base
+try:
+    from ..database.database import Base
+except ImportError:
+    from database.database import Base
 
 class DeviceModel(Base):
     """
@@ -65,3 +68,7 @@ class DeviceModel(Base):
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
             "playback_started_at": self.playback_started_at.isoformat() if self.playback_started_at else None,
         }
+
+
+# Backward-compatible alias for older tests/helpers.
+Device = DeviceModel

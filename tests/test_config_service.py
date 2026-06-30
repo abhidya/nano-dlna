@@ -40,14 +40,14 @@ class TestConfigService(unittest.TestCase):
                 "type": "dlna",
                 "hostname": "192.168.1.100",
                 "action_url": "http://192.168.1.100/action",
-                "video_file": "/tmp/test_video1.mp4"
+                "video_file": os.path.join(self.temp_dir.name, "test_video1.mp4")
             },
             {
                 "device_name": "TestDevice2",
                 "type": "dlna", # Changed from transcreen for consistency, can be changed back if needed
                 "hostname": "192.168.1.101",
                 "action_url": "http://192.168.1.101/action",
-                "video_file": "/tmp/test_video2.mp4"
+                "video_file": os.path.join(self.temp_dir.name, "test_video2.mp4")
             }
         ]
         
@@ -118,16 +118,17 @@ class TestConfigService(unittest.TestCase):
     
     def test_add_device_config(self):
         """Test adding a device configuration manually"""
+        video_file_path = os.path.join(self.temp_dir.name, "test_video3.mp4")
         # Add a device configuration
         device_config = {
             "type": "dlna",
             "hostname": "192.168.1.102",
             "action_url": "http://192.168.1.102/action",
-            "video_file": "/tmp/test_video3.mp4"
+            "video_file": video_file_path
         }
         
         # Create the test video file
-        with open("/tmp/test_video3.mp4", "w") as f:
+        with open(video_file_path, "w") as f:
             f.write("")
         
         # Add the configuration
@@ -143,7 +144,7 @@ class TestConfigService(unittest.TestCase):
         self.assertEqual(configs["TestDevice3"]["hostname"], "192.168.1.102")
         
         # Clean up
-        os.remove("/tmp/test_video3.mp4")
+        os.remove(video_file_path)
     
     def test_remove_device_config(self):
         """Test removing a device configuration"""
@@ -184,7 +185,7 @@ class TestConfigService(unittest.TestCase):
             "type": "dlna",
             "hostname": "192.168.1.103",
             "action_url": "http://192.168.1.103/action", # Added action_url
-            "video_file": "/tmp/non_existent_video.mp4"
+            "video_file": os.path.join(self.temp_dir.name, "non_existent_video.mp4")
         }
         
         # Add the configuration
@@ -225,7 +226,7 @@ class TestConfigService(unittest.TestCase):
         def add_configs(thread_id):
             for i in range(5):
                 device_name = f"ThreadDevice{thread_id}_{i}"
-                video_file_path = f"/tmp/thread_video_{thread_id}_{i}.mp4"
+                video_file_path = os.path.join(self.temp_dir.name, f"thread_video_{thread_id}_{i}.mp4")
                 with open(video_file_path, "w") as f: # Create dummy video file
                     f.write("dummy")
                 

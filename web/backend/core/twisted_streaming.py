@@ -11,6 +11,8 @@ import time
 import logging
 from typing import Dict, Any, Optional, Tuple
 
+from .streaming_adapter import detect_serve_ip
+
 from twisted.internet import reactor
 from twisted.web.resource import Resource
 from twisted.web.server import Site
@@ -337,7 +339,8 @@ class TwistedStreamingServer:
             logger.info(f"Cleanup complete. Remaining servers: {len(self.server_sites)}")
     
     def start_server(self, files: Dict[str, str], serve_ip: Optional[str] = None, 
-                    port: Optional[int] = None, port_range: Optional[Tuple[int, int]] = None) -> Tuple[Dict[str, str], Any]:
+                    port: Optional[int] = None, port_range: Optional[Tuple[int, int]] = None,
+                    serve_port: Optional[int] = None, device_name: Optional[str] = None) -> Tuple[Dict[str, str], Any]:
         """
         Start a streaming server for the given files
         
@@ -345,7 +348,9 @@ class TwistedStreamingServer:
             files: Dictionary mapping file keys to file paths
             serve_ip: IP address to serve on (optional)
             port: Port to serve on (optional)
+            serve_port: Canonical adapter port name, accepted for compatibility
             port_range: Tuple of (min_port, max_port) to try (optional)
+            device_name: Accepted by the canonical interface; session tracking is port-based here
             
         Returns:
             Tuple[Dict[str, str], Any]: Dictionary mapping file keys to URLs and server instance
@@ -353,6 +358,9 @@ class TwistedStreamingServer:
         import errno
         import socket
         import traceback
+
+        if port is None:
+            port = serve_port
         
         # Define port range
         if port_range and isinstance(port_range, (list, tuple)) and len(port_range) >= 2:
@@ -441,6 +449,10 @@ class TwistedStreamingServer:
         
         logger.error(f"Could not find an available port between {base_port} and {max_port} for streaming server.")
         raise RuntimeError(f"No available port found for streaming server in range {base_port}-{max_port}")
+
+    def get_serve_ip(self, target_ip: Optional[str] = None) -> str:
+        """Return the local IP used for streaming to a target network."""
+        return detect_serve_ip(target_ip)
     
     def stop_server(self, port=None):
         """

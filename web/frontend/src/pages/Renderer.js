@@ -39,9 +39,12 @@ import {
   Info as InfoIcon,
   Settings as SettingsIcon,
   Search as SearchIcon,
-  Cast as CastIcon,
   Pause as PauseIcon,
-  PlayCircleFilled as ResumeIcon
+  PlayCircleFilled as ResumeIcon,
+  Cable as CableIcon,
+  Visibility as IdentifyIcon,
+  PowerSettingsNew as PowerIcon,
+  Lightbulb as LightIcon
 } from '@mui/icons-material';
 import { rendererApi } from '../services/api';
 
@@ -53,6 +56,11 @@ function Renderer() {
   const [activeRenderers, setActiveRenderers] = useState([]);
   const [selectedProjector, setSelectedProjector] = useState('');
   const [selectedScene, setSelectedScene] = useState('');
+  const [selectedHdmiProjector, setSelectedHdmiProjector] = useState('');
+  const [hdmiDisplays, setHdmiDisplays] = useState([]);
+  const [hdmiMode, setHdmiMode] = useState('structured_light');
+  const [hdmiPatternSet, setHdmiPatternSet] = useState('gray_code');
+  const [hdmiFrameDuration, setHdmiFrameDuration] = useState(300);
   const [openStatusDialog, setOpenStatusDialog] = useState(false);
   const [selectedRendererStatus, setSelectedRendererStatus] = useState(null);
   const [snackbar, setSnackbar] = useState({
@@ -60,8 +68,6 @@ function Renderer() {
     message: '',
     severity: 'success'
   });
-  const [refreshInterval, setRefreshInterval] = useState(null);
-  
   // AirPlay discovery state
   const [airplayDevices, setAirplayDevices] = useState([]);
   const [airplayLoading, setAirplayLoading] = useState(false);
@@ -76,13 +82,9 @@ function Renderer() {
       fetchActiveRenderers();
     }, 5000); // Refresh active renderers every 5 seconds
     
-    setRefreshInterval(interval);
-    
     // Clean up interval on component unmount
     return () => {
-      if (refreshInterval) {
-        clearInterval(refreshInterval);
-      }
+      clearInterval(interval);
     };
   }, []);
 
@@ -92,37 +94,36 @@ function Renderer() {
       setError(null);
       
       // Fetch projectors, scenes, and active renderers in parallel
-      const [projectorsResponse, scenesResponse, renderersResponse] = await Promise.all([
+      const [projectorsResponse, scenesResponse, renderersResponse, hdmiDisplaysResponse] = await Promise.all([
         rendererApi.listProjectors(),
         rendererApi.listScenes(),
-        rendererApi.listRenderers()
+        rendererApi.listRenderers(),
+        rendererApi.listHdmiDisplays()
       ]);
-      
-      // Debug: Log the raw responses
-      console.log('Projectors API Response:', JSON.stringify(projectorsResponse, null, 2));
-      console.log('Scenes API Response:', JSON.stringify(scenesResponse, null, 2));
       
       // The API response structure is: { data: { success: true, message: "...", data: { projectors: [...] } } }
       // So we need to access data.data.projectors
       const projectorsList = projectorsResponse.data.data.projectors || [];
       const scenesList = scenesResponse.data.data.scenes || [];
-      
-      console.log('Projectors List:', JSON.stringify(projectorsList, null, 2));
-      console.log('Scenes List:', JSON.stringify(scenesList, null, 2));
+      const hdmiDisplaysList = hdmiDisplaysResponse.data.data.displays || [];
       
       setProjectors(projectorsList);
       setScenes(scenesList);
       setActiveRenderers(renderersResponse.data.data.renderers || []);
+      setHdmiDisplays(hdmiDisplaysList);
       
       // Set default selections if available
       if (projectorsList.length > 0) {
-        console.log('Setting default projector:', projectorsList[0].id);
         setSelectedProjector(projectorsList[0].id);
       }
       
       if (scenesList.length > 0) {
-        console.log('Setting default scene:', scenesList[0].id);
         setSelectedScene(scenesList[0].id);
+      }
+
+      const hdmiProjectors = projectorsList.filter(projector => projector.sender === 'hdmi');
+      if (hdmiProjectors.length > 0) {
+        setSelectedHdmiProjector(hdmiProjectors[0].id);
       }
       
       setLoading(false);
@@ -156,8 +157,7 @@ function Renderer() {
 
     try {
       setLoading(true);
-      const response = await rendererApi.startRenderer(selectedScene, selectedProjector);
-      console.log('Start Renderer Response:', JSON.stringify(response, null, 2));
+      await rendererApi.startRenderer(selectedScene, selectedProjector);
       setSnackbar({
         open: true,
         message: 'Renderer started successfully',
@@ -179,8 +179,7 @@ function Renderer() {
   const handleStopRenderer = async (projectorId) => {
     try {
       setLoading(true);
-      const response = await rendererApi.stopRenderer(projectorId);
-      console.log('Stop Renderer Response:', JSON.stringify(response, null, 2));
+      await rendererApi.stopRenderer(projectorId);
       setSnackbar({
         open: true,
         message: 'Renderer stopped successfully',
@@ -202,8 +201,7 @@ function Renderer() {
   const handlePauseRenderer = async (projectorId) => {
     try {
       setLoading(true);
-      const response = await rendererApi.pauseRenderer(projectorId);
-      console.log('Pause Renderer Response:', JSON.stringify(response, null, 2));
+      await rendererApi.pauseRenderer(projectorId);
       setSnackbar({
         open: true,
         message: 'Renderer paused successfully',
@@ -225,8 +223,7 @@ function Renderer() {
   const handleResumeRenderer = async (projectorId) => {
     try {
       setLoading(true);
-      const response = await rendererApi.resumeRenderer(projectorId);
-      console.log('Resume Renderer Response:', JSON.stringify(response, null, 2));
+      await rendererApi.resumeRenderer(projectorId);
       setSnackbar({
         open: true,
         message: 'Renderer resumed successfully',
@@ -267,8 +264,7 @@ function Renderer() {
   const handleStartProjector = async (projectorId) => {
     try {
       setLoading(true);
-      const response = await rendererApi.startProjector(projectorId);
-      console.log('Start Projector Response:', JSON.stringify(response, null, 2));
+      await rendererApi.startProjector(projectorId);
       setSnackbar({
         open: true,
         message: 'Projector started with default scene',
@@ -284,6 +280,91 @@ function Renderer() {
       });
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleStartHdmiMode = async (modeOverride = null) => {
+    if (!selectedHdmiProjector) {
+      setSnackbar({
+        open: true,
+        message: 'Select an HDMI projector first',
+        severity: 'warning'
+      });
+      return;
+    }
+
+    const mode = modeOverride || hdmiMode;
+    const options = mode === 'structured_light'
+      ? {
+          pattern_set: hdmiPatternSet,
+          frame_duration_ms: Number(hdmiFrameDuration) || 300,
+          safe_black_between_frames: true
+        }
+      : {};
+
+    try {
+      setLoading(true);
+      await rendererApi.startProjectorMode(selectedHdmiProjector, mode, options);
+      setSnackbar({
+        open: true,
+        message: `Started ${mode.replace('_', ' ')} on HDMI projector`,
+        severity: 'success'
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error starting HDMI mode:', err);
+      setSnackbar({
+        open: true,
+        message: `Failed to start HDMI mode: ${err.response?.data?.detail || err.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleIdentifyHdmiProjector = async () => {
+    if (!selectedHdmiProjector) return;
+
+    try {
+      setLoading(true);
+      await rendererApi.identifyProjector(selectedHdmiProjector);
+      setSnackbar({
+        open: true,
+        message: 'Identify pattern launched',
+        severity: 'success'
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error identifying HDMI projector:', err);
+      setSnackbar({
+        open: true,
+        message: `Failed to identify projector: ${err.response?.data?.detail || err.message}`,
+        severity: 'error'
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSetPowerState = async (powerState) => {
+    if (!selectedHdmiProjector) return;
+
+    try {
+      await rendererApi.setProjectorPowerState(selectedHdmiProjector, powerState);
+      setSnackbar({
+        open: true,
+        message: `Projector marked ${powerState.replace('manual_', '')}`,
+        severity: 'success'
+      });
+      await fetchData();
+    } catch (err) {
+      console.error('Error setting projector power state:', err);
+      setSnackbar({
+        open: true,
+        message: `Failed to mark projector power: ${err.response?.data?.detail || err.message}`,
+        severity: 'error'
+      });
     }
   };
 
@@ -304,6 +385,39 @@ function Renderer() {
 
   const isProjectorActive = (projectorId) => {
     return activeRenderers.some(r => r.projector_id === projectorId);
+  };
+
+  const hdmiProjectors = projectors.filter(projector => projector.sender === 'hdmi');
+
+  const getProjectorRuntimeStatus = (projector) => {
+    return activeRenderers.find(renderer => renderer.projector_id === projector.id) || projector.runtime_status;
+  };
+
+  const getStatusColor = (status) => {
+    if (['projecting', 'running'].includes(status)) return 'success';
+    if (['degraded', 'launching'].includes(status)) return 'warning';
+    if (['unresponsive', 'detached'].includes(status)) return 'error';
+    return 'default';
+  };
+
+  const formatDisplayGeometry = (display) => {
+    const width = display.width ?? display.bounds?.width ?? display.size?.width;
+    const height = display.height ?? display.bounds?.height ?? display.size?.height;
+    const x = display.x ?? display.bounds?.x ?? display.origin?.x;
+    const y = display.y ?? display.bounds?.y ?? display.origin?.y;
+    const primary = display.is_primary || display.primary;
+    const size = width != null && height != null ? `${width}x${height}` : 'size unknown';
+    const origin = x != null && y != null ? ` at ${x},${y}` : '';
+
+    return `${size}${origin}${primary ? ' / primary' : ''}`;
+  };
+
+  const handleAirPlayDeviceInfo = (device) => {
+    setSnackbar({
+      open: true,
+      message: `${device.name} discovered. Add it as an AirPlay projector before casting.`,
+      severity: 'info'
+    });
   };
 
   const handleDiscoverAirPlayDevices = async () => {
@@ -386,7 +500,14 @@ function Renderer() {
     <Grid container spacing={3}>
       {/* Header */}
       <Grid item xs={12}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 1,
+          mb: 2
+        }}>
           <Typography variant="h4">Renderer Management</Typography>
           <Button
             variant="contained"
@@ -456,6 +577,216 @@ function Renderer() {
         </Paper>
       </Grid>
 
+      {/* HDMI Projector Section */}
+      <Grid item xs={12}>
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            justifyContent: 'space-between',
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: 1,
+            mb: 2
+          }}>
+            <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <CableIcon /> HDMI Projector
+            </Typography>
+            <Button
+              variant="outlined"
+              startIcon={<RefreshIcon />}
+              onClick={fetchData}
+              disabled={loading}
+            >
+              Refresh displays
+            </Button>
+          </Box>
+
+          {hdmiProjectors.length === 0 ? (
+            <Alert severity="info">
+              No HDMI projectors are configured. Add a projector with sender "hdmi" in renderer_config.json.
+            </Alert>
+          ) : (
+            <Grid container spacing={2}>
+              <Grid item xs={12} md={4}>
+                <FormControl fullWidth sx={{ mb: 2 }}>
+                  <InputLabel>HDMI projector</InputLabel>
+                  <Select
+                    value={selectedHdmiProjector}
+                    onChange={(e) => setSelectedHdmiProjector(e.target.value)}
+                    label="HDMI projector"
+                    disabled={loading}
+                  >
+                    {hdmiProjectors.map((projector) => (
+                      <MenuItem key={projector.id} value={projector.id}>
+                        {projector.name || projector.id} ({projector.target_name})
+                      </MenuItem>
+                    ))}
+                  </Select>
+                </FormControl>
+
+                <FormControl fullWidth sx={{ mb: 2 }}>
+                  <InputLabel>Content mode</InputLabel>
+                  <Select
+                    value={hdmiMode}
+                    onChange={(e) => setHdmiMode(e.target.value)}
+                    label="Content mode"
+                    disabled={loading}
+                  >
+                    <MenuItem value="structured_light">Structured lighting</MenuItem>
+                    <MenuItem value="overlay">Overlay</MenuItem>
+                    <MenuItem value="blank">Blank</MenuItem>
+                    <MenuItem value="identify">Identify</MenuItem>
+                  </Select>
+                </FormControl>
+
+                {hdmiMode === 'structured_light' && (
+                  <>
+                    <FormControl fullWidth sx={{ mb: 2 }}>
+                      <InputLabel>Pattern set</InputLabel>
+                      <Select
+                        value={hdmiPatternSet}
+                        onChange={(e) => setHdmiPatternSet(e.target.value)}
+                        label="Pattern set"
+                        disabled={loading}
+                      >
+                        <MenuItem value="gray_code">Gray code</MenuItem>
+                        <MenuItem value="calibration">Calibration</MenuItem>
+                        <MenuItem value="grid">Grid</MenuItem>
+                        <MenuItem value="checkerboard">Checkerboard</MenuItem>
+                      </Select>
+                    </FormControl>
+                    <TextField
+                      fullWidth
+                      label="Frame duration ms"
+                      type="number"
+                      value={hdmiFrameDuration}
+                      onChange={(e) => setHdmiFrameDuration(e.target.value)}
+                      disabled={loading}
+                      sx={{ mb: 2 }}
+                    />
+                  </>
+                )}
+
+                <Grid container spacing={1}>
+                  <Grid item xs={6}>
+                    <Button
+                      fullWidth
+                      variant="contained"
+                      startIcon={<LightIcon />}
+                      onClick={() => handleStartHdmiMode()}
+                      disabled={loading || !selectedHdmiProjector}
+                    >
+                      Start mode
+                    </Button>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      startIcon={<IdentifyIcon />}
+                      onClick={handleIdentifyHdmiProjector}
+                      disabled={loading || !selectedHdmiProjector}
+                    >
+                      Identify
+                    </Button>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      onClick={() => handleStartHdmiMode('blank')}
+                      disabled={loading || !selectedHdmiProjector}
+                    >
+                      Blank
+                    </Button>
+                  </Grid>
+                  <Grid item xs={6}>
+                    <Button
+                      fullWidth
+                      variant="outlined"
+                      color="error"
+                      startIcon={<StopIcon />}
+                      onClick={() => handleStopRenderer(selectedHdmiProjector)}
+                      disabled={loading || !selectedHdmiProjector || !isProjectorActive(selectedHdmiProjector)}
+                    >
+                      Stop
+                    </Button>
+                  </Grid>
+                </Grid>
+
+                <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1, mt: 2 }}>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<PowerIcon />}
+                    onClick={() => handleSetPowerState('manual_on')}
+                    disabled={!selectedHdmiProjector}
+                  >
+                    Mark on
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="warning"
+                    onClick={() => handleSetPowerState('manual_off')}
+                    disabled={!selectedHdmiProjector}
+                  >
+                    Mark off
+                  </Button>
+                </Box>
+              </Grid>
+
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>Detected displays</Typography>
+                <List dense>
+                  {hdmiDisplays.map((display) => (
+                    <ListItem key={display.id} divider>
+                      <ListItemText
+                        primary={`${display.name} (${display.id})`}
+                        secondary={formatDisplayGeometry(display)}
+                      />
+                    </ListItem>
+                  ))}
+                </List>
+              </Grid>
+
+              <Grid item xs={12} md={4}>
+                <Typography variant="subtitle2" gutterBottom>HDMI projector state</Typography>
+                {hdmiProjectors.map((projector) => {
+                  const runtime = getProjectorRuntimeStatus(projector) || {};
+                  const senderStatus = runtime.sender_status || {};
+                  return (
+                    <Box key={projector.id} sx={{ mb: 2 }}>
+                      <Typography variant="body1">{projector.name || projector.id}</Typography>
+                      <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', my: 1 }}>
+                        <Chip
+                          size="small"
+                          label={`Projection: ${senderStatus.projection_state || runtime.status || 'idle'}`}
+                          color={getStatusColor(senderStatus.projection_state || runtime.status)}
+                        />
+                        <Chip
+                          size="small"
+                          label={`Connection: ${senderStatus.connection_state || 'unknown'}`}
+                          color={getStatusColor(senderStatus.connection_state)}
+                        />
+                        <Chip
+                          size="small"
+                          label={`Power: ${senderStatus.power_state || 'unknown'}`}
+                          color={senderStatus.power_state === 'manual_off' ? 'warning' : 'default'}
+                        />
+                      </Box>
+                      <Typography variant="caption" color="textSecondary">
+                        Target {projector.target_name}; modes {(projector.content_modes || []).join(', ') || 'scene'}
+                      </Typography>
+                    </Box>
+                  );
+                })}
+              </Grid>
+            </Grid>
+          )}
+        </Paper>
+      </Grid>
+
       {/* Active Renderers Section */}
       <Grid item xs={12}>
         <Paper sx={{ p: 2 }}>
@@ -471,7 +802,7 @@ function Renderer() {
                 const scene = getSceneById(renderer.scene_id);
                 
                 return (
-                  <ListItem key={renderer.id} divider>
+                  <ListItem key={renderer.id || renderer.projector_id} divider>
                     <ListItemText
                       primary={
                         <Box sx={{ display: 'flex', alignItems: 'center' }}>
@@ -480,7 +811,7 @@ function Renderer() {
                           </Typography>
                           <Chip 
                             label={renderer.status} 
-                            color={renderer.status === 'running' ? 'success' : 'default'} 
+                            color={getStatusColor(renderer.status)}
                             size="small" 
                             sx={{ ml: 1 }}
                           />
@@ -521,7 +852,7 @@ function Renderer() {
                         onClick={() => handlePauseRenderer(renderer.projector_id)}
                         color="primary"
                         sx={{ mr: 1 }}
-                        disabled={renderer.status === 'paused'}
+                        disabled={renderer.sender_type === 'hdmi' || renderer.status === 'paused'}
                       >
                         <PauseIcon />
                       </IconButton>
@@ -531,7 +862,7 @@ function Renderer() {
                         onClick={() => handleResumeRenderer(renderer.projector_id)}
                         color="success"
                         sx={{ mr: 1 }}
-                        disabled={renderer.status !== 'paused'}
+                        disabled={renderer.sender_type === 'hdmi' || renderer.status !== 'paused'}
                       >
                         <ResumeIcon />
                       </IconButton>
@@ -557,7 +888,7 @@ function Renderer() {
         <Paper sx={{ p: 2 }}>
           <Typography variant="h6" gutterBottom>Available Projectors</Typography>
           <Grid container spacing={2}>
-            {projectors.map((projector) => (
+                    {projectors.map((projector) => (
               <Grid item xs={12} sm={6} md={4} key={projector.id}>
                 <Card>
                   <CardHeader
@@ -570,6 +901,27 @@ function Renderer() {
                     }
                   />
                   <CardContent>
+                    {(() => {
+                      const runtime = getProjectorRuntimeStatus(projector) || {};
+                      const senderStatus = runtime.sender_status || {};
+                      const statusLabel = senderStatus.projection_state || runtime.status || 'idle';
+                      return (
+                        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', mb: 1 }}>
+                          <Chip
+                            label={statusLabel}
+                            color={getStatusColor(statusLabel)}
+                            size="small"
+                          />
+                          {projector.sender === 'hdmi' && (
+                            <Chip
+                              label={senderStatus.power_state || 'unknown power'}
+                              color={senderStatus.power_state === 'manual_off' ? 'warning' : 'default'}
+                              size="small"
+                            />
+                          )}
+                        </Box>
+                      );
+                    })()}
                     <Typography variant="body2" color="textSecondary" gutterBottom>
                       Status: <Chip 
                         label={isProjectorActive(projector.id) ? 'Active' : 'Inactive'} 
@@ -587,7 +939,7 @@ function Renderer() {
                     )}
                     {projector.fallback_sender && (
                       <Typography variant="body2" color="textSecondary" gutterBottom>
-                        Fallback: {projector.fallback_sender} → {projector.fallback_target}
+                        Fallback: {projector.fallback_sender} -> {projector.fallback_target}
                       </Typography>
                     )}
                   </CardContent>
@@ -658,7 +1010,13 @@ function Renderer() {
       {/* AirPlay Discovery Button */}
       <Grid item xs={12}>
         <Paper sx={{ p: 2 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            justifyContent: 'space-between',
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: 1
+          }}>
             <Typography variant="h6">AirPlay Devices</Typography>
             <Button
               variant="contained"
@@ -745,10 +1103,11 @@ function Renderer() {
                         <ListItemSecondaryAction>
                           <IconButton 
                             edge="end" 
-                            aria-label="cast"
+                            aria-label={`show ${device.name} AirPlay setup guidance`}
                             color="primary"
+                            onClick={() => handleAirPlayDeviceInfo(device)}
                           >
-                            <CastIcon />
+                            <InfoIcon />
                           </IconButton>
                         </ListItemSecondaryAction>
                       </ListItem>
@@ -789,10 +1148,11 @@ function Renderer() {
                         <ListItemSecondaryAction>
                           <IconButton 
                             edge="end" 
-                            aria-label="cast"
+                            aria-label={`show ${device.name} AirPlay setup guidance`}
                             color="primary"
+                            onClick={() => handleAirPlayDeviceInfo(device)}
                           >
-                            <CastIcon />
+                            <InfoIcon />
                           </IconButton>
                         </ListItemSecondaryAction>
                       </ListItem>
@@ -833,10 +1193,11 @@ function Renderer() {
                         <ListItemSecondaryAction>
                           <IconButton 
                             edge="end" 
-                            aria-label="cast"
+                            aria-label={`show ${device.name} AirPlay setup guidance`}
                             color="primary"
+                            onClick={() => handleAirPlayDeviceInfo(device)}
                           >
-                            <CastIcon />
+                            <InfoIcon />
                           </IconButton>
                         </ListItemSecondaryAction>
                       </ListItem>

@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Grid,
   Paper,
@@ -39,12 +39,14 @@ import {
   Settings as SettingsIcon,
   FilterList as FilterIcon
 } from '@mui/icons-material';
-import { deviceApi, discoveryV2Api } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { deviceApi } from '../services/api';
+import { useNavigate, useLocation } from 'react-router-dom';
 import ConfigurationManager from '../components/ConfigurationManager';
 
 function Devices() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const handledRouteActionRef = useRef('');
   const [devices, setDevices] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -123,16 +125,6 @@ function Devices() {
       }
       setError(null); // Clear any previous errors
       const response = await deviceApi.getDevices();
-      // Debug: log playing devices
-      const playingDevices = response.data.devices.filter(d => d.is_playing);
-      if (playingDevices.length > 0) {
-        console.log('Playing devices:', playingDevices.map(d => ({
-          name: d.name,
-          playback_started_at: d.playback_started_at,
-          is_playing: d.is_playing,
-          current_video: d.current_video
-        })));
-      }
       setDevices(response.data.devices);
       if (!isPolling) {
         setLoading(false);
@@ -408,6 +400,19 @@ function Devices() {
     }
   };
 
+  useEffect(() => {
+    const shouldDiscover = location.pathname === '/devices/discover' || location.state?.action === 'discover';
+    if (!shouldDiscover) return;
+
+    const routeKey = `${location.key}:discover`;
+    if (handledRouteActionRef.current === routeKey) return;
+
+    handledRouteActionRef.current = routeKey;
+    handleDiscoverDevices();
+  // Route state opens this story action once per navigation, even while polling re-renders.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key, location.pathname, location.state]);
+
   const handleInputChange = (e) => {
     const { name, value } = e.target;
     setNewDevice(prev => ({
@@ -503,6 +508,21 @@ function Devices() {
     return 0;
   };
 
+  const normalizeFilterValue = (value) => String(value || '').toLowerCase().replace(/\s+/g, '_');
+  const filteredDevices = devices.filter((device) => {
+    const type = normalizeFilterValue(device.casting_method || device.type);
+    const group = normalizeFilterValue(device.group || device.device_group || device.config?.group);
+    const zone = normalizeFilterValue(device.zone || device.device_zone || device.config?.zone);
+    const status = normalizeFilterValue(device.status);
+
+    if (filters.castingMethod && type !== normalizeFilterValue(filters.castingMethod)) return false;
+    if (filters.group && group !== normalizeFilterValue(filters.group)) return false;
+    if (filters.zone && zone !== normalizeFilterValue(filters.zone)) return false;
+    if (filters.onlineOnly && !['available', 'connected', 'online'].includes(status)) return false;
+
+    return true;
+  });
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -526,15 +546,21 @@ function Devices() {
     <Grid container spacing={3}>
       {/* Header */}
       <Grid item xs={12}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 1,
+          mb: 2
+        }}>
           <Typography variant="h4">Devices</Typography>
-          <Box>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1 }}>
             <Button
               variant="contained"
               color="primary"
               startIcon={<RefreshIcon />}
               onClick={fetchDevices}
-              sx={{ mr: 1 }}
             >
               Refresh
             </Button>
@@ -554,28 +580,33 @@ function Devices() {
       {/* Discovery Control */}
       <Grid item xs={12}>
         <Paper sx={{ p: 2, mb: 3 }}>
-          <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', md: 'row' },
+            justifyContent: 'space-between',
+            alignItems: { xs: 'stretch', md: 'center' },
+            gap: 2
+          }}>
             <Box>
               <Typography variant="h6">Discovery Control</Typography>
-              <Box sx={{ display: 'flex', alignItems: 'center' }}>
+              <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 1 }}>
                 <Typography variant="body2" color="textSecondary" component="span">
                   Discovery Loop: 
                 </Typography>
                 {discoveryStatus?.running ? 
-                  <Chip label="Running" color="success" size="small" sx={{ ml: 1 }} /> : 
-                  <Chip label="Paused" color="default" size="small" sx={{ ml: 1 }} />
+                  <Chip label="Running" color="success" size="small" /> : 
+                  <Chip label="Paused" color="default" size="small" />
                 }
-                <Typography variant="body2" color="textSecondary" component="span" sx={{ ml: 1 }}>
+                <Typography variant="body2" color="textSecondary" component="span">
                   {discoveryStatus && ` • ${discoveryStatus.devices_discovered} devices • ${discoveryStatus.devices_playing} playing`}
                 </Typography>
               </Box>
             </Box>
-            <Box>
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1 }}>
               <Button
                 variant="outlined"
                 color="primary"
                 onClick={handleToggleDiscovery}
-                sx={{ mr: 1 }}
               >
                 {discoveryStatus?.running ? 'Pause Discovery' : 'Resume Discovery'}
               </Button>
@@ -585,7 +616,6 @@ function Devices() {
                 startIcon={discovering ? <CircularProgress size={20} color="inherit" /> : <RefreshIcon />}
                 onClick={handleDiscoverDevices}
                 disabled={discovering}
-                sx={{ mr: 1 }}
               >
                 {discovering ? 'Scanning...' : 'Scan Now'}
               </Button>
@@ -604,12 +634,12 @@ function Devices() {
       {/* Filters */}
       <Grid item xs={12}>
         <Paper sx={{ p: 2, mb: 3 }}>
-          <Box sx={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 2 }}>
+          <Box sx={{ display: 'flex', alignItems: { xs: 'stretch', sm: 'center' }, flexWrap: 'wrap', gap: 2 }}>
             <Typography variant="subtitle1">
               <FilterIcon sx={{ verticalAlign: 'middle', mr: 1 }} />
               Filters:
             </Typography>
-            <FormControl size="small" sx={{ minWidth: 150 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 150 } }}>
               <InputLabel>Casting Method</InputLabel>
               <Select
                 value={filters.castingMethod}
@@ -623,7 +653,7 @@ function Devices() {
                 <MenuItem value="overlay">Overlay</MenuItem>
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
               <InputLabel>Group</InputLabel>
               <Select
                 value={filters.group}
@@ -636,7 +666,7 @@ function Devices() {
                 <MenuItem value="office">Office</MenuItem>
               </Select>
             </FormControl>
-            <FormControl size="small" sx={{ minWidth: 120 }}>
+            <FormControl size="small" sx={{ minWidth: { xs: '100%', sm: 120 } }}>
               <InputLabel>Zone</InputLabel>
               <Select
                 value={filters.zone}
@@ -674,15 +704,33 @@ function Devices() {
             </Typography>
           </Paper>
         </Grid>
+      ) : filteredDevices.length === 0 ? (
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3, textAlign: 'center' }}>
+            <Typography variant="h6" color="textSecondary">
+              No devices match these filters
+            </Typography>
+            <Button
+              variant="outlined"
+              sx={{ mt: 2 }}
+              onClick={() => setFilters({ castingMethod: '', onlineOnly: false, group: '', zone: '' })}
+            >
+              Clear Filters
+            </Button>
+          </Paper>
+        </Grid>
       ) : (
-        devices.map(device => (
+        filteredDevices.map(device => (
           <Grid item xs={12} sm={6} md={4} key={device.id}>
             <Card>
               <CardHeader
                 title={device.friendly_name}
                 subheader={`Type: ${device.type}`}
                 action={
-                  <IconButton onClick={() => { setSelectedDevice(device); setOpenDeleteDialog(true); }}>
+                  <IconButton
+                    aria-label={`delete ${device.friendly_name || device.name || 'device'}`}
+                    onClick={() => { setSelectedDevice(device); setOpenDeleteDialog(true); }}
+                  >
                     <DeleteIcon />
                   </IconButton>
                 }
@@ -739,7 +787,7 @@ function Devices() {
                   Hostname: {device.hostname}
                 </Typography>
               </CardContent>
-              <CardActions>
+              <CardActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
                 <Button 
                   size="small" 
                   color="primary"
@@ -858,7 +906,14 @@ function Devices() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenAddDialog(false)}>Cancel</Button>
-          <Button onClick={handleAddDevice} variant="contained" color="primary">Add</Button>
+          <Button
+            onClick={handleAddDevice}
+            variant="contained"
+            color="primary"
+            disabled={!newDevice.name.trim() || !newDevice.hostname.trim()}
+          >
+            Add
+          </Button>
         </DialogActions>
       </Dialog>
 

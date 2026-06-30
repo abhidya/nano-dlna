@@ -14,7 +14,6 @@ import {
   ListItemText,
   Toolbar,
   Typography,
-  Button,
   Tooltip,
 } from '@mui/material';
 import {
@@ -23,6 +22,7 @@ import {
   Devices as DevicesIcon,
   VideoLibrary as VideoLibraryIcon,
   Settings as SettingsIcon,
+  Article as LogsIcon,
   ViewInAr as RendererIcon,
   Layers as DepthIcon,
   CameraAlt as ProjectionIcon,
@@ -44,6 +44,7 @@ const menuItems = [
   { text: 'Projection Mapping', icon: <ProjectionIcon />, path: '/projection' },
   { text: 'Overlay', icon: <OverlayIcon />, path: '/overlay' },
   { text: 'Projection Animation', icon: <AnimationIcon />, path: '/projection-animation' },
+  { text: 'Logs', icon: <LogsIcon />, path: '/logs' },
   { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
 ];
 
@@ -75,6 +76,14 @@ function Layout({ children }) {
     setMobileOpen(false);
   };
 
+  const matchesPath = (path) => (
+    path === '/'
+      ? location.pathname === '/'
+      : location.pathname === path || location.pathname.startsWith(`${path}/`)
+  );
+
+  const activeItem = menuItems.find((item) => matchesPath(item.path));
+
   const drawer = (
     <div>
       <Toolbar sx={{ justifyContent: drawerCollapsed ? 'center' : 'space-between' }}>
@@ -83,7 +92,11 @@ function Layout({ children }) {
             nano-dlna
           </Typography>
         )}
-        <IconButton onClick={handleDrawerCollapse} sx={{ ml: drawerCollapsed ? 0 : 'auto' }}>
+        <IconButton
+          aria-label={drawerCollapsed ? 'expand navigation' : 'collapse navigation'}
+          onClick={handleDrawerCollapse}
+          sx={{ ml: drawerCollapsed ? 0 : 'auto' }}
+        >
           {drawerCollapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
         </IconButton>
       </Toolbar>
@@ -93,7 +106,7 @@ function Layout({ children }) {
           <ListItem key={item.text} disablePadding>
             <Tooltip title={drawerCollapsed ? item.text : ''} placement="right">
               <ListItemButton
-                selected={location.pathname === item.path}
+                selected={matchesPath(item.path)}
                 onClick={() => handleNavigation(item.path)}
                 sx={{
                   justifyContent: drawerCollapsed ? 'center' : 'flex-start',
@@ -140,9 +153,8 @@ function Layout({ children }) {
             <MenuIcon />
           </IconButton>
           <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
-            {menuItems.find((item) => item.path === location.pathname)?.text || 'Not Found'}
+            {activeItem?.text || 'Not Found'}
           </Typography>
-          <Button color="inherit">Help</Button>
         </Toolbar>
       </AppBar>
       <Box
@@ -155,7 +167,7 @@ function Layout({ children }) {
             duration: theme.transitions.duration.leavingScreen,
           }),
         }}
-        aria-label="mailbox folders"
+        aria-label="main navigation"
       >
         {/* The implementation can be swapped with js to avoid SEO duplication of links. */}
         <Drawer
@@ -197,7 +209,7 @@ function Layout({ children }) {
           flexGrow: 1, 
           p: 3, 
           width: { sm: `calc(100% - ${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px)` },
-          ml: { sm: `${drawerCollapsed ? collapsedDrawerWidth : drawerWidth}px` },
+          ml: 0,
           transition: theme => theme.transitions.create(['margin', 'width'], {
             easing: theme.transitions.easing.sharp,
             duration: theme.transitions.duration.leavingScreen,

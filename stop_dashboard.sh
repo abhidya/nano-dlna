@@ -6,6 +6,8 @@ set -e
 # Stop the dashboard
 echo "Stopping the dashboard..."
 
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Kill processes on specific ports
 echo "Killing any processes using ports 3000 and 8000..."
 lsof -ti:3000 | xargs kill -9 2>/dev/null || true
@@ -31,8 +33,8 @@ pkill -f "twisted" 2>/dev/null || true
 pkill -f "TwistedStreamingServer" 2>/dev/null || true
 
 # Use the web stop script to clean up
-cd web && ./stop_direct.sh
-cd ..
+cd "$ROOT_DIR/web" && ./stop_direct.sh
+cd "$ROOT_DIR"
 
 # Verify all processes are stopped
 if pgrep -f "react-scripts" > /dev/null || pgrep -f "uvicorn" > /dev/null || pgrep -f "twisted" > /dev/null || pgrep -f "TwistedStreamingServer" > /dev/null; then

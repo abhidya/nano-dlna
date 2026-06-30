@@ -6,17 +6,17 @@ import React from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { BrowserRouter } from 'react-router-dom';
 import Dashboard from '../pages/Dashboard';
+import { deviceApi, videoApi } from '../services/api';
 
-// Mock axios globally
-jest.mock('axios', () => ({
-  create: jest.fn(() => ({
-    get: jest.fn(() => Promise.resolve({ data: {} })),
-    post: jest.fn(() => Promise.resolve({ data: {} })),
-    interceptors: {
-      request: { use: jest.fn() },
-      response: { use: jest.fn() }
-    }
-  }))
+jest.mock('../services/api', () => ({
+  deviceApi: {
+    getDevices: jest.fn(),
+    pauseVideo: jest.fn(),
+    stopVideo: jest.fn(),
+  },
+  videoApi: {
+    getVideos: jest.fn(),
+  },
 }));
 
 // Mock navigation
@@ -29,6 +29,10 @@ jest.mock('react-router-dom', () => ({
 describe('Dashboard Component - Simple Tests', () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    deviceApi.getDevices.mockResolvedValue({ data: { devices: [] } });
+    deviceApi.pauseVideo.mockResolvedValue({ data: { success: true } });
+    deviceApi.stopVideo.mockResolvedValue({ data: { success: true } });
+    videoApi.getVideos.mockResolvedValue({ data: { videos: [] } });
   });
 
   test('renders without crashing', async () => {
@@ -38,24 +42,16 @@ describe('Dashboard Component - Simple Tests', () => {
       </BrowserRouter>
     );
 
+    await waitFor(() => {
+      expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
+    });
+
     // Component should render
     expect(document.querySelector('div')).toBeInTheDocument();
   });
 
 
   test('handles navigation buttons', async () => {
-    const axios = require('axios');
-    const mockAxiosInstance = {
-      get: jest.fn()
-        .mockResolvedValueOnce({ data: { devices: [] } }) // for getDevices
-        .mockResolvedValueOnce({ data: { videos: [] } }), // for getVideos
-      interceptors: {
-        request: { use: jest.fn() },
-        response: { use: jest.fn() }
-      }
-    };
-    axios.create.mockReturnValue(mockAxiosInstance);
-
     render(
       <BrowserRouter>
         <Dashboard />
@@ -73,15 +69,8 @@ describe('Dashboard Component - Simple Tests', () => {
   });
 
   test('handles API errors gracefully', async () => {
-    const axios = require('axios');
-    const mockAxiosInstance = {
-      get: jest.fn().mockRejectedValue(new Error('Network error')),
-      interceptors: {
-        request: { use: jest.fn() },
-        response: { use: jest.fn() }
-      }
-    };
-    axios.create.mockReturnValue(mockAxiosInstance);
+    const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => {});
+    deviceApi.getDevices.mockRejectedValue(new Error('Network error'));
 
     render(
       <BrowserRouter>
@@ -93,5 +82,7 @@ describe('Dashboard Component - Simple Tests', () => {
     await waitFor(() => {
       expect(screen.getByText('Retry')).toBeInTheDocument();
     });
+
+    consoleErrorSpy.mockRestore();
   });
 });

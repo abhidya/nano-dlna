@@ -1,12 +1,13 @@
 """
 API endpoints for streaming session management.
 """
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, Path, Depends
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Query, HTTPException, Path, Depends, Body
 from typing import Dict, Any, List, Optional
 import asyncio
 import logging
 import json
 import os
+from pydantic import BaseModel
 
 # Fix the import causing startup errors
 from core.streaming_registry import StreamingSessionRegistry
@@ -27,6 +28,10 @@ router = APIRouter(
 # Add logger
 logger = logging.getLogger(__name__)
 
+class StartStreamingRequest(BaseModel):
+    device_id: int
+    video_path: str
+
 # Dependency to get the device service, defined locally
 def get_device_service_local(db: Session = Depends(get_db)) -> DeviceService:
     # Use get_device_manager to obtain the singleton instance
@@ -46,8 +51,9 @@ async def get_streaming_stats() -> Dict[str, Any]:
 
 @router.post("/start", response_model=Dict[str, Any])
 async def start_streaming(
-    device_id: int,
-    video_path: str,
+    request: Optional[StartStreamingRequest] = Body(None),
+    device_id: Optional[int] = Query(None),
+    video_path: Optional[str] = Query(None),
     device_service: DeviceService = Depends(get_device_service_local) # Use local version
 ) -> Dict[str, Any]:
     """
@@ -60,6 +66,16 @@ async def start_streaming(
     Returns:
         Dict[str, Any]: Streaming information
     """
+    if request:
+        device_id = request.device_id
+        video_path = request.video_path
+
+    if device_id is None or not video_path:
+        raise HTTPException(
+            status_code=400,
+            detail="device_id and video_path are required",
+        )
+
     logger.info(f"Starting streaming for device {device_id} with video {video_path}")
     
     # Check if the video file exists

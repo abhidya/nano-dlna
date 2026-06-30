@@ -41,9 +41,10 @@ class DLNADiscoveryBackend(DiscoveryBackend):
     Discovery backend for DLNA/UPnP devices.
     """
     
-    def __init__(self):
+    def __init__(self, discovery_timeout: float = 2.0, bind_host: str = "0.0.0.0"):
         super().__init__("DLNA", CastingMethod.DLNA)
-        self.discovery_timeout = 2.0
+        self.discovery_timeout = discovery_timeout
+        self.bind_host = bind_host
         
     async def discover_devices(self) -> List[Device]:
         """
@@ -55,7 +56,7 @@ class DLNADiscoveryBackend(DiscoveryBackend):
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
         ttl = struct.pack("B", 4)
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_MULTICAST_TTL, ttl)
-        sock.bind(("0.0.0.0", 0))
+        sock.bind((self.bind_host, 0))
         sock.settimeout(self.discovery_timeout)
         
         # Send SSDP broadcast
@@ -83,7 +84,7 @@ class DLNADiscoveryBackend(DiscoveryBackend):
                     location = headers.get("location")
                     if location and location not in device_locations:
                         device_locations.add(location)
-                        device = await self._parse_device_description(location)
+                        device = await self.parse_device_description(location)
                         if device:
                             devices.append(device)
                             
@@ -96,7 +97,7 @@ class DLNADiscoveryBackend(DiscoveryBackend):
         logger.info(f"Discovered {len(devices)} DLNA devices")
         return devices
     
-    async def _parse_device_description(self, location_url: str) -> Optional[Device]:
+    async def parse_device_description(self, location_url: str) -> Optional[Device]:
         """
         Parse device description from XML at location URL.
         """
@@ -179,6 +180,10 @@ class DLNADiscoveryBackend(DiscoveryBackend):
         except Exception as e:
             logger.error(f"Error parsing device description from {location_url}: {e}")
             return None
+
+    async def _parse_device_description(self, location_url: str) -> Optional[Device]:
+        """Backward-compatible alias for legacy tests."""
+        return await self.parse_device_description(location_url)
     
     def _get_xml_text(self, parent, path: str, default: str = "") -> str:
         """Extract text from XML element."""

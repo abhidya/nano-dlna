@@ -11,13 +11,22 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel
 from typing import List, Dict, Any, Optional
 
-from database.database import init_db, get_db
-from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router, log_router
-from api.discovery_router import router as discovery_router
-from core.device_manager import get_device_manager
-from core.streaming_registry import StreamingSessionRegistry
-from core.twisted_streaming import get_instance as get_twisted_streaming
-from core.streaming_service import get_streaming_service
+try:
+    from .database.database import init_db, get_db
+    from .routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router, log_router
+    from .api.discovery_router import router as discovery_router
+    from .core.device_manager import get_device_manager
+    from .core.streaming_registry import StreamingSessionRegistry
+    from .core.twisted_streaming import get_instance as get_twisted_streaming
+    from .core.streaming_service import get_streaming_service
+except ImportError:
+    from database.database import init_db, get_db
+    from routers import device_router, video_router, streaming_router, renderer_router, overlay_router, projection_router, log_router
+    from api.discovery_router import router as discovery_router
+    from core.device_manager import get_device_manager
+    from core.streaming_registry import StreamingSessionRegistry
+    from core.twisted_streaming import get_instance as get_twisted_streaming
+    from core.streaming_service import get_streaming_service
 
 # Configure logging - check if already configured by run.py
 import logging.handlers
@@ -83,6 +92,13 @@ else:
 # Get logger for this module
 logger = logging.getLogger(__name__)
 
+def get_cors_allow_origins():
+    raw_origins = os.environ.get(
+        "CORS_ALLOW_ORIGINS",
+        "http://localhost:3000,http://127.0.0.1:3000",
+    )
+    return [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+
 # Create FastAPI app
 app = FastAPI(
     title="nano-dlna Dashboard",
@@ -90,10 +106,14 @@ app = FastAPI(
     version="1.0.0",
 )
 
+
+def create_app() -> FastAPI:
+    return app
+
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, replace with specific origins
+    allow_origins=get_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -159,7 +179,8 @@ async def startup_event():
         logger.error(f"Failed to start log aggregation service: {e}")
     
     # Initialize services here to prevent multiple executions during imports  
-    device_manager = get_device_manager()  # Use singleton
+    if device_manager is None:
+        device_manager = get_device_manager()  # Use singleton
     # Stop any existing streaming servers to prevent port conflicts
     streaming_service = get_twisted_streaming()
     streaming_service.stop_server()  # Explicitly stop any existing servers
@@ -171,8 +192,12 @@ async def startup_event():
 
     # Get or create the renderer service
     try:
-        from core.renderer_service.service import RendererService
-        from routers.renderer_router import get_renderer_service
+        try:
+            from .core.renderer_service.service import RendererService
+            from .routers.renderer_router import get_renderer_service
+        except ImportError:
+            from core.renderer_service.service import RendererService
+            from routers.renderer_router import get_renderer_service
         renderer_service = get_renderer_service()
         logger.info("Renderer Service initialized successfully")
     except Exception as e:
@@ -192,7 +217,10 @@ async def startup_event():
         db = next(get_db())
         
         # Create a device service instance
-        from services.device_service import DeviceService
+        try:
+            from .services.device_service import DeviceService
+        except ImportError:
+            from services.device_service import DeviceService
         device_service = DeviceService(db, device_manager)
         
         # Set the device service in device manager for recovery operations

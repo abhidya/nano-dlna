@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   Grid,
   Paper,
@@ -22,11 +22,6 @@ import {
   Alert,
   Snackbar,
   LinearProgress,
-  List,
-  ListItem,
-  ListItemText,
-  ListItemAvatar,
-  Avatar,
   Chip
 } from '@mui/material';
 import {
@@ -39,10 +34,12 @@ import {
   Upload as UploadIcon
 } from '@mui/icons-material';
 import { videoApi } from '../services/api';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 
 function Videos() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const handledRouteActionRef = useRef('');
   const [videos, setVideos] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -64,6 +61,7 @@ function Videos() {
   const [uploadFile, setUploadFile] = useState(null);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [isUploading, setIsUploading] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
     fetchVideos();
@@ -173,7 +171,7 @@ function Videos() {
     setUploadProgress(0);
 
     try {
-      const response = await videoApi.uploadVideo(formData, {
+      await videoApi.uploadVideo(formData, {
         onUploadProgress: (progressEvent) => {
           const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
           setUploadProgress(percentCompleted);
@@ -240,6 +238,31 @@ function Videos() {
     return Math.round(bytes / Math.pow(1024, i), 2) + ' ' + sizes[i];
   };
 
+  useEffect(() => {
+    const routeAction = location.pathname === '/videos/add'
+      ? 'add'
+      : location.pathname === '/videos/scan'
+        ? 'scan'
+        : location.state?.action;
+    if (!['add', 'scan'].includes(routeAction)) return;
+
+    const routeKey = `${location.key}:${routeAction}`;
+    if (handledRouteActionRef.current === routeKey) return;
+
+    handledRouteActionRef.current = routeKey;
+    if (routeAction === 'add') setOpenAddDialog(true);
+    if (routeAction === 'scan') setOpenScanDialog(true);
+  }, [location.key, location.pathname, location.state]);
+
+  const searchQuery = searchTerm.trim().toLowerCase();
+  const filteredVideos = videos.filter((video) => {
+    if (!searchQuery) return true;
+
+    return [video.name, video.path, video.format, video.resolution]
+      .filter(Boolean)
+      .some((value) => String(value).toLowerCase().includes(searchQuery));
+  });
+
   if (loading) {
     return (
       <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
@@ -263,15 +286,21 @@ function Videos() {
     <Grid container spacing={3}>
       {/* Header */}
       <Grid item xs={12}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 1,
+          mb: 2
+        }}>
           <Typography variant="h4">Videos</Typography>
-          <Box>
+          <Box sx={{ display: 'flex', flexDirection: { xs: 'column', sm: 'row' }, gap: 1 }}>
             <Button
               variant="contained"
               color="primary"
               startIcon={<RefreshIcon />}
               onClick={fetchVideos}
-              sx={{ mr: 1 }}
             >
               Refresh
             </Button>
@@ -280,7 +309,6 @@ function Videos() {
               color="primary"
               startIcon={<FolderIcon />}
               onClick={() => setOpenScanDialog(true)}
-              sx={{ mr: 1 }}
             >
               Scan Directory
             </Button>
@@ -303,14 +331,19 @@ function Videos() {
           <Typography variant="h6" gutterBottom>
             Upload Video
           </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', mt: 2 }}>
+          <Box sx={{
+            display: 'flex',
+            flexDirection: { xs: 'column', sm: 'row' },
+            alignItems: { xs: 'stretch', sm: 'center' },
+            gap: 2,
+            mt: 2
+          }}>
             <TextField
               type="file"
               inputProps={{ accept: 'video/*' }}
               onChange={(e) => setUploadFile(e.target.files[0])}
               fullWidth
               variant="outlined"
-              sx={{ mr: 2 }}
               disabled={isUploading}
             />
             <Button
@@ -339,6 +372,19 @@ function Videos() {
         </Paper>
       </Grid>
 
+      {/* Search */}
+      <Grid item xs={12}>
+        <Paper sx={{ p: 2, mb: 3 }}>
+          <TextField
+            label="Search videos"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            fullWidth
+            variant="outlined"
+          />
+        </Paper>
+      </Grid>
+
       {/* Video List */}
       {videos.length === 0 ? (
         <Grid item xs={12}>
@@ -351,15 +397,29 @@ function Videos() {
             </Typography>
           </Paper>
         </Grid>
+      ) : filteredVideos.length === 0 ? (
+        <Grid item xs={12}>
+          <Paper sx={{ p: 3, textAlign: 'center' }}>
+            <Typography variant="h6" color="textSecondary">
+              No videos match your search
+            </Typography>
+            <Button variant="outlined" sx={{ mt: 2 }} onClick={() => setSearchTerm('')}>
+              Clear Search
+            </Button>
+          </Paper>
+        </Grid>
       ) : (
-        videos.map(video => (
+        filteredVideos.map(video => (
           <Grid item xs={12} sm={6} md={4} key={video.id}>
             <Card>
               <CardHeader
                 title={video.name}
                 subheader={`Format: ${video.format || 'Unknown'}`}
                 action={
-                  <IconButton onClick={() => { setSelectedVideo(video); setOpenDeleteDialog(true); }}>
+                  <IconButton
+                    aria-label={`delete ${video.name || 'video'}`}
+                    onClick={() => { setSelectedVideo(video); setOpenDeleteDialog(true); }}
+                  >
                     <DeleteIcon />
                   </IconButton>
                 }
@@ -392,7 +452,7 @@ function Videos() {
                   <Chip label="Has Subtitles" size="small" color="primary" sx={{ mt: 1 }} />
                 )}
               </CardContent>
-              <CardActions>
+              <CardActions sx={{ flexWrap: 'wrap', gap: 0.5 }}>
                 <Button 
                   size="small" 
                   color="primary"
@@ -447,7 +507,14 @@ function Videos() {
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setOpenAddDialog(false)}>Cancel</Button>
-          <Button onClick={handleAddVideo} variant="contained" color="primary">Add</Button>
+          <Button
+            onClick={handleAddVideo}
+            variant="contained"
+            color="primary"
+            disabled={!newVideo.name.trim() || !newVideo.path.trim()}
+          >
+            Add
+          </Button>
         </DialogActions>
       </Dialog>
 
@@ -491,7 +558,7 @@ function Videos() {
             onClick={handleScanDirectory} 
             variant="contained" 
             color="primary"
-            disabled={scanning}
+            disabled={scanning || !scanDirectory.trim()}
             startIcon={scanning ? <CircularProgress size={20} /> : null}
           >
             {scanning ? 'Scanning...' : 'Scan'}

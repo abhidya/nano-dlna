@@ -16,6 +16,16 @@ from .streaming_registry import StreamingSessionRegistry
 
 logger = logging.getLogger(__name__)
 
+
+class Config:
+    """Backward-compatible defaults for tests and simple stream URL helpers."""
+
+    def __init__(self):
+        self.stream_base_url = os.environ.get("STREAM_BASE_URL", "http://localhost:8888")
+        self.stream_protocol = self.stream_base_url.split(":", 1)[0]
+        self.videos_dir = os.environ.get("VIDEOS_DIR", "videos")
+
+
 class StreamingRequestHandler(SimpleHTTPRequestHandler):
     """
     Custom HTTP request handler that tracks streaming activity
@@ -249,6 +259,7 @@ class StreamingService:
     Service for streaming media files over HTTP
     """
     def __init__(self, device_manager=None):
+        self.config = Config()
         self.servers = {}
         self.temp_dirs = {}
         self.file_to_session_map = {}  # Map file paths to session IDs
@@ -295,6 +306,23 @@ class StreamingService:
         except Exception as e:
             logger.error(f"Error getting serve IP: {e}")
             return '127.0.0.1'
+
+    def get_stream_url(self, video_path: str) -> str:
+        """
+        Build a stable stream endpoint URL for a video path.
+
+        This is a lightweight URL helper; actual serving is handled by
+        start_server/get_or_create_stream.
+        """
+        base_url = self.config.stream_base_url.rstrip("/")
+        normalized_path = video_path.replace("\\", "/").lstrip("/")
+        return f"{base_url}/stream/{normalized_path}"
+
+    def validate_video_path(self, video_path: str) -> bool:
+        """
+        Validate that a video path points at an existing file.
+        """
+        return os.path.exists(video_path)
     
     def start_server(self, files: Dict[str, str], serve_ip: str, serve_port: Optional[int] = None, 
                      port_range: Optional[Tuple[int, int]] = None, device_name: Optional[str] = None) -> Tuple[Dict[str, str], Any]:

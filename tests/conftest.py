@@ -16,34 +16,18 @@ os.environ["PYTEST_CURRENT_TEST"] = "true"
 @pytest.fixture(scope="session", autouse=True)
 def clear_global_sqlalchemy_metadata_for_tests_directory(request):
     """
-    Fixture to clear SQLAlchemy global metadata before tests in the 'tests/'
-    directory run. This helps prevent "Table already defined" errors when
-    models are imported multiple times across different test files that
-    share the same global Base.metadata.
+    Ensure SQLAlchemy models are imported once for the tests/ suite.
+
+    Clearing mappers here breaks modules that import model classes at import
+    time, so keep the shared metadata intact and let per-test DB fixtures
+    create/drop tables on their own engines.
     """
     try:
-        # Import and clear metadata at the start of the test session
-        from sqlalchemy.orm import clear_mappers
-        from web.backend.database.database import Base, metadata_obj
-        
-        print("INFO: tests/conftest.py: Clearing SQLAlchemy metadata and mappers.")
-        
-        # Clear existing metadata and mappers
-        Base.metadata.clear()
-        clear_mappers()
-        
-        # Re-import models to ensure they're registered with the cleared metadata
-        # This is done inside init_db() which we'll call after clearing
-        from web.backend.database.database import init_db
-        init_db()
-        
-        print("INFO: tests/conftest.py: Metadata cleared and models re-registered.")
+        from web.backend.models.device import DeviceModel
+        from web.backend.models.video import VideoModel
+        from web.backend.models.overlay import OverlayConfig
         
         yield
-        
-        # Cleanup after all tests
-        Base.metadata.clear()
-        clear_mappers()
         
     except ImportError as e:
         print(f"Warning: Could not import required modules in tests/conftest.py: {e}")

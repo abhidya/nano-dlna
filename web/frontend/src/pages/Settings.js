@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Grid,
   Paper,
@@ -33,8 +33,20 @@ import {
   Refresh as RefreshIcon
 } from '@mui/icons-material';
 import axios from 'axios';
+import { useLocation } from 'react-router-dom';
+
+const defaultSettings = {
+  autoDiscoverDevices: true,
+  defaultVideoDirectory: '/tmp/nanodlna/uploads',
+  enableLogging: true,
+  logLevel: 'info',
+  serverPort: 8000,
+  enableSubtitles: true
+};
 
 function Settings() {
+  const location = useLocation();
+  const handledRouteActionRef = useRef('');
   const [configFile, setConfigFile] = useState('');
   const [openLoadDialog, setOpenLoadDialog] = useState(false);
   const [openSaveDialog, setOpenSaveDialog] = useState(false);
@@ -44,14 +56,27 @@ function Settings() {
     message: '',
     severity: 'success'
   });
-  const [settings, setSettings] = useState({
-    autoDiscoverDevices: true,
-    defaultVideoDirectory: '/tmp/nanodlna/uploads',
-    enableLogging: true,
-    logLevel: 'info',
-    serverPort: 8000,
-    enableSubtitles: true
+  const [settings, setSettings] = useState(() => {
+    try {
+      const savedSettings = localStorage.getItem('nanoDlnaSettings');
+      return savedSettings
+        ? { ...defaultSettings, ...JSON.parse(savedSettings) }
+        : defaultSettings;
+    } catch {
+      return defaultSettings;
+    }
   });
+
+  useEffect(() => {
+    const shouldLoadConfig = location.pathname === '/settings/load-config' || location.state?.action === 'load-config';
+    if (!shouldLoadConfig) return;
+
+    const routeKey = `${location.key}:load-config`;
+    if (handledRouteActionRef.current === routeKey) return;
+
+    handledRouteActionRef.current = routeKey;
+    setOpenLoadDialog(true);
+  }, [location.key, location.pathname, location.state]);
 
   const handleLoadConfig = async () => {
     try {
@@ -111,10 +136,10 @@ function Settings() {
   };
 
   const handleSaveSettings = () => {
-    // In a real application, this would save the settings to the server
+    localStorage.setItem('nanoDlnaSettings', JSON.stringify(settings));
     setSnackbar({
       open: true,
-      message: 'Settings saved successfully',
+      message: 'Settings saved locally',
       severity: 'success'
     });
   };
@@ -130,7 +155,14 @@ function Settings() {
     <Grid container spacing={3}>
       {/* Header */}
       <Grid item xs={12}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+        <Box sx={{
+          display: 'flex',
+          flexDirection: { xs: 'column', sm: 'row' },
+          justifyContent: 'space-between',
+          alignItems: { xs: 'stretch', sm: 'center' },
+          gap: 1,
+          mb: 2
+        }}>
           <Typography variant="h4">Settings</Typography>
           <Button
             variant="contained"

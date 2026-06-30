@@ -37,6 +37,17 @@ class ProjectorStartRequest(BaseModel):
     projector_id: Optional[str] = None
 
 
+class ProjectorModeRequest(BaseModel):
+    """Request model for starting projector content modes."""
+    mode: str
+    options: Optional[Dict[str, Any]] = None
+
+
+class ProjectorPowerStateRequest(BaseModel):
+    """Request model for user-observed projector power state."""
+    power_state: str
+
+
 class RendererResponse(BaseModel):
     """Response model for renderer operations."""
     success: bool
@@ -68,7 +79,10 @@ def get_renderer_service():
 
 
 @router.post("/start", response_model=RendererResponse)
-async def start_renderer(request: RendererStartRequest):
+async def start_renderer(
+    request: RendererStartRequest,
+    service: RendererService = Depends(get_renderer_service),
+):
     """
     Start a renderer for a scene on a projector.
     
@@ -79,13 +93,13 @@ async def start_renderer(request: RendererStartRequest):
         Response model with success status, message, and data
     """
     try:
-        success = renderer_service.start_renderer(request.scene, request.projector)
+        success = service.start_renderer(request.scene, request.projector)
         
         if success:
             return RendererResponse(
                 success=True,
                 message=f"Started renderer for scene {request.scene} on projector {request.projector}",
-                data=renderer_service.get_renderer_status(request.projector)
+                data=service.get_renderer_status(request.projector)
             )
         else:
             raise HTTPException(
@@ -102,7 +116,10 @@ async def start_renderer(request: RendererStartRequest):
 
 
 @router.post("/stop", response_model=RendererResponse)
-async def stop_renderer(request: RendererStopRequest):
+async def stop_renderer(
+    request: RendererStopRequest,
+    service: RendererService = Depends(get_renderer_service),
+):
     """
     Stop a renderer on a projector.
     
@@ -113,7 +130,7 @@ async def stop_renderer(request: RendererStopRequest):
         Response model with success status, message, and data
     """
     try:
-        success = renderer_service.stop_renderer(request.projector)
+        success = service.stop_renderer(request.projector)
         
         if success:
             return RendererResponse(
@@ -136,7 +153,10 @@ async def stop_renderer(request: RendererStopRequest):
 
 
 @router.get("/status/{projector_id}", response_model=RendererResponse)
-async def get_renderer_status(projector_id: str):
+async def get_renderer_status(
+    projector_id: str,
+    service: RendererService = Depends(get_renderer_service),
+):
     """
     Get the status of a renderer on a projector.
     
@@ -147,7 +167,7 @@ async def get_renderer_status(projector_id: str):
         Response model with success status, message, and data
     """
     try:
-        status = renderer_service.get_renderer_status(projector_id)
+        status = service.get_renderer_status(projector_id)
         
         if status:
             return RendererResponse(
@@ -171,7 +191,7 @@ async def get_renderer_status(projector_id: str):
 
 
 @router.get("/list", response_model=RendererResponse)
-async def list_renderers():
+async def list_renderers(service: RendererService = Depends(get_renderer_service)):
     """
     List all active renderers.
     
@@ -179,7 +199,7 @@ async def list_renderers():
         Response model with success status, message, and data
     """
     try:
-        renderers = renderer_service.list_active_renderers()
+        renderers = service.list_active_renderers()
         
         return RendererResponse(
             success=True,
@@ -196,7 +216,7 @@ async def list_renderers():
 
 
 @router.get("/projectors", response_model=RendererResponse)
-async def list_projectors():
+async def list_projectors(service: RendererService = Depends(get_renderer_service)):
     """
     List all available projectors.
     
@@ -204,16 +224,7 @@ async def list_projectors():
         Response model with success status, message, and data
     """
     try:
-        projectors_dict = renderer_service.config.get('projectors', {})
-        
-        # Transform the dictionary into a list of projector objects with id field
-        projectors_list = []
-        for proj_id, proj_data in projectors_dict.items():
-            # Create a copy of the projector data
-            projector = dict(proj_data)
-            # Add the id field
-            projector['id'] = proj_id
-            projectors_list.append(projector)
+        projectors_list = service.list_projectors()
         
         return RendererResponse(
             success=True,
@@ -230,7 +241,7 @@ async def list_projectors():
 
 
 @router.get("/scenes", response_model=RendererResponse)
-async def list_scenes():
+async def list_scenes(service: RendererService = Depends(get_renderer_service)):
     """
     List all available scenes.
     
@@ -238,19 +249,7 @@ async def list_scenes():
         Response model with success status, message, and data
     """
     try:
-        scenes_dict = renderer_service.config.get('scenes', {})
-        
-        # Transform the dictionary into a list of scene objects with id field
-        scenes_list = []
-        for scene_id, scene_data in scenes_dict.items():
-            # Create a copy of the scene data
-            scene = dict(scene_data)
-            # Add the id and name fields
-            scene['id'] = scene_id
-            # If name is not provided, use the ID as the name
-            if 'name' not in scene:
-                scene['name'] = scene_id
-            scenes_list.append(scene)
+        scenes_list = service.list_scenes()
         
         return RendererResponse(
             success=True,
@@ -269,7 +268,8 @@ async def list_scenes():
 @router.post("/start_projector", response_model=RendererResponse)
 async def start_projector(
     projector_id: str = None, 
-    request: ProjectorStartRequest = None
+    request: ProjectorStartRequest = None,
+    service: RendererService = Depends(get_renderer_service),
 ):
     """
     Start a projector with its default scene.
@@ -291,35 +291,25 @@ async def start_projector(
             detail="projector_id is required either as a query parameter or in the request body"
         )
     try:
-        # Get the projector configuration
-        projector_config = renderer_service.get_projector_config(projector_id)
+        projector_config = service.get_projector_config(projector_id)
         if not projector_config:
             raise HTTPException(
                 status_code=404,
                 detail=f"Projector not found: {projector_id}"
             )
-        
-        # Get the scene ID from the projector configuration
-        scene_id = projector_config.get('scene')
-        if not scene_id:
-            raise HTTPException(
-                status_code=400,
-                detail=f"No default scene configured for projector {projector_id}"
-            )
-        
-        # Start the renderer
-        success = renderer_service.start_renderer(scene_id, projector_id)
+
+        success = service.start_projector(projector_id)
         
         if success:
             return RendererResponse(
                 success=True,
-                message=f"Started projector {projector_id} with scene {scene_id}",
-                data=renderer_service.get_renderer_status(projector_id)
+                message=f"Started projector {projector_id}",
+                data=service.get_renderer_status(projector_id)
             )
         else:
             raise HTTPException(
                 status_code=500,
-                detail=f"Failed to start projector {projector_id} with scene {scene_id}"
+                detail=f"Failed to start projector {projector_id}"
             )
             
     except HTTPException:
@@ -330,6 +320,116 @@ async def start_projector(
             status_code=500,
             detail=f"Error starting projector: {str(e)}"
         )
+
+
+@router.get("/hdmi/displays", response_model=RendererResponse)
+async def list_hdmi_displays(service: RendererService = Depends(get_renderer_service)):
+    """List local displays available for HDMI projector output."""
+    try:
+        displays = service.list_hdmi_displays()
+        return RendererResponse(
+            success=True,
+            message=f"Listed {len(displays)} HDMI display targets",
+            data={"displays": displays}
+        )
+    except Exception as e:
+        logger.error(f"Error listing HDMI displays: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error listing HDMI displays: {str(e)}"
+        )
+
+
+@router.post("/projectors/{projector_id}/mode", response_model=RendererResponse)
+async def start_projector_mode(
+    projector_id: str,
+    request: ProjectorModeRequest,
+    service: RendererService = Depends(get_renderer_service),
+):
+    """Start a projector content mode such as structured light or overlay."""
+    try:
+        success = service.start_projector_mode(
+            projector_id,
+            request.mode,
+            request.options or {},
+        )
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to start {request.mode} on projector {projector_id}"
+            )
+        return RendererResponse(
+            success=True,
+            message=f"Started {request.mode} on projector {projector_id}",
+            data=service.get_renderer_status(projector_id)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error starting projector mode: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error starting projector mode: {str(e)}"
+        )
+
+
+@router.post("/projectors/{projector_id}/identify", response_model=RendererResponse)
+async def identify_projector(
+    projector_id: str,
+    service: RendererService = Depends(get_renderer_service),
+):
+    """Show an identity pattern on an HDMI projector."""
+    try:
+        success = service.identify_projector(projector_id)
+        if not success:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to identify projector {projector_id}"
+            )
+        return RendererResponse(
+            success=True,
+            message=f"Identifying projector {projector_id}",
+            data=service.get_renderer_status(projector_id)
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error identifying projector: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Error identifying projector: {str(e)}"
+        )
+
+
+@router.post("/projectors/{projector_id}/power-state", response_model=RendererResponse)
+async def set_projector_power_state(
+    projector_id: str,
+    request: ProjectorPowerStateRequest,
+    service: RendererService = Depends(get_renderer_service),
+):
+    """Record the user-observed HDMI projector power state."""
+    success = service.set_projector_power_state(projector_id, request.power_state)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Invalid power state: {request.power_state}")
+    return RendererResponse(
+        success=True,
+        message=f"Projector {projector_id} power state set to {request.power_state}",
+        data=service.get_renderer_status(projector_id)
+    )
+
+
+@router.post("/heartbeat/{projector_id}", response_model=RendererResponse)
+async def projector_heartbeat(
+    projector_id: str,
+    service: RendererService = Depends(get_renderer_service),
+):
+    """Receive heartbeat pings from browser-based projector pages."""
+    service.record_projector_heartbeat(projector_id)
+    return RendererResponse(
+        success=True,
+        message=f"Heartbeat recorded for projector {projector_id}",
+        data=service.get_renderer_status(projector_id)
+    )
 
 
 @router.get("/airplay/discover", response_model=RendererResponse)
@@ -391,7 +491,10 @@ async def list_airplay_devices():
 
 
 @router.post("/pause/{projector_id}", response_model=RendererResponse)
-async def pause_renderer(projector_id: str):
+async def pause_renderer(
+    projector_id: str,
+    service: RendererService = Depends(get_renderer_service),
+):
     """
     Pause a renderer on a projector.
     
@@ -403,13 +506,13 @@ async def pause_renderer(projector_id: str):
     """
     try:
         # Use the RendererService's pause_renderer method
-        success = renderer_service.pause_renderer(projector_id)
+        success = service.pause_renderer(projector_id)
         
         if success:
             return RendererResponse(
                 success=True,
                 message=f"Paused renderer on projector {projector_id}",
-                data=renderer_service.get_renderer_status(projector_id)
+                data=service.get_renderer_status(projector_id)
             )
         else:
             raise HTTPException(
@@ -428,7 +531,10 @@ async def pause_renderer(projector_id: str):
 
 
 @router.post("/resume/{projector_id}", response_model=RendererResponse)
-async def resume_renderer(projector_id: str):
+async def resume_renderer(
+    projector_id: str,
+    service: RendererService = Depends(get_renderer_service),
+):
     """
     Resume a paused renderer on a projector.
     
@@ -440,13 +546,13 @@ async def resume_renderer(projector_id: str):
     """
     try:
         # Use the RendererService's resume_renderer method
-        success = renderer_service.resume_renderer(projector_id)
+        success = service.resume_renderer(projector_id)
         
         if success:
             return RendererResponse(
                 success=True,
                 message=f"Resumed renderer on projector {projector_id}",
-                data=renderer_service.get_renderer_status(projector_id)
+                data=service.get_renderer_status(projector_id)
             )
         else:
             raise HTTPException(

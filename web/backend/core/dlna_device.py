@@ -452,12 +452,7 @@ class DLNADevice(Device):
             
             # Clean up streaming sessions
             try:
-                from core.streaming_registry import StreamingSessionRegistry
-                registry = StreamingSessionRegistry.get_instance()
-                sessions = registry.get_sessions_for_device(self.name)
-                for session in sessions:
-                    logger.info(f"Completing streaming session {session.session_id} on device stop")
-                    session.complete()
+                self.device_manager.playback_session.complete_sessions(self.name)
             except Exception as e:
                 logger.warning(f"Could not clean up streaming sessions: {e}")
             
@@ -647,12 +642,9 @@ class DLNADevice(Device):
         """
         logger.warning(f"[{self.name}] Handling streaming health check for session {session_id}")
         
-        # Check if this session belongs to this device by checking with the registry
+        # Check if this session belongs to this device through the playback-session module
         try:
-            from core.streaming_registry import StreamingSessionRegistry
-            registry = StreamingSessionRegistry.get_instance()
-            session = registry.get_session(session_id)
-            if not session or session.device_name != self.name:
+            if not self.device_manager.playback_session.owns_session(self.name, session_id):
                 logger.warning(f"[{self.name}] Session {session_id} does not belong to this device")
                 return
         except Exception as e:
@@ -874,7 +866,7 @@ class DLNADevice(Device):
         progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Final duration: {self.duration_formatted} ({self.current_video_duration}s)")
         
         if hasattr(self, 'device_manager') and self.device_manager:
-            self.device_manager.update_device_playback_progress(self.name, "00:00:00", self.duration_formatted, 0)
+            self.device_manager.playback_session.update_progress(self.name, "00:00:00", self.duration_formatted, 0)
             progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Initial progress update sent to device manager")
 
         progress_logger.info(f"[PROGRESS_DEBUG] [{self.name}] Entering main monitoring loop")
@@ -971,7 +963,7 @@ class DLNADevice(Device):
                         progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Final progress calculation: position={self.current_position}, progress={self.playback_progress}%")
                         
                         if hasattr(self, 'device_manager') and self.device_manager:
-                            self.device_manager.update_device_playback_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
+                            self.device_manager.playback_session.update_progress(self.name, self.current_position, self.duration_formatted, self.playback_progress)
                             progress_logger.debug(f"[PROGRESS_DEBUG] [{self.name}] Updated device manager with progress")
                     else:
                         progress_logger.warning(f"[PROGRESS_DEBUG] [{self.name}] Cannot calculate progress: duration={self.current_video_duration}")
@@ -979,13 +971,8 @@ class DLNADevice(Device):
                     # Keep streaming session alive by updating its activity
                     # This prevents false stall detection for devices that buffer entire videos
                     try:
-                        from core.streaming_registry import StreamingSessionRegistry
-                        registry = StreamingSessionRegistry.get_instance()
-                        sessions = registry.get_sessions_for_device(self.name)
-                        for session in sessions:
-                            if session.active:
-                                session.update_activity()
-                                logger.debug(f"[{self.name}] Updated streaming session activity to prevent false stall detection")
+                        self.device_manager.playback_session.refresh_active_sessions(self.name)
+                        logger.debug(f"[{self.name}] Updated streaming session activity to prevent false stall detection")
                     except Exception as e:
                         # Don't break playback if session update fails
                         logger.debug(f"[{self.name}] Could not update session activity: {e}")
@@ -1061,7 +1048,7 @@ class DLNADevice(Device):
                             self.duration_formatted = self._format_time(self.current_video_duration)
 
                             if hasattr(self, 'device_manager') and self.device_manager: # Reset progress display
-                                self.device_manager.update_device_playback_progress(self.name, "00:00:00", self.duration_formatted, 0)
+                                self.device_manager.playback_session.update_progress(self.name, "00:00:00", self.duration_formatted, 0)
                             continue # Restart loop immediately
                         else:
                             logger.error(f"[{self.name}] Failed to restart video (v2). Will retry.")
@@ -1084,20 +1071,11 @@ class DLNADevice(Device):
                 # First check if there's an active streaming session before declaring inactivity
                 has_active_stream = False
                 try:
-                    from core.streaming_registry import StreamingSessionRegistry
-                    registry = StreamingSessionRegistry.get_instance()
-                    sessions = registry.get_sessions_for_device(self.name)
-                    for session in sessions:
-                        # Check if there's recent activity, regardless of session.active status
-                        # This prevents false inactivity detection when registry marks session as stalled
-                        time_since_activity = (datetime.now() - session.last_activity_time).total_seconds()
-                        if time_since_activity < 30:  # Accept activity within last 30 seconds
-                            has_active_stream = True
-                            # Update our last activity time based on streaming activity
-                            with self._thread_lock:
-                                self._last_activity_time = time.time()
-                            logger.debug(f"[{self.name}] Found recent streaming activity {time_since_activity:.1f}s ago")
-                            break
+                    has_active_stream = self.device_manager.playback_session.has_recent_activity(self.name, seconds=30)
+                    if has_active_stream:
+                        with self._thread_lock:
+                            self._last_activity_time = time.time()
+                        logger.debug(f"[{self.name}] Found recent streaming activity")
                 except Exception as e:
                     logger.debug(f"[{self.name}] Could not check streaming registry: {e}")
                 

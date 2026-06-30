@@ -23,7 +23,7 @@ import {
   Stop as StopIcon
 } from '@mui/icons-material';
 import { useNavigate } from 'react-router-dom';
-import axios from 'axios';
+import { deviceApi, videoApi } from '../services/api';
 
 function Dashboard() {
   const navigate = useNavigate();
@@ -37,13 +37,12 @@ function Dashboard() {
       try {
         setLoading(true);
         
-        // Fetch devices
-        const devicesResponse = await axios.get('/api/devices/');
-        setDevices(devicesResponse.data.devices);
-        
-        // Fetch videos
-        const videosResponse = await axios.get('/api/videos/');
-        setVideos(videosResponse.data.videos);
+        const [devicesResponse, videosResponse] = await Promise.all([
+          deviceApi.getDevices(),
+          videoApi.getVideos(),
+        ]);
+        setDevices(devicesResponse.data.devices || []);
+        setVideos(videosResponse.data.videos || []);
         
         setLoading(false);
       } catch (err) {
@@ -58,11 +57,14 @@ function Dashboard() {
 
   const handleDeviceAction = async (deviceId, action) => {
     try {
-      await axios.post(`/api/devices/${deviceId}/${action}`);
+      if (action === 'pause') {
+        await deviceApi.pauseVideo(deviceId);
+      } else if (action === 'stop') {
+        await deviceApi.stopVideo(deviceId);
+      }
       
-      // Refresh devices after action
-      const devicesResponse = await axios.get('/api/devices/');
-      setDevices(devicesResponse.data.devices);
+      const devicesResponse = await deviceApi.getDevices();
+      setDevices(devicesResponse.data.devices || []);
     } catch (err) {
       console.error(`Error performing ${action} action:`, err);
       setError(`Failed to ${action} device. Please try again.`);
@@ -249,7 +251,7 @@ function Dashboard() {
                   <Button 
                     size="small" 
                     color="primary"
-                    onClick={() => navigate('/devices/discover')}
+                    onClick={() => navigate('/devices', { state: { action: 'discover' } })}
                   >
                     Discover
                   </Button>
@@ -268,7 +270,7 @@ function Dashboard() {
                   <Button 
                     size="small" 
                     color="primary"
-                    onClick={() => navigate('/videos/add')}
+                    onClick={() => navigate('/videos', { state: { action: 'add' } })}
                   >
                     Add
                   </Button>
@@ -287,7 +289,7 @@ function Dashboard() {
                   <Button 
                     size="small" 
                     color="primary"
-                    onClick={() => navigate('/videos/scan')}
+                    onClick={() => navigate('/videos', { state: { action: 'scan' } })}
                   >
                     Scan
                   </Button>
@@ -306,7 +308,7 @@ function Dashboard() {
                   <Button 
                     size="small" 
                     color="primary"
-                    onClick={() => navigate('/settings/load-config')}
+                    onClick={() => navigate('/settings', { state: { action: 'load-config' } })}
                   >
                     Load
                   </Button>

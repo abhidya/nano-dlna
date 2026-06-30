@@ -119,9 +119,8 @@ class DiscoveryMigrationAdapter:
                     # Add to mapping
                     self._device_mapping[old_device.name] = new_device
                     
-                    # Register with new system
-                    with self.new_discovery_manager._device_lock:
-                        self.new_discovery_manager.all_devices[new_device.id] = new_device
+                    # Register with new system through the public module interface
+                    self.new_discovery_manager.add_discovered_device(new_device)
                         
                     logger.info(f"Migrated device: {old_device.name}")
                     

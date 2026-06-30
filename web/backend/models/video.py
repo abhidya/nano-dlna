@@ -1,7 +1,10 @@
 from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
-from database.database import Base
+try:
+    from ..database.database import Base
+except ImportError:
+    from database.database import Base
 
 class VideoModel(Base):
     """
@@ -47,3 +50,7 @@ class VideoModel(Base):
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
+
+
+# Backward-compatible alias for older tests/helpers.
+Video = VideoModel

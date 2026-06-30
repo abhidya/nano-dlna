@@ -11,7 +11,7 @@ from fastapi import Depends
 
 from models.video import VideoModel
 from schemas.video import VideoCreate, VideoUpdate
-from core.twisted_streaming import get_instance as get_twisted_streaming
+from core.streaming_adapter import get_streaming_adapter
 from database.database import get_db
 
 logger = logging.getLogger(__name__)
@@ -26,17 +26,16 @@ def get_video_service(db: Session = Depends(get_db)) -> 'VideoService':
     Returns:
         VideoService: Video service instance
     """
-    from core.twisted_streaming import get_instance as get_twisted_streaming
-    streaming_service = get_twisted_streaming()
+    streaming_service = get_streaming_adapter()
     return VideoService(db, streaming_service)
 
 class VideoService:
     """
     Service for managing videos
     """
-    def __init__(self, db: Session, streaming_service: Any):
+    def __init__(self, db: Session, streaming_service: Any = None):
         self.db = db
-        self.streaming_service = streaming_service
+        self.streaming_service = streaming_service or get_streaming_adapter()
     
     def get_videos(self, skip: int = 0, limit: int = 100) -> List[VideoModel]:
         """

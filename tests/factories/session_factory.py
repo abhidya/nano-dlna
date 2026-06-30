@@ -60,7 +60,7 @@ class StreamingSessionFactory(factory.Factory):
     @factory.lazy_attribute
     def client_info(self):
         return {
-            "ip": self.device.ip_address,
+            "ip": self.device.hostname,
             "user_agent": random.choice([
                 "DLNA/1.0 UPnP/1.0",
                 "AirPlay/380.4",

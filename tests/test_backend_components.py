@@ -104,17 +104,17 @@ class TestBackendComponents(unittest.TestCase):
         from web.backend.core.config_service import ConfigService
         
         # Define the mock data that json.load should return (a list of device configs)
+        dummy_video_path = os.path.join(tempfile.gettempdir(), "test_video_mock.mp4")
         mock_device_data = [{
             "device_name": "Smart_Projector-45[DLNA]",
             "type": "dlna", # Required by add_device_config
             "hostname": "1.2.3.4", # Required
             "action_url": "http://example.com/action", # Required
-            "video_file": "/tmp/test_video_mock.mp4" # Required and must exist
+            "video_file": dummy_video_path # Required and must exist
         }]
         mock_json_load.return_value = mock_device_data
         
         # Ensure the dummy video file exists for validation within add_device_config
-        dummy_video_path = "/tmp/test_video_mock.mp4"
         with open(dummy_video_path, "w") as f:
             f.write("dummy")
 
@@ -181,14 +181,15 @@ class TestBackendComponents(unittest.TestCase):
         video = VideoModel(
             name="Test Video",
             path="/path/to/video.mp4",
-            size=1000,
+            file_name="video.mp4",
+            file_size=1000,
             duration=60.0
         )
         
         # Verify attributes
         self.assertEqual(video.name, "Test Video")
         self.assertEqual(video.path, "/path/to/video.mp4")
-        self.assertEqual(video.size, 1000)
+        self.assertEqual(video.file_size, 1000)
         self.assertEqual(video.duration, 60.0)
     
     @patch('web.backend.core.device_manager.DeviceManager')

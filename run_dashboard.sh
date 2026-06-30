@@ -4,7 +4,16 @@
 set -e
 
 # Store the root directory path
-ROOT_DIR="$(pwd)"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$ROOT_DIR"
+
+if [ -f "$ROOT_DIR/venv/bin/activate" ]; then
+    source "$ROOT_DIR/venv/bin/activate"
+elif [ -f "$ROOT_DIR/.venv/bin/activate" ]; then
+    source "$ROOT_DIR/.venv/bin/activate"
+elif [ -f "$ROOT_DIR/.venv/Scripts/activate" ]; then
+    source "$ROOT_DIR/.venv/Scripts/activate"
+fi
 
 # First, make sure any existing instances are stopped
 "$ROOT_DIR/stop_dashboard.sh"

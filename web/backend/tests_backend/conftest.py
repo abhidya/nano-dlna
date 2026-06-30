@@ -19,7 +19,7 @@ os.environ["PYTEST_CURRENT_TEST"] = "true"
 # Now imports like `from web.backend...` should work.
 
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, clear_mappers
+from sqlalchemy.orm import sessionmaker
 import tempfile
 
 # Import database components
@@ -32,19 +32,8 @@ from web.backend.models.video import VideoModel
 from web.backend.models.overlay import OverlayConfig
 from web.backend.models.projection import ProjectionConfig
 
-# Clear and re-register models to avoid conflicts
-try:
-    print(f"INFO: web/backend/tests_backend/conftest.py: Clearing metadata and mappers")
-    Base.metadata.clear()
-    clear_mappers()
-    
-    # Re-import models after clearing to ensure clean registration
-    from web.backend.database.database import init_db
-    init_db()
-    
-    print(f"INFO: web/backend/tests_backend/conftest.py: Models re-registered successfully")
-except Exception as e:
-    print(f"WARNING: Error during metadata clearing in web/backend/tests_backend/conftest.py: {e}")
+# Keep model metadata registered. Clearing SQLAlchemy metadata/mappers here
+# removes `__table__` from imported models and leaves later tests with no tables.
 
 # Import app and core components
 from web.backend.main import app
@@ -60,7 +49,8 @@ def test_db():
     Create a test database and provide a single shared session for both
     the test function and the FastAPI app's dependency override.
     """
-    temp_db_file = tempfile.NamedTemporaryFile(suffix=".db")
+    temp_db_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    temp_db_file.close()
     engine = create_engine(
         f"sqlite:///{temp_db_file.name}",
         connect_args={"check_same_thread": False} # Necessary for SQLite
@@ -117,7 +107,11 @@ def test_db():
         
         shared_session.close()
         Base.metadata.drop_all(bind=engine)
-        temp_db_file.close()
+        engine.dispose()
+        try:
+            os.unlink(temp_db_file.name)
+        except FileNotFoundError:
+            pass
 
 
 @pytest.fixture(scope="function")

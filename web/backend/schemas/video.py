@@ -50,8 +50,7 @@ class VideoResponse(VideoBase):
     created_at: Optional[datetime] = Field(None, description="Creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     
-    class Config:
-        from_attributes = True
+    model_config = {"from_attributes": True}
 
 class VideoList(BaseModel):
     """

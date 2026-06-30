@@ -167,6 +167,11 @@ class DiscoveryManager:
         """
         with self._device_lock:
             return self.all_devices.get(device_id)
+
+    def add_discovered_device(self, device: Device) -> None:
+        """Add or replace a discovered device through the public module interface."""
+        with self._device_lock:
+            self.all_devices[device.id] = device
     
     def get_devices_with_capability(self, capability: DeviceCapability,
                                    online_only: bool = True) -> List[Device]:

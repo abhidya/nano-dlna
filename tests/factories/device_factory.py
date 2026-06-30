@@ -3,50 +3,54 @@
 import factory
 from factory import fuzzy
 from datetime import datetime, timezone
+from enum import Enum
+from types import SimpleNamespace
 from typing import Dict, Any, Optional
 import random
 import string
 
-from web.backend.models.device import Device, DeviceType, DeviceStatus
 from tests.mocks.device_mocks import MockDLNADevice
+
+
+class DeviceType(str, Enum):
+    DLNA = "dlna"
+    TRANSCREEN = "transcreen"
+    AIRPLAY = "airplay"
+
+
+class DeviceStatus(str, Enum):
+    CONNECTED = "connected"
+    DISCONNECTED = "disconnected"
+    PLAYING = "playing"
+    ERROR = "error"
 
 
 class DeviceFactory(factory.Factory):
     """Factory for creating Device instances."""
     
     class Meta:
-        model = Device
+        model = SimpleNamespace
     
-    id = factory.Sequence(lambda n: n)
+    id = factory.Sequence(lambda n: n + 1)
     name = factory.LazyFunction(lambda: f"TestDevice_{random.randint(1000, 9999)}")
-    type = fuzzy.FuzzyChoice([t.value for t in DeviceType])
-    ip_address = factory.LazyFunction(
-        lambda: f"192.168.1.{random.randint(1, 254)}"
-    )
-    port = fuzzy.FuzzyInteger(8000, 9999)
+    type = fuzzy.FuzzyChoice([DeviceType.DLNA.value, DeviceType.TRANSCREEN.value])
+    hostname = factory.LazyFunction(lambda: f"192.168.1.{random.randint(1, 254)}")
+    friendly_name = factory.LazyAttribute(lambda obj: obj.name)
+    action_url = factory.LazyAttribute(lambda obj: f"http://{obj.hostname}:8000/AVTransport/Control")
+    manufacturer = "Test Manufacturer"
+    location = factory.LazyAttribute(lambda obj: f"http://{obj.hostname}:8000/device.xml")
     status = fuzzy.FuzzyChoice([s.value for s in DeviceStatus])
-    last_seen = factory.LazyFunction(lambda: datetime.now(timezone.utc))
     is_playing = False
-    current_video_id = None
+    current_video = None
+    playback_position = None
+    playback_duration = None
+    playback_progress = None
+    config = factory.LazyFunction(dict)
+    streaming_url = None
+    streaming_port = None
     playback_started_at = None
     user_control_mode = "auto"
     user_control_reason = None
-    
-    @factory.post_generation
-    def capabilities(self, create, extracted, **kwargs):
-        if not create:
-            return
-        
-        if extracted:
-            self.capabilities = extracted
-        else:
-            # Default capabilities based on device type
-            if self.type == DeviceType.DLNA.value:
-                self.capabilities = ["play", "pause", "stop", "seek"]
-            elif self.type == DeviceType.AIRPLAY.value:
-                self.capabilities = ["play", "pause", "stop", "volume"]
-            else:
-                self.capabilities = ["play", "stop"]
 
 
 class DLNADeviceFactory(DeviceFactory):
@@ -77,8 +81,8 @@ class DLNADeviceFactory(DeviceFactory):
         
         mock_device = MockDLNADevice(
             name=device_data.name,
-            ip=device_data.ip_address,
-            port=device_data.port
+            ip=device_data.hostname,
+            port=8000
         )
         
         # Set additional attributes
@@ -141,7 +145,7 @@ def create_device_network(num_devices: int = 5) -> Dict[str, Any]:
         if i % 2 == 0:
             device.is_playing = True
             device.playback_started_at = datetime.now(timezone.utc)
-            device.current_video_id = random.randint(1, 100)
+            device.current_video = f"/tmp/video_{random.randint(1, 100)}.mp4"
         
         devices.append(device)
     

@@ -216,7 +216,7 @@ class TestStreamingStateManagement(unittest.TestCase):
         )
         
         # Set the last activity time to a time in the past to make the session appear stalled
-        session.last_activity_time = datetime.now() - timedelta(seconds=30)
+        session.last_activity_time = datetime.now() - timedelta(seconds=120)
         
         # Run health check manually (bypassing the wait in the monitoring thread)
         self.registry._check_sessions_health()

@@ -60,7 +60,7 @@ pip install -e .
 ### Local verification without DLNA hardware
 
 ```bash
-python3 -m compileall nanodlna tests
+python3 -m compileall nanodlna web/backend tests
 python3 -m pytest tests -m "not live and not network" --maxfail=1
 ```
 

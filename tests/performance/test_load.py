@@ -8,7 +8,11 @@ from typing import Dict, List, Optional
 import statistics
 
 import pytest
-from locust import HttpUser, task, between, events
+locust = pytest.importorskip("locust")
+HttpUser = locust.HttpUser
+task = locust.task
+between = locust.between
+events = locust.events
 import requests
 
 from tests.utils.test_helpers import TestTimer, PerformanceTestHelper

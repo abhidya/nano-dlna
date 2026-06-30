@@ -5,6 +5,7 @@ import contextlib
 import functools
 import json
 import os
+import random
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -16,7 +17,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from web.backend.core.database import Base
+from web.backend.database.database import Base
 from web.backend.models.device import Device
 from web.backend.models.video import Video
 
@@ -230,7 +231,7 @@ class NetworkTestHelper:
         """Simulate a device disconnection."""
         device.status = "disconnected"
         device.is_playing = False
-        device.current_video_id = None
+        device.current_video = None
 
 
 class FileTestHelper:
