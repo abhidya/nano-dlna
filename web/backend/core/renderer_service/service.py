@@ -42,6 +42,11 @@ class RendererService:
         self.streaming_server = None
         self._lan_ip = None
         self.projector_power_states = {}
+        # Persisted projection state so HDMI projections survive a restart/power cycle.
+        self.state_file = os.path.join(
+            os.path.dirname(os.path.abspath(self.config_file)), 'renderer_state.json'
+        )
+        self._shutting_down = False
         
     def start_streaming_server(self):
         """Starts the internal TwistedStreamingServer."""
@@ -266,6 +271,7 @@ class RendererService:
                 'content_mode': 'scene',
             }
 
+            self._persist_state()
             self.logger.info("Started renderer for scene %s on projector %s", scene_id, projector_id)
             return True
 
@@ -386,6 +392,7 @@ class RendererService:
                 "content_mode": mode,
                 "options": options,
             }
+            self._persist_state()
             return True
 
     def identify_projector(self, projector_id: str) -> bool:
@@ -402,6 +409,7 @@ class RendererService:
         sender = active.get("sender") if active else None
         if hasattr(sender, "set_power_state"):
             sender.set_power_state(power_state)
+        self._persist_state()
         return True
 
     def record_projector_heartbeat(self, projector_id: str) -> bool:
@@ -558,7 +566,8 @@ class RendererService:
             
             # Remove the active renderer
             del self.active_renderers[projector_id]
-            
+
+            self._persist_state()
             self.logger.info(f"Stopped renderer for projector {projector_id}")
             return True
     
@@ -676,13 +685,127 @@ class RendererService:
         with self.lock:
             return [self.get_renderer_status(projector_id) for projector_id in self.active_renderers]
     
+    def _persist_state(self) -> None:
+        """Write resumable projection state to disk for power-cycle recovery.
+
+        Only the recipe needed to relaunch is stored (mode, scene, options,
+        target) -- never the live renderer/sender objects. Skipped during a
+        graceful shutdown so a reboot still resumes what was active.
+        """
+        if self._shutting_down:
+            return
+        try:
+            with self.lock:
+                projections = [
+                    {
+                        "projector_id": projector_id,
+                        "content_mode": active.get("content_mode", "scene"),
+                        "scene_id": active.get("scene_id"),
+                        "options": active.get("options", {}),
+                        "target_name": active.get("target_name"),
+                    }
+                    for projector_id, active in self.active_renderers.items()
+                ]
+                state = {
+                    "projections": projections,
+                    "power_states": dict(self.projector_power_states),
+                }
+            tmp_file = f"{self.state_file}.tmp"
+            with open(tmp_file, "w") as handle:
+                json.dump(state, handle, indent=2)
+            os.replace(tmp_file, self.state_file)
+        except Exception as exc:
+            self.logger.error(f"Failed to persist renderer state: {exc}")
+
+    def _load_state(self) -> Optional[Dict[str, Any]]:
+        """Load persisted projection state, or None if there is nothing saved."""
+        try:
+            if not os.path.exists(self.state_file):
+                return None
+            with open(self.state_file, "r") as handle:
+                return json.load(handle)
+        except Exception as exc:
+            self.logger.error(f"Failed to load renderer state: {exc}")
+            return None
+
+    def resume_active_projections(self, attempts: int = 10, delay: float = 3.0) -> None:
+        """Re-launch projections that were active before a restart.
+
+        Each projection is replayed in a background thread that retries, so the
+        HDMI display has time to come up after a power cycle. Call this once at
+        startup, after the streaming server is running.
+        """
+        state = self._load_state()
+        if not state:
+            return
+
+        # Restore manual power states first so HDMI senders report correctly.
+        power_states = state.get("power_states") or {}
+        if isinstance(power_states, dict):
+            self.projector_power_states.update(power_states)
+
+        projections = state.get("projections") or []
+        if not projections:
+            return
+
+        self.logger.info("Resuming %d saved projection(s) after restart", len(projections))
+        for projection in projections:
+            thread = threading.Thread(
+                target=self._resume_one,
+                args=(projection, attempts, delay),
+                daemon=True,
+            )
+            thread.start()
+
+    def _resume_one(self, projection: Dict[str, Any], attempts: int, delay: float) -> None:
+        """Replay a single saved projection with retries."""
+        import time
+
+        projector_id = projection.get("projector_id")
+        if not projector_id:
+            return
+        content_mode = projection.get("content_mode") or "scene"
+        scene_id = projection.get("scene_id")
+        options = projection.get("options") or {}
+
+        for attempt in range(1, attempts + 1):
+            try:
+                if content_mode == "scene":
+                    if not scene_id:
+                        self.logger.error(
+                            "Cannot resume scene projection for %s without scene_id", projector_id
+                        )
+                        return
+                    success = self.start_renderer(scene_id, projector_id)
+                else:
+                    success = self.start_projector_mode(projector_id, content_mode, options)
+                if success:
+                    self.logger.info(
+                        "Resumed projection on %s (mode=%s) on attempt %d",
+                        projector_id, content_mode, attempt,
+                    )
+                    return
+            except Exception as exc:
+                self.logger.warning(
+                    "Resume attempt %d for projector %s failed: %s", attempt, projector_id, exc
+                )
+            time.sleep(delay)
+
+        self.logger.error(
+            "Gave up resuming projection on %s after %d attempts", projector_id, attempts
+        )
+
     def shutdown(self) -> None:
         """
         Shutdown the Renderer Service.
-        
+
         This method stops all active renderers and cleans up resources.
         """
         with self.lock:
+            # Mark shutdown so stop_renderer does not clear the persisted
+            # resume state: a reboot should bring these projections back.
+            self._shutting_down = True
+
             # Stop all active renderers
             for projector_id in list(self.active_renderers.keys()):
                 self.stop_renderer(projector_id)

@@ -104,3 +104,80 @@ def test_renderer_service_rejects_bad_hdmi_power_state(tmp_path):
     service = RendererService(config_file=str(write_hdmi_config(tmp_path)))
 
     assert service.set_projector_power_state("proj-hdmi", "automatic") is False
+
+
+def _patch_hdmi(monkeypatch):
+    display = {
+        "id": "hdmi_display_0",
+        "index": 0,
+        "name": "Primary display",
+        "x": 0,
+        "y": 0,
+        "width": 1920,
+        "height": 1080,
+        "is_primary": True,
+        "attached": True,
+    }
+    monkeypatch.setattr(HDMISender, "discover_displays", classmethod(lambda cls: [display]))
+    monkeypatch.setattr(HDMISender, "_get_browser_command", lambda self: r"C:\Chrome\chrome.exe")
+    monkeypatch.setattr(
+        "web.backend.core.renderer_service.sender.hdmi.subprocess.Popen",
+        lambda cmd, **kwargs: FakeProcess(),
+    )
+
+
+def test_active_projection_is_persisted_and_resumed_after_restart(monkeypatch, tmp_path):
+    _patch_hdmi(monkeypatch)
+    config_path = str(write_hdmi_config(tmp_path))
+
+    # First run: start a projection, which persists resume state to disk.
+    service = RendererService(config_file=config_path)
+    assert service.start_projector_mode(
+        "proj-hdmi", "structured_light", {"pattern_set": "grid"}
+    ) is True
+    assert service.set_projector_power_state("proj-hdmi", "manual_on") is True
+    assert (tmp_path / "renderer_state.json").exists()
+
+    # Simulate a power cycle: a brand-new service has no in-memory renderers.
+    restarted = RendererService(config_file=config_path)
+    assert restarted.get_renderer_status("proj-hdmi") is None
+
+    # Resume runs in background threads; replay synchronously for the test.
+    state = restarted._load_state()
+    restarted.projector_power_states.update(state.get("power_states", {}))
+    for projection in state["projections"]:
+        restarted._resume_one(projection, attempts=1, delay=0)
+
+    status = restarted.get_renderer_status("proj-hdmi")
+    assert status is not None
+    assert status["content_mode"] == "structured_light"
+    assert status["status"] == "projecting"
+    assert status["sender_status"]["power_state"] == "manual_on"
+
+
+def test_graceful_shutdown_keeps_resume_state(monkeypatch, tmp_path):
+    _patch_hdmi(monkeypatch)
+    config_path = str(write_hdmi_config(tmp_path))
+
+    service = RendererService(config_file=config_path)
+    assert service.start_projector_mode("proj-hdmi", "identify", {}) is True
+
+    # A graceful shutdown must NOT erase what was projecting, so a reboot
+    # still brings it back.
+    service.shutdown()
+
+    state = RendererService(config_file=config_path)._load_state()
+    assert [p["projector_id"] for p in state["projections"]] == ["proj-hdmi"]
+
+
+def test_user_stop_clears_resume_state(monkeypatch, tmp_path):
+    _patch_hdmi(monkeypatch)
+    config_path = str(write_hdmi_config(tmp_path))
+
+    service = RendererService(config_file=config_path)
+    assert service.start_projector_mode("proj-hdmi", "identify", {}) is True
+    # An explicit stop (not a shutdown) should drop it from the resume set.
+    assert service.stop_renderer("proj-hdmi") is True
+
+    state = RendererService(config_file=config_path)._load_state()
+    assert state["projections"] == []

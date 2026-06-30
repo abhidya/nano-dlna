@@ -336,6 +336,13 @@ async def startup_event():
                 logger.info("RendererService streaming server started.")
             except Exception as e:
                 logger.error(f"Failed to start RendererService streaming server: {e}")
+
+            # Re-launch any HDMI projections that were active before a restart
+            # so a power cycle does not require manual re-projection.
+            try:
+                renderer_service.resume_active_projections()
+            except Exception as e:
+                logger.error(f"Failed to resume active projections: {e}")
         
     except Exception as e:
         logger.error(f"Error loading devices from config: {e}")

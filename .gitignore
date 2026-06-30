@@ -270,6 +270,7 @@ proxy_response.txt
 # Runtime files
 .pid
 .lock
+web/backend/config/renderer_state.json
 
 # Claude rules
 # .claude_rules.md - Keep this tracked for context restoration
