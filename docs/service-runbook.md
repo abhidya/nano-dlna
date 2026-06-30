@@ -45,10 +45,24 @@ Check API:
 http://localhost:8010/api/renderer/hdmi/displays
 ```
 
+The task runs the backend through a hidden tray host (`nano-dlna-tray.vbs` →
+`nano-dlna-tray.ps1`), so there is **no console window**. A tray icon appears
+instead; right-click it for:
+
+- **Open Dashboard** — opens `http://localhost:<port>/app`
+- **Open Service Log** / **Open Logs Folder**
+- **Restart Backend** / **Quit**
+
+If you already installed an older version of the task (visible PowerShell
+window), just re-run `install-nano-dlna-task.ps1` — it replaces the task
+(`-Force`) with the hidden tray version. Then end the old visible window from
+Task Manager or sign out and back in.
+
 Logs:
 
 ```text
-logs\nano-dlna-service.log
+logs\nano-dlna-service.out.log
+logs\nano-dlna-service.err.log
 web\backend\dashboard_run.log
 ```
 

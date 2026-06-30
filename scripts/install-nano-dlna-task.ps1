@@ -28,15 +28,11 @@ if ($LASTEXITCODE -ne 0) {
     throw "Service prep failed with exit code $LASTEXITCODE"
 }
 
-$ActionArgs = @(
-    "-NoProfile",
-    "-ExecutionPolicy", "Bypass",
-    "-WindowStyle", "Hidden",
-    "-File", "`"$Runner`"",
-    "-Port", $Port
-) -join " "
-
-$Action = New-ScheduledTaskAction -Execute $PowerShell -Argument $ActionArgs
+# Run the backend through the hidden tray host (no console window, tray icon
+# with links to the dashboard and logs) launched via wscript so nothing flashes.
+$TrayVbs = (Resolve-Path (Join-Path $PSScriptRoot "nano-dlna-tray.vbs")).Path
+$WScript = (Get-Command wscript.exe).Source
+$Action = New-ScheduledTaskAction -Execute $WScript -Argument "`"$TrayVbs`" $Port"
 $Trigger = New-ScheduledTaskTrigger -AtLogOn -User "$env:USERDOMAIN\$env:USERNAME"
 $Settings = New-ScheduledTaskSettingsSet `
     -AllowStartIfOnBatteries `
